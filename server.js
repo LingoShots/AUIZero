@@ -17,33 +17,16 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
-  // This will tell us if your variable name in Railway is correct
-  console.log("Checking API Key existence:", process.env.ANTHROPIC_API_KEY ? "KEY FOUND!" : "KEY MISSING!");
-
-  const models = ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"];
-  
-  for (const modelName of models) {
     try {
-      const { prompt } = req.body;
-      const msg = await anthropic.messages.create({
-        model: modelName,
-        max_tokens: 1000,
-        messages: [{ role: "user", content: prompt }]
-      });
-      
-      console.log(`Success! Claude responded using ${modelName}`);
-      return res.json({ response: msg.content[0].text });
-      
+        // This command asks Anthropic: "Tell me what models I can use"
+        const models = await anthropic.models.list();
+        console.log("AVAILABLE MODELS:", JSON.stringify(models.data.map(m => m.id)));
+        
+        res.json({ response: "Check your logs for the list of available models!" });
     } catch (error) {
-      console.log(`Failed to use model ${modelName}, trying next...`);
-      // If this is the last model and it still failed, we log the real error
-      if (modelName === models[models.length - 1]) {
         console.error("FULL AI ERROR:", JSON.stringify(error, null, 2));
-      }
+        res.status(500).json({ error: "Failed to connect to AI" });
     }
-  }
-  
-  res.status(500).json({ error: "All AI models failed." });
 });
 
 const PORT = process.env.PORT || 3000;
