@@ -17,14 +17,19 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
+    // 1. Verify we have the key (log just the first 4 chars so we don't leak the whole key)
+    const keyPrefix = process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.substring(0, 4) : "NONE";
+    console.log("Checking API Key prefix:", keyPrefix);
+
     try {
-        // This command asks Anthropic: "Tell me what models I can use"
         const models = await anthropic.models.list();
-        console.log("AVAILABLE MODELS:", JSON.stringify(models.data.map(m => m.id)));
-        
-        res.json({ response: "Check your logs for the list of available models!" });
+        console.log("SUCCESS! Available models:", JSON.stringify(models.data.map(m => m.id)));
+        res.json({ response: "Check logs for models!" });
     } catch (error) {
-        console.error("FULL AI ERROR:", JSON.stringify(error, null, 2));
+        // 2. This will print the actual error name and message
+        console.error("FULL AI ERROR NAME:", error.name);
+        console.error("FULL AI ERROR MESSAGE:", error.message);
+        console.error("FULL AI ERROR STATUS:", error.status);
         res.status(500).json({ error: "Failed to connect to AI" });
     }
 });
