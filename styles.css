@@ -408,6 +408,41 @@ button {
   line-height: 1.55;
 }
 
+.submitted-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: var(--radius-md);
+  background: #edf4ea;
+  border: 1px solid #cbddc6;
+  margin-bottom: 20px;
+}
+
+.submitted-banner strong {
+  display: block;
+  font-size: 1.05rem;
+  color: #2e5c28;
+}
+
+.submitted-banner p {
+  margin: 4px 0 0;
+  color: #4d6148;
+  font-size: 0.9rem;
+}
+
+.submitted-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  background: #4d6148;
+  color: white;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
 .context-expand-btn {
   background: none;
   border: none;
