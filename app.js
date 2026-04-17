@@ -51,7 +51,8 @@ function handleClick(event) {
     ui.notice = "AI is thinking...";
     render();
 
-    fetch('https://auizero-production.up.railway.app/api/generate', {
+    // Try reaching the API at the same domain (relative path)
+    fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -59,7 +60,10 @@ function handleClick(event) {
         Provide the output as a valid JSON object with the following keys: "title", "prompt", "assignmentType", "wordCountMin", "wordCountMax", "studentFocus" (as an array), and "rubric" (as an array of objects with "name", "description", and "points").` 
       })
     })
-    .then(res => res.json())
+    .then(res => {
+        if (!res.ok) throw new Error("Server returned " + res.status);
+        return res.json();
+    })
     .then(data => {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
       ui.teacherAssist = JSON.parse(jsonStr);
@@ -67,8 +71,8 @@ function handleClick(event) {
       render();
     })
     .catch(err => {
-      console.error(err);
-      ui.notice = "Error: Could not reach the AI.";
+      console.error("Fetch Error:", err);
+      ui.notice = "Error: Could not reach the AI. Check console.";
       render();
     });
     return;
