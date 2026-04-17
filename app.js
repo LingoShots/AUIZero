@@ -78,6 +78,18 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "context-toggle") {
+    const colId = target.dataset.col;
+    const preview = document.getElementById(`preview-${colId}`);
+    const full = document.getElementById(`full-${colId}`);
+    if (!preview || !full) return;
+    const isExpanded = full.style.display !== "none";
+    preview.style.display = isExpanded ? "" : "none";
+    full.style.display = isExpanded ? "none" : "";
+    target.textContent = isExpanded ? "Show more" : "Show less";
+    return;
+  }
+
   if (action === "save-draft") {
     persistState();
     ui.notice = "Draft saved.";
@@ -739,29 +751,62 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                       <p class="mini-label">Ideas</p>
                       ${
                         selectedSubmission.ideaResponses.length
-                          ? selectedSubmission.ideaResponses.map((idea) => `
-                            <div style="margin-top:14px;">
-                              <ul class="focus-list">${idea.aiBullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-                              <p style="margin-top:10px;"><strong>In my own words:</strong> ${escapeHtml(idea.rewrittenIdea || "Not answered yet")}</p>
-                              <p><strong>I chose it because:</strong> ${escapeHtml(idea.whyChosen || "Not answered yet")}</p>
-                            </div>
-                          `).join("")
+                          ? selectedSubmission.ideaResponses.map((idea, ideaIdx) => {
+                              const ideaColId = `ideas-col-${selectedSubmission.id}-${ideaIdx}`;
+                              const ideasFull = `
+                                <ul class="focus-list">${idea.aiBullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+                                <p style="margin-top:10px;"><strong>In my own words:</strong> ${escapeHtml(idea.rewrittenIdea || "Not answered yet")}</p>
+                                <p><strong>I chose it because:</strong> ${escapeHtml(idea.whyChosen || "Not answered yet")}</p>
+                              `;
+                              const ideasPreview = `
+                                <ul class="focus-list">${idea.aiBullets.slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}${idea.aiBullets.length > 2 ? `<li style="color:var(--muted)">…</li>` : ""}</ul>
+                              `;
+                              return `
+                                <div style="margin-top:14px;">
+                                  <div class="context-preview" id="preview-${ideaColId}">${ideasPreview}</div>
+                                  <div class="context-full" id="full-${ideaColId}" style="display:none">${ideasFull}</div>
+                                  <button class="context-toggle" data-action="context-toggle" data-col="${ideaColId}" style="margin-top:8px;">Show more</button>
+                                </div>
+                              `;
+                            }).join("")
                           : `<p class="subtle">No idea help used.</p>`
                       }
                     </div>
                     <div class="compare-column">
                       <p class="mini-label">Draft</p>
-                      <pre>${escapeHtml(selectedSubmission.draftText || "No draft yet.")}</pre>
+                      ${(() => {
+                        const draftColId = `draft-col-${selectedSubmission.id}`;
+                        const draftText = selectedSubmission.draftText || "No draft yet.";
+                        const draftLines = draftText.split("\n");
+                        const draftPreview = draftLines.slice(0, 5).join("\n");
+                        const hasMore = draftLines.length > 5;
+                        return `
+                          <pre class="context-preview" id="preview-${draftColId}">${escapeHtml(draftPreview)}${hasMore ? "\n…" : ""}</pre>
+                          <pre class="context-full" id="full-${draftColId}" style="display:none">${escapeHtml(draftText)}</pre>
+                          ${hasMore ? `<button class="context-toggle" data-action="context-toggle" data-col="${draftColId}" style="margin-top:8px;">Show more</button>` : ""}
+                        `;
+                      })()}
                     </div>
                     <div class="compare-column">
                       <p class="mini-label">Final</p>
-                      <pre>${escapeHtml(selectedSubmission.finalText || "No final yet.")}</pre>
-                      <div class="muted-block" style="margin-top:12px;">
-                        <strong>Outline plan:</strong> ${escapeHtml(renderOutlineSummary(assignment, selectedSubmission))}
-                      </div>
-                      <div class="muted-block" style="margin-top:12px;">
-                        <strong>What I improved:</strong> ${escapeHtml(selectedSubmission.reflections.improved || "Not answered")}
-                      </div>
+                      ${(() => {
+                        const finalColId = `final-col-${selectedSubmission.id}`;
+                        const finalText = selectedSubmission.finalText || "No final yet.";
+                        const finalLines = finalText.split("\n");
+                        const finalPreview = finalLines.slice(0, 5).join("\n");
+                        const hasMore = finalLines.length > 5;
+                        return `
+                          <pre class="context-preview" id="preview-${finalColId}">${escapeHtml(finalPreview)}${hasMore ? "\n…" : ""}</pre>
+                          <pre class="context-full" id="full-${finalColId}" style="display:none">${escapeHtml(finalText)}</pre>
+                          ${hasMore ? `<button class="context-toggle" data-action="context-toggle" data-col="${finalColId}" style="margin-top:8px;">Show more</button>` : ""}
+                          <div class="muted-block" style="margin-top:12px;">
+                            <strong>Outline plan:</strong> ${escapeHtml(renderOutlineSummary(assignment, selectedSubmission))}
+                          </div>
+                          <div class="muted-block" style="margin-top:12px;">
+                            <strong>What I improved:</strong> ${escapeHtml(selectedSubmission.reflections.improved || "Not answered")}
+                          </div>
+                        `;
+                      })()}
                     </div>
                   </div>
                 </div>
