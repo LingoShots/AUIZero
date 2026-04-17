@@ -17,25 +17,34 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    console.log("Sending prompt to Claude...");
-    
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL, // Uses your variable here
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }]
-    });
-    
-    console.log("Claude response received successfully!");
-    res.json({ response: msg.content[0].text });
-  } catch (error) {
-    // This captures the real API error (like billing or permissions)
-    console.error("ANTHROPIC API ERROR:", error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
+  // This is your "Fallback List"
+  // If the first one is retired, the code automatically tries the second, then third.
+  const models = ["claude-3-5-sonnet-latest", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"];
+  
+  let lastError;
 
+  for (const modelName of models) {
+    try {
+      const { prompt } = req.body;
+      const msg = await anthropic.messages.create({
+        model: modelName,
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }]
+      });
+      
+      console.log(`Success! Claude responded using ${modelName}`);
+      return res.json({ response: msg.content[0].text });
+      
+    } catch (error) {
+      console.log(`Model ${modelName} failed or is unavailable. Trying next...`);
+      lastError = error.message;
+    }
+  }
+  
+  // If we get here, all models failed
+  console.error("ALL MODELS FAILED:", lastError);
+  res.status(500).json({ error: "All AI models failed: " + lastError });
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${}`);
