@@ -408,6 +408,18 @@ button {
   line-height: 1.55;
 }
 
+.context-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .timeline-card,
 .feedback-card,
 .idea-card {
