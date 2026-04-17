@@ -90,13 +90,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === "generate-teacher-assist") {
-    ui.teacherAssist = generateTeacherAssist(ui.teacherDraft);
-    ui.notice = "Your assignment has been turned into a student-ready version with a suggested rubric.";
-    render();
-    return;
-  }
-
   if (action === "use-generated-assignment" && ui.teacherAssist) {
     applyTeacherAssistToDraft();
     ui.notice = "Generated assignment details copied into the draft.";
