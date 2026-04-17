@@ -127,6 +127,20 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "delete-assignment") {
+    const assignmentId = target.dataset.assignmentId;
+    if (!confirm("Delete this assignment? This cannot be undone.")) return;
+    state.assignments = state.assignments.filter((a) => a.id !== assignmentId);
+    state.submissions = state.submissions.filter((s) => s.assignmentId !== assignmentId);
+    if (ui.selectedAssignmentId === assignmentId) ui.selectedAssignmentId = state.assignments[0]?.id || null;
+    if (ui.selectedStudentAssignmentId === assignmentId) ui.selectedStudentAssignmentId = state.assignments[0]?.id || null;
+    ui.selectedReviewSubmissionId = null;
+    ui.notice = "Assignment deleted.";
+    persistState();
+    render();
+    return;
+  }
+
   if (action === "select-assignment") {
     stopPlayback();
     ui.selectedAssignmentId = target.dataset.assignmentId;
@@ -432,7 +446,6 @@ function render() {
   appEl.innerHTML = `
     <div class="app-shell">
       ${renderTopbar()}
-      ${renderHero()}
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
@@ -504,7 +517,7 @@ function renderTeacherWorkspace() {
           </div>
           <div class="toolbar">
             <button class="button-secondary" data-action="generate-teacher-assist">Format With AI</button>
-            <button class="button" data-action="save-assignment">Save</button>
+            <button class="button" data-action="save-assignment" ${!ui.teacherDraft.title || !ui.teacherDraft.prompt ? "disabled title='Generate and apply the AI draft first'" : ""}>Save</button>
           </div>
         </div>
         <div class="field-stack">
@@ -594,7 +607,10 @@ function renderTeacherWorkspace() {
                         <h3>${escapeHtml(assignment.title)}</h3>
                         <p>${escapeHtml(assignment.prompt)}</p>
                       </div>
-                      <button class="button-ghost" data-action="select-assignment" data-assignment-id="${assignment.id}">Open</button>
+                      <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <button class="button-ghost" data-action="select-assignment" data-assignment-id="${assignment.id}">Open</button>
+                        <button class="button-ghost" data-action="delete-assignment" data-assignment-id="${assignment.id}" style="color:var(--danger);border-color:var(--danger);">Delete</button>
+                      </div>
                     </div>
                     <div class="pill-row">
                       <span class="pill">${escapeHtml(titleCase(assignment.assignmentType || "writing"))}</span>
@@ -943,7 +959,6 @@ function renderStudentIdeasStep(assignment, submission) {
           submission.ideaResponses.length
             ? submission.ideaResponses.map((idea) => `
               <div class="idea-card">
-                <strong>${escapeHtml(formatDateTime(idea.requestedAt))}</strong>
                 <ul>${idea.aiBullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
                 <div class="field-stack" style="margin-top:12px;">
                   <div class="field">
@@ -990,15 +1005,6 @@ function renderStudentDraftStep(assignment, submission) {
       <div class="pill-row">
         <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
         <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
-        <span class="pill">Paste flags: <strong id="draft-paste-count">${submission.writingEvents.filter((entry) => entry.type === "paste" && entry.flagged).length}</strong></span>
-      </div>
-      <div class="teacher-ready-card">
-        <p class="mini-label">Writing focus notes</p>
-        ${
-          submission.focusAnnotations.length
-            ? `<ul class="focus-list">${submission.focusAnnotations.map((entry) => `<li>${escapeHtml(formatTime(entry.timestamp))}: ${escapeHtml(entry.label)}</li>`).join("")}</ul>`
-            : `<p class="subtle">No focus notes saved yet.</p>`
-        }
       </div>
       <div class="feedback-list">
         ${
@@ -1032,6 +1038,15 @@ function renderStudentFinalStep(assignment, submission) {
         </div>
         <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit Final</button>
       </div>
+      ${submission.status === "submitted" ? `
+        <div class="submitted-banner">
+          <div class="submitted-icon">✓</div>
+          <div>
+            <strong>Submitted!</strong>
+            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Your teacher will review it soon.</p>
+          </div>
+        </div>
+      ` : ""}
       <div class="teacher-ready-card">
         <p class="mini-label">Guided outline</p>
         <div class="field-stack">
