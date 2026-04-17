@@ -15,14 +15,18 @@ app.get('/', (req, res) => {
 app.post('/api/generate', async (req, res) => {
     try {
         const { prompt } = req.body;
+        console.log("Sending prompt to Claude:", prompt); // This lets us see the prompt in Railway logs
+        
         const msg = await anthropic.messages.create({
             model: "claude-3-5-sonnet-latest",
             max_tokens: 1000,
             messages: [{ role: "user", content: prompt }]
         });
+        
+        console.log("Claude response received successfully");
         res.json({ response: msg.content[0].text });
     } catch (error) {
-        console.error("AI Error:", error);
+        console.error("FULL AI ERROR:", JSON.stringify(error, null, 2)); // This will give us the full error
         res.status(500).json({ error: "Failed to connect to AI" });
     }
 });
