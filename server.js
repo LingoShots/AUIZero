@@ -17,22 +17,24 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    console.log("Sending prompt to Claude...");
-    
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL, // 2. We use the variable here!
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }]
-    });
-    
-    console.log("Claude response received successfully");
-    res.json({ response: msg.content[0].text });
-  } catch (error) {
-    console.error("FULL AI ERROR:", JSON.stringify(error, null, 2));
-    res.status(500).json({ error: "Failed to connect to AI" });
+  const models = ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"];
+  
+  for (const modelName of models) {
+    try {
+      const { prompt } = req.body;
+      const msg = await anthropic.messages.create({
+        model: modelName,
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }]
+      });
+      return res.json({ response: msg.content[0].text });
+    } catch (error) {
+      console.log(`Failed to use model ${modelName}, trying next...`);
+      // If this was the last model, we move to the final catch
+      if (modelName === models[models.length - 1]) throw error;
+    }
   }
+  res.status(500).json({ error: "All AI models failed." });
 });
 
 const PORT = process.env.PORT || 3000;
