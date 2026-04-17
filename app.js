@@ -47,22 +47,20 @@ function handleClick(event) {
 
   const action = target.dataset.action;
 
-   if (action === "generate-teacher-assist") {
+ if (action === "generate-teacher-assist") {
     ui.notice = "AI is thinking...";
     render();
 
-    const prompt = `Create a student-ready writing assignment based on these notes: "${ui.teacherDraft.brief}". 
-    Provide the output as a valid JSON object with the following keys: "title", "prompt", "assignmentType", "wordCountMin", "wordCountMax", "studentFocus" (as an array), and "rubric" (as an array of objects with "name", "description", and "points").`;
-
-    fetch('/api/generate', {
+    fetch('https://auizero-production.up.railway.app/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ 
+        prompt: `Create a student-ready writing assignment based on these notes: "${ui.teacherDraft.brief}". 
+        Provide the output as a valid JSON object with the following keys: "title", "prompt", "assignmentType", "wordCountMin", "wordCountMax", "studentFocus" (as an array), and "rubric" (as an array of objects with "name", "description", and "points").` 
+      })
     })
     .then(res => res.json())
     .then(data => {
-      // Claude might wrap the JSON in ```json ... ``` markers, 
-      // so we use a little trick to clean it up.
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
       ui.teacherAssist = JSON.parse(jsonStr);
       ui.notice = "Assignment generated successfully!";
@@ -70,7 +68,7 @@ function handleClick(event) {
     })
     .catch(err => {
       console.error(err);
-      ui.notice = "Error: Could not reach the AI. Check your server logs.";
+      ui.notice = "Error: Could not reach the AI.";
       render();
     });
     return;
