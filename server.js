@@ -12,8 +12,22 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+app.post('/api/generate', async (req, res) => {
+    try {
+        const { prompt } = req.body;
+        const msg = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20240620",
+            max_tokens: 1000,
+            messages: [{ role: "user", content: prompt }]
+        });
+        res.json({ response: msg.content[0].text });
+    } catch (error) {
+        console.error("AI Error:", error);
+        res.status(500).json({ error: "Failed to connect to AI" });
+    }
+});
 // We will add your AI and Database logic here in the next steps!
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${}`);
+  console.log(`Server is running on port ${PORT}`);
 });
