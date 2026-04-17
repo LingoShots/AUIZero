@@ -78,6 +78,13 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "save-draft") {
+    persistState();
+    ui.notice = "Draft saved.";
+    render();
+    return;
+  }
+
   if (action === "reset-app") {
     stopPlayback();
     state = createBlankState();
@@ -86,6 +93,13 @@ function handleClick(event) {
     ui.notice = "Workspace cleared. Ready for a fresh pilot.";
     hydrateSelections();
     persistState();
+    render();
+    return;
+  }
+
+  if (action === "generate-teacher-assist") {
+    ui.teacherAssist = generateTeacherAssist(ui.teacherDraft);
+    ui.notice = "Your assignment has been turned into a student-ready version with a suggested rubric.";
     render();
     return;
   }
@@ -499,7 +513,7 @@ function renderTeacherWorkspace() {
             <div class="field">
               <label for="teacher-language-level">Student language level</label>
               <select id="teacher-language-level" data-teacher-field="languageLevel">
-                ${["early middle school", "middle school", "high school"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(titleCase(level))}</option>`).join("")}
+                ${["A0", "A1", "A2", "B1", "B2", "C1", "C2"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(level)}</option>`).join("")}
               </select>
             </div>
           </div>
@@ -923,15 +937,8 @@ function renderStudentDraftStep(assignment, submission) {
         </div>
       </div>
       <div class="field-grid compact-grid">
-        <div class="field">
-          <label for="focus-idea-select">Which idea are you using right now?</label>
-          <select id="focus-idea-select" aria-label="Select focus idea">
-            <option value="">Pick one idea</option>
-            ${submission.ideaResponses.filter((idea) => idea.rewrittenIdea.trim()).map((idea) => `<option value="${idea.id}" ${ui.activeFocusIdeaId === idea.id ? "selected" : ""}>${escapeHtml(trimTo(idea.rewrittenIdea, 54))}</option>`).join("")}
-          </select>
-        </div>
         <div class="field inline-end">
-          <button class="button-ghost" data-action="add-focus-note">Save Focus</button>
+          <button class="button-ghost" data-action="save-draft">Save Draft</button>
         </div>
         <div class="field inline-end">
           <button class="button-secondary" data-action="request-feedback" ${submission.feedbackHistory.length >= assignment.feedbackRequestLimit ? "disabled" : ""}>Check My Draft</button>
@@ -1619,11 +1626,15 @@ function rubricForType(type) {
 
 function studentPromptForType(type, topic, languageLevel) {
   const levelIntro =
-    languageLevel === "early middle school"
-      ? "Write in clear, simple sentences."
-      : languageLevel === "middle school"
-        ? "Write clearly and explain your thinking."
-        : "Write clearly and develop your ideas with detail.";
+    ["A0", "A1"].includes(languageLevel)
+      ? "Use very short, simple sentences."
+      : languageLevel === "A2"
+        ? "Write in clear, simple sentences."
+        : languageLevel === "B1"
+          ? "Write clearly and explain your thinking."
+          : languageLevel === "B2"
+            ? "Write clearly and develop your ideas with some detail."
+            : "Write clearly, develop your ideas fully, and use precise language.";
 
   if (type === "argument") {
     return `${levelIntro} Write an opinion piece about ${topic}. Say what you believe, give at least one strong reason or example, and explain why it matters.`;
@@ -1732,7 +1743,6 @@ function generateFeedback(assignment, submission) {
   const words = wordCount(text);
   const paragraphs = splitParagraphs(text);
   const sentences = splitSentences(text);
-  const feedback = [];
 
   if (!text) {
     return [
@@ -1741,33 +1751,57 @@ function generateFeedback(assignment, submission) {
     ];
   }
 
+  // Primary checks — triggered by what's actually in the draft
+  const primaryPool = [];
+
   if (words < assignment.wordCountMin * 0.7) {
-    feedback.push("Your draft is still short. Can you add one more example or explanation?");
+    primaryPool.push("Your draft is still short. Can you add one more example or explanation?");
   }
 
   if (paragraphs.length < 2) {
-    feedback.push("Could you split this into at least two parts so the reader can follow your thinking more easily?");
+    primaryPool.push("Could you split this into at least two parts so the reader can follow your thinking more easily?");
   }
 
   const longSentence = sentences.find((sentence) => wordCount(sentence) > 28);
   if (longSentence) {
-    feedback.push("One sentence feels long. Where could you break it into two shorter sentences?");
+    primaryPool.push("One sentence feels long. Where could you break it into two shorter sentences?");
   }
 
   if (!/\bbecause\b|\bfor example\b|\bfor instance\b|\bsuch as\b/i.test(text)) {
-    feedback.push("Add a sentence that gives a reason or example so your writing feels stronger.");
+    primaryPool.push("Add a sentence that gives a reason or example so your writing feels stronger.");
   }
 
   if ((text.match(/\bthis\b|\bit\b|\bthey\b/gi) || []).length >= 5) {
-    feedback.push("A few words like 'this' or 'it' may be unclear. Which one needs a more exact word?");
+    primaryPool.push("A few words like 'this' or 'it' may be unclear. Which one needs a more exact word?");
   }
 
-  if (!feedback.length) {
-    feedback.push("Read your writing out loud. Where does it sound confusing or too quick?");
-    feedback.push("Check that each paragraph has one main job.");
+  // Secondary checks — always available but only used when primary ones are exhausted or repeated
+  const secondaryPool = [
+    "Read your writing out loud. Where does it sound confusing or too quick?",
+    "Check that each paragraph has one main job.",
+    "Does your opening sentence tell the reader exactly what you are writing about?",
+    "Is there one place where you could add a specific detail to make your point clearer?",
+    "Look at your final sentence. Does it leave the reader with a clear idea of what you meant?",
+    "Are there any words you have used more than twice in a row? Try swapping one for a different word.",
+  ];
+
+  // Collect all items already given in previous feedback rounds
+  const previousItems = new Set(submission.feedbackHistory.flatMap((entry) => entry.items));
+
+  // Filter each pool to only items not already given
+  const freshPrimary = primaryPool.filter((item) => !previousItems.has(item));
+  const freshSecondary = secondaryPool.filter((item) => !previousItems.has(item));
+
+  const combined = [...freshPrimary, ...freshSecondary];
+
+  if (!combined.length) {
+    return [
+      "You have worked through all the main checks. Read the full piece once more and look for any word that feels wrong.",
+      "Ask yourself: does every sentence belong here? Remove anything that does not help your main idea.",
+    ];
   }
 
-  return feedback.slice(0, 4);
+  return combined.slice(0, 4);
 }
 
 function getOutlineConfig(assignment, submission) {
@@ -1898,7 +1932,7 @@ function createBlankTeacherDraft() {
     prompt: "",
     focus: "",
     assignmentType: "response",
-    languageLevel: "middle school",
+    languageLevel: "B1",
     wordCountMin: 250,
     wordCountMax: 400,
     ideaRequestLimit: 3,
