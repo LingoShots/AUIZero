@@ -115,6 +115,39 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
+  iif (action === "add-annotation") {
+    const submission = getSelectedReviewSubmission();
+    if (!submission) return;
+    const code = target.dataset.code;
+    const selection = window.getSelection();
+    const selectedText = selection ? selection.toString().trim() : "";
+    if (!selectedText) {
+      alert("Please select some text in the student text box first, then click a code.");
+      return;
+    }
+    let note = "";
+    if (code === "NOTE") {
+      note = prompt("Add a note for this selection:") || "";
+      if (!note) return;
+    }
+    submission.teacherReview = submission.teacherReview || {};
+    submission.teacherReview.annotations = submission.teacherReview.annotations || [];
+    submission.teacherReview.annotations.push({ id: uid("ann"), code, selectedText, note });
+    persistState();
+    render();
+    return;
+  }
+
+  if (action === "remove-annotation") {
+    const submission = getSelectedReviewSubmission();
+    if (!submission?.teacherReview?.annotations) return;
+    const index = Number(target.dataset.annotationIndex);
+    submission.teacherReview.annotations.splice(index, 1);
+    persistState();
+    render();
+    return;
+  }
+
   if (action === "insert-error-code") {
     const code = target.dataset.code;
     const textarea = document.getElementById("teacher-review-notes");
@@ -1044,15 +1077,29 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                       <input id="teacher-review-score" type="number" min="0" value="${escapeAttribute(String(reviewScore))}" />
                     </div>
                  <div class="field">
-                      <label>Student final text</label>
-                      <div style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.65;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;">${escapeHtml(selectedSubmission?.finalText || selectedSubmission?.draftText || "No text submitted yet.")}</div>
+                      <label>Student text — select any passage, then click a code or "Add Note" to annotate it</label>
+                      <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(selectedSubmission)}</div>
+                    </div>
+                    <div class="field" style="margin-top:6px;">
+                      <div class="error-code-toolbar">
+                        <span class="mini-label" style="align-self:center;">Annotate selection:</span>
+                        ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}">${code}</button>`).join("")}
+                        <button class="error-code-btn" data-action="add-annotation" data-code="NOTE" title="Add a custom note" style="background:#fff9e6;border-color:#e0c84a;">+ Note</button>
+                      </div>
+                      ${(selectedSubmission?.teacherReview?.annotations?.length) ? `
+                        <div style="margin-top:10px;display:grid;gap:6px;">
+                          ${selectedSubmission.teacherReview.annotations.map((ann, i) => `
+                            <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#fff9e6;border:1px solid #e0c84a;font-size:0.88rem;">
+                              <strong style="color:var(--accent-deep);flex-shrink:0;">${escapeHtml(ann.code)}</strong>
+                              <span style="flex:1;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
+                              <button class="error-code-btn" data-action="remove-annotation" data-annotation-index="${i}" style="flex-shrink:0;color:var(--danger);">✕</button>
+                            </div>
+                          `).join("")}
+                        </div>
+                      ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No annotations yet. Select text above then click a code.</p>`}
                     </div>
                     <div class="field">
-                      <label for="teacher-review-notes">Teacher notes — select text above, then click a code or type your comment below</label>
-                      <div class="error-code-toolbar">
-                        <span class="mini-label" style="align-self:center;">Insert:</span>
-                        ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="insert-error-code" data-code="[${code}]" title="${label}">${code}</button>`).join("")}
-                      </div>
+                      <label for="teacher-review-notes">Overall teacher notes</label>
                       <textarea id="teacher-review-notes">${escapeHtml(reviewNotes)}</textarea>
                     </div>
                     <button class="button" data-action="save-teacher-review">Save Review</button>
@@ -2195,6 +2242,32 @@ Task: "${assignment.prompt}"
 
 Start by asking the student what topic or idea they are thinking about. If they struggle to answer, suggest they think about two or three possible ideas and pick the one they feel most confident about.`;
 }
+function renderAnnotatedText(submission) {
+  const text = submission?.finalText || submission?.draftText || "No text submitted yet.";
+  const annotations = submission?.teacherReview?.annotations || [];
+  if (!annotations.length) return escapeHtml(text);
+
+  const highlights = [];
+  for (const ann of annotations) {
+    const idx = text.indexOf(ann.selectedText);
+    if (idx !== -1) {
+      highlights.push({ start: idx, end: idx + ann.selectedText.length, code: ann.code });
+    }
+  }
+  highlights.sort((a, b) => a.start - b.start);
+
+  let result = "";
+  let cursor = 0;
+  for (const h of highlights) {
+    if (h.start < cursor) continue;
+    result += escapeHtml(text.slice(cursor, h.start));
+    result += `<mark style="background:#fff176;border-radius:3px;padding:1px 2px;" title="${escapeHtml(h.code)}">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;">${escapeHtml(h.code)}</sup></mark>`;
+    cursor = h.end;
+  }
+  result += escapeHtml(text.slice(cursor));
+  return result;
+}
+
 function downloadStudentWork(assignment, submission) {
   const student = getUserById(submission.studentId);
   const studentName = student?.name || "Student";
@@ -2511,6 +2584,7 @@ function createEmptySubmission(assignmentId, studentId) {
       suggestedGrade: null,
       finalScore: "",
       finalNotes: "",
+      annotations: [],
     },
     status: "draft",
     startedAt: null,
@@ -2636,6 +2710,7 @@ function normalizeSubmission(submission) {
       suggestedGrade: submission?.teacherReview?.suggestedGrade || null,
       finalScore: submission?.teacherReview?.finalScore ?? "",
       finalNotes: submission?.teacherReview?.finalNotes || "",
+      annotations: safeArray(submission?.teacherReview?.annotations),
     },
     chatHistory: safeArray(submission?.chatHistory).map((msg) => ({
       role: msg?.role || "user",
