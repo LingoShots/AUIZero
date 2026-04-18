@@ -2286,8 +2286,10 @@ ${chatLines || "<p><em>No conversation recorded.</em></p>"}
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+ URL.revokeObjectURL(url);
 }
+
+function getOutlineFields(assignment, submission) {
   const type = assignment.assignmentType || "response";
   const topic = extractKeywords(`${assignment.title} ${assignment.prompt}`)[0] || "your topic";
   const outline = submission.outline || {};
