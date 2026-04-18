@@ -916,6 +916,32 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
             </div>
           </div>
           <div class="student-list">
+            ${(() => {
+              const total = getStudentUsers().length;
+              const submitted = submissions.filter((s) => s.status === "submitted").length;
+              const graded = submissions.filter((s) => s.teacherReview?.savedAt).length;
+              const flagged = submissions.filter((s) => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
+              return `
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+                  <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${submitted}/${total}</div>
+                    <div style="font-size:0.75rem;color:var(--muted);">Submitted</div>
+                  </div>
+                  <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${graded}</div>
+                    <div style="font-size:0.75rem;color:var(--muted);">Graded</div>
+                  </div>
+                  <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${total - submitted}</div>
+                    <div style="font-size:0.75rem;color:var(--muted);">Not submitted</div>
+                  </div>
+                  <div style="background:${flagged ? "#fff3cd" : "var(--surface)"};border:1px solid ${flagged ? "#e0c84a" : "var(--line)"};border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${flagged}</div>
+                    <div style="font-size:0.75rem;color:var(--muted);">Paste flags</div>
+                  </div>
+                </div>
+              `;
+            })()}
             ${getStudentUsers().map((student) => {
               const submission = submissions.find((entry) => entry.studentId === student.id);
               if (!submission) {
@@ -932,6 +958,7 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                 `;
               }
               const studentMetrics = computeProcessMetrics(assignment, submission);
+              const isGraded = Boolean(submission.teacherReview?.savedAt);
               return `
                 <div class="submission-card simple-card">
                   <div class="card-top">
@@ -939,6 +966,7 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                       <h3>${escapeHtml(student.name)}</h3>
                       <div class="submission-status">
                         <span class="status-pill">${escapeHtml(titleCase(submission.status))}</span>
+                        ${isGraded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded</span>` : ""}
                         ${studentMetrics.largePasteCount ? `<span class="warning-pill">${studentMetrics.largePasteCount} paste flag${studentMetrics.largePasteCount === 1 ? "" : "s"}</span>` : ""}
                       </div>
                     </div>
@@ -948,6 +976,7 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                     <span class="pill">${studentMetrics.totalMinutes} min</span>
                     <span class="pill">${studentMetrics.revisionCount} edits</span>
                     <span class="pill">${studentMetrics.finalWordCount} words</span>
+                    ${submission.teacherReview?.finalScore !== "" && submission.teacherReview?.finalScore != null ? `<span class="pill">Score: ${escapeHtml(String(submission.teacherReview.finalScore))}</span>` : ""}
                   </div>
                 </div>
               `;
@@ -1347,7 +1376,10 @@ function renderStudentFinalStep(assignment, submission) {
           <h3>Plan, revise, and submit</h3>
           <p class="subtle">Use the guided outline to shape your final piece, then explain what you improved.</p>
         </div>
-        <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit Final</button>
+        ${assignment.deadline && new Date(assignment.deadline) < new Date() && submission.status !== "submitted"
+          ? `<div style="font-size:0.82rem;color:var(--danger);font-weight:600;text-align:right;">Deadline passed</div>`
+          : `<button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit Final</button>`
+        }
       </div>
       ${submission.status === "submitted" ? `
         <div class="submitted-banner">
@@ -1587,12 +1619,17 @@ function handleSubmission() {
   const finalText = finalEditor.value.trim();
   const improved = submission.reflections.improved.trim();
 
- if (!finalText) {
-    ui.notice = "Write your final text before submitting.";
+  if (assignment.deadline && new Date(assignment.deadline) < new Date()) {
+    ui.notice = "The deadline for this assignment has passed. Speak to your teacher if you need an extension.";
     render();
     return;
   }
 
+  if (!finalText) {
+    ui.notice = "Write your final text before submitting.";
+    render();
+    return;
+  }
   submission.finalText = finalText;
   submission.status = "submitted";
   submission.submittedAt = new Date().toISOString();
@@ -2382,6 +2419,8 @@ function downloadStudentWork(assignment, submission) {
   table{width:100%;border-collapse:collapse;font-size:.88rem}
   th{text-align:left;padding:6px 10px;background:#f4efe6}
   td{padding:6px 10px;border-bottom:1px solid #ddd2c2}
+  mark{background:#fff176;border-radius:3px;padding:1px 2px;}
+  sup{font-size:0.7em;color:#a55233;font-weight:700;}
   @media print{body{margin:20px}}
 </style>
 </head>
@@ -2410,6 +2449,24 @@ ${chatLines || "<p><em>No conversation recorded.</em></p>"}
 
 <h2>3 — Final submission</h2>
 <pre>${escapeHtml(submission.finalText || "No final text.")}</pre>
+
+${(submission.teacherReview?.annotations?.length) ? `
+<h2>Teacher annotations</h2>
+<table>
+  <thead><tr><th>Code</th><th>Selected text</th><th>Note</th></tr></thead>
+  <tbody>${submission.teacherReview.annotations.map((ann) => `
+    <tr>
+      <td><strong>${escapeHtml(ann.code)}</strong></td>
+      <td style="background:#fff9e6;">"${escapeHtml(ann.selectedText)}"</td>
+      <td>${escapeHtml(ann.note || "")}</td>
+    </tr>`).join("")}
+  </tbody>
+</table>` : ""}
+
+${(submission.teacherReview?.finalScore !== "" && submission.teacherReview?.finalScore != null) ? `
+<h2>Teacher score &amp; feedback</h2>
+<p><strong>Score:</strong> ${escapeHtml(String(submission.teacherReview.finalScore))}</p>
+${submission.teacherReview.finalNotes ? `<p>${escapeHtml(submission.teacherReview.finalNotes)}</p>` : ""}` : ""}
 
 <h2>Guided outline</h2>
 <p><strong>Part 1:</strong> ${escapeHtml(submission.outline?.partOne || "—")}</p>
