@@ -379,6 +379,16 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
+  if (action === "use-suggested-comment") {
+    const submission = getSelectedReviewSubmission();
+    if (!submission?.teacherReview?.suggestedGrade?.studentComment) return;
+    const textarea = document.getElementById("teacher-review-notes");
+    if (textarea) {
+      textarea.value = submission.teacherReview.suggestedGrade.studentComment;
+      textarea.focus();
+    }
+    return;
+  }
   if (action === "accept-suggested-grade") {
     const submission = getSelectedReviewSubmission();
     if (!submission?.teacherReview?.suggestedGrade) {
@@ -1063,6 +1073,13 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                             <strong>Total:</strong> ${selectedSubmission.teacherReview.suggestedGrade.totalScore}/${selectedSubmission.teacherReview.suggestedGrade.maxScore}
                             <p style="margin-top:10px;">${escapeHtml(selectedSubmission.teacherReview.suggestedGrade.justification)}</p>
                           </div>
+                          ${selectedSubmission.teacherReview.suggestedGrade.studentComment ? `
+                          <div class="muted-block" style="background:#f0f7ee;border-left:3px solid var(--accent);margin-top:10px;">
+                            <strong style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:6px;">SUGGESTED STUDENT COMMENT</strong>
+                            <p style="font-size:0.9rem;line-height:1.6;">${escapeHtml(selectedSubmission.teacherReview.suggestedGrade.studentComment)}</p>
+                            <button class="button-secondary" style="margin-top:10px;font-size:0.8rem;" data-action="use-suggested-comment">Copy to teacher notes</button>
+                          </div>
+                          ` : ""}
                           <div class="toolbar">
                             <button class="button-secondary" data-action="accept-suggested-grade">Use Suggested Score</button>
                             <button class="button-ghost" data-action="ignore-suggested-grade">Ignore</button>
@@ -2488,6 +2505,7 @@ function gradeSubmission(assignment, submission) {
     totalScore,
     maxScore,
     justification: buildGradeJustification(assignment, submission, metrics, totalScore, maxScore),
+    studentComment: buildSuggestedStudentComment(assignment, submission, metrics, totalScore, maxScore),
   };
 }
 
@@ -2506,14 +2524,102 @@ function buildCriterionReason(name, metrics, revisionStrength, reflectionsComple
   return reflectionsComplete ? `The student completed the reflection, and the draft-to-final change suggests ${revisionStrength > 0.35 ? "meaningful" : "some"} revision.${pasteConcern}` : `The process is visible, but the reflection is incomplete or thin.${pasteConcern}`;
 }
 
+function isJibberish(text) {
+  if (!text || text.trim().length < 3) return true;
+  const t = text.trim();
+  const wordList = t.split(/\s+/);
+  if (wordList.length < 2 && t.length < 8) return true;
+  const uniqueChars = new Set(t.toLowerCase().replace(/\s/g, "")).size;
+  if (uniqueChars < 4 && t.length > 5) return true;
+  return false;
+}
+
+function assessChatEngagement(chatHistory) {
+  const studentMessages = (chatHistory || []).filter((m) => m.role === "user");
+  if (!studentMessages.length) return { engaged: false, messageCount: 0, note: "No chat engagement — student did not use the coaching conversation." };
+  const meaningful = studentMessages.filter((m) => !isJibberish(m.content) && m.content.trim().split(/\s+/).length >= 3);
+  const ratio = meaningful.length / studentMessages.length;
+  return {
+    engaged: ratio >= 0.5,
+    messageCount: studentMessages.length,
+    note: ratio >= 0.75
+      ? `Student engaged meaningfully in the coaching chat (${studentMessages.length} messages).`
+      : ratio >= 0.5
+        ? `Student used the chat but some responses were brief or underdeveloped (${studentMessages.length} messages).`
+        : `Student chat responses were mostly too short or unclear to show real thinking (${studentMessages.length} messages).`,
+  };
+}
+
+function assessOutlineEngagement(submission, assignment) {
+  const config = getOutlineFields(assignment, submission);
+  const fields = config?.fields || [];
+  const results = fields.map((field) => {
+    const val = String(submission.outline?.[field.key] || "").trim();
+    return { label: field.label, value: val, jibberish: isJibberish(val), empty: !val };
+  });
+  const empties = results.filter((r) => r.empty).length;
+  const jibberish = results.filter((r) => !r.empty && r.jibberish).length;
+  return {
+    complete: empties === 0 && jibberish === 0,
+    note: empties > 0
+      ? `${empties} outline field${empties > 1 ? "s were" : " was"} left blank.`
+      : jibberish > 0
+        ? `${jibberish} outline field${jibberish > 1 ? "s appear" : " appears"} to contain placeholder or jibberish text rather than real thinking.`
+        : "Outline was completed thoughtfully.",
+  };
+}
+
+function buildSuggestedStudentComment(assignment, submission, metrics, totalScore, maxScore) {
+  const chat = assessChatEngagement(submission.chatHistory);
+  const outline = assessOutlineEngagement(submission, assignment);
+  const reflection = submission.reflections.improved.trim();
+  const pasteFlags = metrics.largePasteCount;
+  const scorePercent = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+
+  const opening = scorePercent >= 80
+    ? "Well done on this assignment."
+    : scorePercent >= 60
+      ? "You have made a reasonable attempt at this assignment."
+      : "This assignment needed more effort and care.";
+
+  const chatComment = chat.engaged
+    ? "Your coaching conversation showed real engagement with your ideas before writing."
+    : chat.messageCount === 0
+      ? "You did not use the coaching chat — working through your ideas there first would have strengthened your writing."
+      : "Your responses in the coaching chat were quite brief. Try to explain your thinking more fully next time.";
+
+  const outlineComment = outline.complete
+    ? "Your outline showed you had planned your writing carefully."
+    : "Your outline was not fully or thoughtfully completed — planning your ideas before drafting makes a real difference to the quality of your writing.";
+
+  const writingComment = metrics.targetHit
+    ? "Your final piece met the expected length."
+    : "Your final piece did not meet the expected word count — make sure you develop your ideas fully.";
+
+  const revisionComment = metrics.revisionCount >= 4
+    ? "Your editing process shows you revised your work, which is good practice."
+    : "There was very little revision between your draft and final piece — always review and improve your writing before submitting.";
+
+  const reflectionComment = reflection
+    ? "Your reflection on what you improved showed self-awareness."
+    : "You did not complete the reflection on what you improved — this is an important part of the writing process.";
+
+  const pasteComment = pasteFlags
+    ? ` Note: the system detected ${pasteFlags} large paste event${pasteFlags > 1 ? "s" : ""} in your writing log — all work should be your own.`
+    : "";
+
+  return `${opening} ${chatComment} ${outlineComment} ${writingComment} ${revisionComment} ${reflectionComment}${pasteComment}`;
+}
+
 function buildGradeJustification(assignment, submission, metrics, totalScore, maxScore) {
   const reflectionComplete = submission.reflections.improved.trim();
-  const outlineComplete = isOutlineComplete(submission, assignment);
+  const outlineAssessment = assessOutlineEngagement(submission, assignment);
+  const chatAssessment = assessChatEngagement(submission.chatHistory);
   const pasteFlags = metrics.largePasteCount;
   const authorshipNote = pasteFlags
-    ? ` The process log includes ${pasteFlags} large paste event${pasteFlags === 1 ? "" : "s"}, so the teacher should question whether parts were pasted instead of written live.`
-    : " The process log does not show large paste concerns.";
-  return `Suggested score: ${totalScore}/${maxScore}. The final piece is ${metrics.targetHit ? "within" : "outside"} the target word range, shows ${metrics.improvementLabel}, and includes ${submission.writingEvents.length} tracked edit events. ${outlineComplete ? "The guided outline was completed." : "The guided outline was not fully completed."} ${reflectionComplete ? "The student also explained what they improved." : "The revision reflection is still weak or incomplete."}${authorshipNote}`;
+    ? ` The process log includes ${pasteFlags} large paste event${pasteFlags === 1 ? "" : "s"}, so authorship should be verified.`
+    : " No large paste concerns detected.";
+  return `Suggested score: ${totalScore}/${maxScore}. The final piece is ${metrics.targetHit ? "within" : "outside"} the target word range and includes ${submission.writingEvents.length} tracked edit events. ${outlineAssessment.note} ${chatAssessment.note} ${reflectionComplete ? "The student completed the reflection." : "The revision reflection is incomplete."}${authorshipNote}`;
 }
 
 function createBlankTeacherDraft() {
