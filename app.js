@@ -2813,19 +2813,11 @@ function createDemoState() {
 }
 
 function loadState() {
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (!stored) {
-    const seeded = createDemoState();
-    const normalized = normalizeState(seeded);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    return normalized;
-  }
-
   try {
-    const normalized = normalizeState(JSON.parse(stored));
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    return normalized;
-  } catch (error) {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (!stored) throw new Error("no stored state");
+    return normalizeState(JSON.parse(stored));
+  } catch (e) {
     const seeded = createDemoState();
     const normalized = normalizeState(seeded);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
