@@ -43,14 +43,40 @@ const ui = {
 let state = loadState();
 let appEl = null;
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   appEl = document.getElementById("app");
   ui.teacherDraft = createBlankTeacherDraft();
-  ui.activeUserId = getStudentUsers()[0]?.id || "student-1";
-  hydrateSelections();
+
+  // Show loading screen while checking session
+  appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
+
+  const profile = await Auth.restoreSession();
+  if (!profile) {
+    renderAuthScreen();
+    return;
+  }
+
+  await bootApp(profile);
+});
+
+async function bootApp(profile) {
+  currentProfile = profile;
+  ui.role = profile.role;
+  ui.activeUserId = profile.id;
+
+  if (profile.role === 'teacher') {
+    const data = await Auth.apiFetch('/api/classes');
+    currentClasses = data.classes || [];
+    currentClassId = currentClasses[0]?.id || null;
+  } else {
+    const data = await Auth.apiFetch('/api/student/classes');
+    currentClasses = data.classes || [];
+    currentClassId = currentClasses[0]?.id || null;
+  }
+
   bindEvents();
   render();
-});
+}
 
 let autoSaveTimer = null;
 
@@ -200,6 +226,15 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
+if (action === "sign-out") {
+    await Auth.signOut();
+    currentProfile = null;
+    currentClasses = [];
+    currentClassId = null;
+    renderAuthScreen();
+    return;
+  }
+  
   if (action === "focus-brief") {
     const brief = document.getElementById("teacher-brief");
     if (brief) {
@@ -500,6 +535,25 @@ function handleChange(event) {
     return;
   }
 
+if (target.id === "class-select") {
+    if (target.value === "__new__") {
+      const name = prompt("Class name:");
+      if (!name) { render(); return; }
+      const data = await Auth.apiFetch('/api/classes', {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      });
+      if (data.class) {
+        currentClasses.unshift(data.class);
+        currentClassId = data.class.id;
+      }
+    } else {
+      currentClassId = target.value;
+    }
+    render();
+    return;
+  }
+  
   if (target.id === "role-select") {
     const newRole = target.value;
     if (newRole === "teacher") {
@@ -677,6 +731,103 @@ function render() {
   `;
 }
 
+function renderAuthScreen() {
+  appEl.innerHTML = `
+    <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
+      <div style="width:100%;max-width:400px;background:rgba(255,253,249,0.94);border:1px solid rgba(221,210,194,0.9);border-radius:18px;padding:32px;box-shadow:0 12px 30px rgba(62,41,26,0.08);">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#a55233,#844125);color:white;font-weight:700;letter-spacing:0.08em;">AU</div>
+          <div>
+            <h1 style="margin:0;font-family:'Iowan Old Style','Palatino Linotype',serif;font-size:1.3rem;letter-spacing:-0.02em;">AUIZero</h1>
+            <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
+          </div>
+        </div>
+        <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
+          <button id="auth-tab-signin" onclick="showAuthTab('signin')" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:#a55233;">Sign in</button>
+          <button id="auth-tab-signup" onclick="showAuthTab('signup')" style="flex:1;padding:10px;border:none;background:#f4efe6;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
+        </div>
+        <div id="auth-signin-form">
+          <div style="display:grid;gap:12px;">
+            <input id="auth-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <input id="auth-password" type="password" placeholder="Password" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <button onclick="handleSignIn()" style="background:linear-gradient(135deg,#a55233,#844125);color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;">Sign in</button>
+            <p id="auth-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
+          </div>
+        </div>
+        <div id="auth-signup-form" style="display:none;">
+          <div style="display:grid;gap:12px;">
+            <input id="auth-signup-name" type="text" placeholder="Full name" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <input id="auth-signup-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <input id="auth-signup-password" type="password" placeholder="Password (min 6 characters)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <div style="display:flex;gap:8px;">
+              <button onclick="setSignupRole('student')" id="role-btn-student" style="flex:1;padding:10px;border:2px solid #a55233;border-radius:10px;background:#f4e0d4;font:inherit;font-weight:700;cursor:pointer;color:#844125;">Student</button>
+              <button onclick="setSignupRole('teacher')" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>
+            </div>
+            <button onclick="handleSignUp()" style="background:linear-gradient(135deg,#a55233,#844125);color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;">Create account</button>
+            <p id="auth-signup-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Inline auth functions — attached to window so onclick works
+  window.signupRole = 'student';
+
+  window.showAuthTab = (tab) => {
+    document.getElementById('auth-signin-form').style.display = tab === 'signin' ? 'block' : 'none';
+    document.getElementById('auth-signup-form').style.display = tab === 'signup' ? 'block' : 'none';
+    document.getElementById('auth-tab-signin').style.background = tab === 'signin' ? '#fff' : '#f4efe6';
+    document.getElementById('auth-tab-signin').style.color = tab === 'signin' ? '#a55233' : '#667063';
+    document.getElementById('auth-tab-signup').style.background = tab === 'signup' ? '#fff' : '#f4efe6';
+    document.getElementById('auth-tab-signup').style.color = tab === 'signup' ? '#a55233' : '#667063';
+  };
+
+  window.setSignupRole = (role) => {
+    window.signupRole = role;
+    document.getElementById('role-btn-student').style.border = role === 'student' ? '2px solid #a55233' : '1px solid #ddd2c2';
+    document.getElementById('role-btn-student').style.background = role === 'student' ? '#f4e0d4' : '#fff';
+    document.getElementById('role-btn-student').style.color = role === 'student' ? '#844125' : '#667063';
+    document.getElementById('role-btn-teacher').style.border = role === 'teacher' ? '2px solid #a55233' : '1px solid #ddd2c2';
+    document.getElementById('role-btn-teacher').style.background = role === 'teacher' ? '#f4e0d4' : '#fff';
+    document.getElementById('role-btn-teacher').style.color = role === 'teacher' ? '#844125' : '#667063';
+  };
+
+  window.handleSignIn = async () => {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const errEl = document.getElementById('auth-error');
+    errEl.style.display = 'none';
+    try {
+      const profile = await Auth.signIn(email, password);
+      await bootApp(profile);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+    }
+  };
+
+  window.handleSignUp = async () => {
+    const name = document.getElementById('auth-signup-name').value.trim();
+    const email = document.getElementById('auth-signup-email').value.trim();
+    const password = document.getElementById('auth-signup-password').value;
+    const errEl = document.getElementById('auth-signup-error');
+    errEl.style.display = 'none';
+    if (!name || !email || !password) {
+      errEl.textContent = 'Please fill in all fields.';
+      errEl.style.display = 'block';
+      return;
+    }
+    try {
+      const profile = await Auth.signUp(email, password, name, window.signupRole);
+      await bootApp(profile);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+    }
+  };
+}
+
 function renderTopbar() {
   const studentOptions = getStudentUsers()
     .map(
@@ -694,17 +845,14 @@ function renderTopbar() {
         </div>
       </div>
       <div class="toolbar">
-        <select id="role-select" aria-label="Select workspace">
-          <option value="teacher" ${ui.role === "teacher" ? "selected" : ""}>Teacher</option>
-          <option value="student" ${ui.role === "student" ? "selected" : ""}>Student</option>
-        </select>
-        ${
-          ui.role === "student"
-            ? `<select id="user-select" aria-label="Select student">${studentOptions}</select>`
-            : ""
-        }
-        <button class="button-secondary" data-action="load-demo">Reload Demo</button>
-        <button class="button-ghost" data-action="reset-app">Reset Empty</button>
+        ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
+        ${ui.role === "teacher" ? `
+          <select id="class-select" aria-label="Select class">
+            ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+            <option value="__new__">+ New class</option>
+          </select>
+        ` : ""}
+        <button class="button-ghost" data-action="sign-out">Sign out</button>
       </div>
     </header>
   `;
