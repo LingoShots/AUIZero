@@ -637,7 +637,7 @@ function renderTopbar() {
       <div class="brand">
         <div class="brand-mark">PW</div>
         <div>
-          <h1>Process Writing Assistant</h1>
+          <h1>AUIZero</h1>
           <p>Visible writing steps for teachers and students.</p>
         </div>
       </div>
@@ -2433,7 +2433,7 @@ function getOutlineFields(assignment, submission) {
 }
 
 function isOutlineComplete(submission, assignment) {
-  const outline = getOutlineConfig(assignment, submission);
+  const config = getOutlineFields(assignment, submission);
   return outline.fields.every((field) => String(submission.outline?.[field.key] || "").trim());
 }
 
