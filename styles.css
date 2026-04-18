@@ -766,3 +766,199 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Chatbot ─────────────────────────────────────────────── */
+.chatbot-window {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 280px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fafaf8;
+  scroll-behavior: smooth;
+}
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+}
+
+.chat-assistant {
+  align-self: flex-start;
+}
+
+.chat-user {
+  align-self: flex-end;
+}
+
+.chat-bubble {
+  padding: 10px 14px;
+  border-radius: 14px;
+  line-height: 1.55;
+  font-size: 0.93rem;
+}
+
+.chat-assistant .chat-bubble {
+  background: var(--accent-soft);
+  border-bottom-left-radius: 4px;
+  color: var(--ink);
+}
+
+.chat-user .chat-bubble {
+  background: #edf4ea;
+  border-bottom-right-radius: 4px;
+  color: var(--ink);
+}
+
+/* Typing indicator */
+.chat-loading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 16px;
+}
+
+.chat-loading span {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: chat-bounce 1.1s infinite ease-in-out;
+}
+
+.chat-loading span:nth-child(2) { animation-delay: 0.18s; }
+.chat-loading span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes chat-bounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+  40%            { transform: scale(1);   opacity: 1;   }
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  resize: none;
+  background: #fff;
+  color: var(--ink);
+  line-height: 1.5;
+  font-size: 0.93rem;
+}
+
+.chat-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Timer badge */
+.chat-timer {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: #edf4ea;
+  color: #4d6148;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.chat-timer-urgent {
+  background: #f7dfdf;
+  color: var(--danger);
+}
+
+/* ── Error code toolbar ───────────────────────────────────── */
+.error-code-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  background: var(--surface-soft);
+}
+
+.error-code-toolbar + textarea {
+  border-radius: 0 0 12px 12px;
+}
+
+.error-code-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: "SFMono-Regular", "Menlo", monospace;
+}
+
+.error-code-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+/* Error code key shown to students */
+.error-code-key {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: #f4f0e8;
+  font-size: 0.84rem;
+}
+
+.error-code-key p {
+  margin: 0 0 6px;
+  font-weight: 700;
+  color: #3c4538;
+}
+
+.error-code-key dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+}
+
+.error-code-key dt {
+  font-weight: 700;
+  font-family: "SFMono-Regular", "Menlo", monospace;
+  color: var(--accent-deep);
+}
+
+.error-code-key dd {
+  margin: 0;
+  color: #3c4538;
+}
+
+/* ── Deadline overdue pill ────────────────────────────────── */
+.overdue-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border-radius: 999px;
+  background: #f7dfdf;
+  color: var(--danger);
+}
