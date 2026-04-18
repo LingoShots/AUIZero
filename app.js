@@ -1,5 +1,9 @@
-const STORAGE_KEY = "AUIZero-v1";
 const LARGE_PASTE_LIMIT = 220;
+
+// App state — now server-backed
+let currentProfile = null;
+let currentClasses = [];
+let currentClassId = null;
 
 const ERROR_CODES = [
   { code: "CS",  label: "Comma splice: two complete sentences joined with only a comma" },
