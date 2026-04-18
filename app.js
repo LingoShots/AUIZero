@@ -1,3 +1,4 @@
+const STORAGE_KEY = "AUIZero-v1";
 const LARGE_PASTE_LIMIT = 220;
 
 // App state — now server-backed
