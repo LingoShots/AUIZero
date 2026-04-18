@@ -102,7 +102,7 @@ function scheduleAutoSave() {
   }, 30000);
 }
 
-function handleClick(event) {
+async function handleClick(event) {
   const target = event.target.closest("[data-action]");
   if (!target) {
     return;
