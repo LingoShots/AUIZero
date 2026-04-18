@@ -143,6 +143,17 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
+  if (action === "publish-assignment") {
+    const assignmentId = target.dataset.assignmentId;
+    const assignment = state.assignments.find((a) => a.id === assignmentId);
+    if (!assignment) return;
+    assignment.status = assignment.status === "published" ? "draft" : "published";
+    ui.notice = assignment.status === "published" ? "Assignment published — students can now see it." : "Assignment moved back to draft.";
+    persistState();
+    render();
+    return;
+  }
+
   if (action === "delete-assignment") {
     const assignmentId = target.dataset.assignmentId;
     if (!confirm("Delete this assignment? This cannot be undone.")) return;
@@ -612,13 +623,13 @@ function renderTeacherWorkspace() {
                   <div class="field">
                     <label>Assignment type</label>
                     <select data-assist-field="assignmentType">
-                      ${["argument", "narrative", "informational", "response"].map((t) => `<option value="${t}" ${ui.teacherAssist.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+                      ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherAssist.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
                     </select>
                   </div>
                 </div>
                 <div class="teacher-ready-card">
                   <p class="mini-label">Student focus</p>
-                  <textarea data-assist-field="studentFocusText" placeholder="One focus point per line">${escapeHtml((ui.teacherAssist.studentFocus || []).join("\n"))}</textarea>
+                  <textarea data-assist-field="studentFocusText" placeholder="One focus point per line" style="min-height:240px;">${escapeHtml((ui.teacherAssist.studentFocus || []).join("\n"))}</textarea>
                   <p class="subtle" style="font-size:0.82rem;margin-top:6px;">One focus point per line</p>
                 </div>
                 <div class="teacher-ready-card">
@@ -673,12 +684,18 @@ function renderTeacherWorkspace() {
                         <h3>${escapeHtml(assignment.title)}</h3>
                         <p>${escapeHtml(assignment.prompt)}</p>
                       </div>
-                      <div style="display:flex;gap:8px;flex-shrink:0;">
-                        <button class="button-ghost" data-action="select-assignment" data-assignment-id="${assignment.id}">Open</button>
-                        <button class="button-ghost" data-action="delete-assignment" data-assignment-id="${assignment.id}" style="color:var(--danger);border-color:var(--danger);">Delete</button>
+                      <div style="display:flex;gap:8px;flex-shrink:0;flex-direction:column;align-items:flex-end;">
+                        <div style="display:flex;gap:8px;">
+                          <button class="button-ghost" data-action="select-assignment" data-assignment-id="${assignment.id}">Open</button>
+                          <button class="button-ghost" data-action="delete-assignment" data-assignment-id="${assignment.id}" style="color:var(--danger);border-color:var(--danger);">Delete</button>
+                        </div>
+                        <button class="${assignment.status === "published" ? "button-ghost" : "button"}" data-action="publish-assignment" data-assignment-id="${assignment.id}" style="${assignment.status === "published" ? "color:var(--sage);border-color:var(--sage);" : ""}">
+                          ${assignment.status === "published" ? "✓ Published — click to unpublish" : "Publish to students"}
+                        </button>
                       </div>
                     </div>
                     <div class="pill-row">
+                      <span class="${assignment.status === "published" ? "pill" : "warning-pill"}">${assignment.status === "published" ? "Published" : "Draft"}</span>
                       <span class="pill">${escapeHtml(titleCase(assignment.assignmentType || "writing"))}</span>
                       <span class="pill">${assignment.wordCountMin}-${assignment.wordCountMax} words</span>
                     </div>
@@ -943,7 +960,7 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
 }
 
 function renderStudentWorkspace() {
-  const assignments = getAssignments();
+  const assignments = getPublishedAssignments();
   const student = getUserById(ui.activeUserId);
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
@@ -960,33 +977,38 @@ function renderStudentWorkspace() {
         <div class="field">
           <label for="student-assignment-select">Choose assignment</label>
           <select id="student-assignment-select" aria-label="Select assignment">
-            ${assignments.map((item) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("")}
+            ${assignments.length
+              ? assignments.map((item) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("")
+              : `<option value="">No assignments published yet</option>`
+            }
           </select>
         </div>
         ${
-          !assignment || !submission
-            ? `<div class="empty-state"><h3>No assignment yet</h3><p>Switch to Teacher and create one first.</p></div>`
-            : `
-              <div class="student-progress">
-                ${[1, 2, 3].map((step) => `
-                  <div class="progress-step ${ui.studentStep === step ? "active" : ui.studentStep > step ? "done" : ""}">
-                    <span>${step}</span>
-                    <strong>${step === 1 ? "Get ideas" : step === 2 ? "Write draft" : "Finish and submit"}</strong>
-                  </div>
-                `).join("")}
-              </div>
-              <div class="student-card">
-                <p class="mini-label">Your task</p>
-                <h3>${escapeHtml(assignment.title)}</h3>
-                <p class="student-task">${escapeHtml(assignment.prompt)}</p>
-                <div class="pill-row">
-                  <span class="pill">${assignment.wordCountMin}-${assignment.wordCountMax} words</span>
-                  <span class="pill">${submission.ideaResponses.length}/${assignment.ideaRequestLimit} idea helps</span>
-                  <span class="pill">${submission.feedbackHistory.length}/${assignment.feedbackRequestLimit} feedback checks</span>
+          !assignments.length
+            ? `<div class="empty-state"><h3>Nothing here yet</h3><p>Your teacher hasn't published any assignments yet.</p></div>`
+            : !assignment || !submission
+              ? `<div class="empty-state"><h3>No assignment yet</h3><p>Switch to Teacher and create one first.</p></div>`
+              : `
+                <div class="student-progress">
+                  ${[1, 2, 3].map((step) => `
+                    <div class="progress-step ${ui.studentStep === step ? "active" : ui.studentStep > step ? "done" : ""}">
+                      <span>${step}</span>
+                      <strong>${step === 1 ? "Get ideas" : step === 2 ? "Write draft" : "Finish and submit"}</strong>
+                    </div>
+                  `).join("")}
                 </div>
-              </div>
-              ${renderStudentStep(assignment, submission)}
-            `
+                <div class="student-card">
+                  <p class="mini-label">Your task</p>
+                  <h3>${escapeHtml(assignment.title)}</h3>
+                  <p class="student-task">${escapeHtml(assignment.prompt)}</p>
+                  <div class="pill-row">
+                    <span class="pill">${assignment.wordCountMin}-${assignment.wordCountMax} words</span>
+                    <span class="pill">${submission.ideaResponses.length}/${assignment.ideaRequestLimit} idea helps</span>
+                    <span class="pill">${submission.feedbackHistory.length}/${assignment.feedbackRequestLimit} feedback checks</span>
+                  </div>
+                </div>
+                ${renderStudentStep(assignment, submission)}
+              `
         }
       </div>
     </section>
@@ -1218,6 +1240,7 @@ function saveTeacherAssignment() {
     rubric: draft.rubric.filter((item) => item.name.trim()),
     createdBy: "teacher-1",
     createdAt: new Date().toISOString(),
+    status: "draft",
   };
 
   if (!assignment.rubric.length) {
@@ -1230,7 +1253,7 @@ function saveTeacherAssignment() {
   ui.selectedReviewSubmissionId = null;
   ui.teacherDraft = createBlankTeacherDraft();
   ui.teacherAssist = null;
-  ui.notice = "Assignment saved and ready for students.";
+  ui.notice = "Assignment saved as draft. Publish it when you're ready for students to see it.";
   persistState();
   render();
 }
@@ -1503,6 +1526,10 @@ function getAssignments() {
   return state.assignments;
 }
 
+function getPublishedAssignments() {
+  return state.assignments.filter((a) => a.status === "published");
+}
+
 function getSelectedAssignment() {
   return state.assignments.find((assignment) => assignment.id === ui.selectedAssignmentId) || null;
 }
@@ -1710,15 +1737,12 @@ function generateTeacherAssist(draft) {
 
 function detectAssignmentType(text) {
   const lower = text.toLowerCase();
-  if (/\bargue\b|\bopinion\b|\bpersuade\b|\bshould\b/.test(lower)) {
-    return "argument";
-  }
-  if (/\bnarrative\b|\bstory\b|\bpersonal\b|\bmemory\b/.test(lower)) {
-    return "narrative";
-  }
-  if (/\bexplain\b|\binform\b|\bresearch\b|\bhow\b|\bwhy\b/.test(lower)) {
-    return "informational";
-  }
+  if (/\bargue\b|\bopinion\b|\bpersuade\b|\bshould\b/.test(lower)) return "argument";
+  if (/\bnarrative\b|\bstory\b|\bpersonal\b|\bmemory\b/.test(lower)) return "narrative";
+  if (/\bprocess\b|\bsteps\b|\bhow to\b|\bprocedure\b/.test(lower)) return "process";
+  if (/\bdefin\b|\bmeaning\b|\bwhat is\b|\bconcept\b/.test(lower)) return "definition";
+  if (/\bcompar\b|\bcontrast\b|\bdifference\b|\bsimilar\b/.test(lower)) return "compare";
+  if (/\bexplain\b|\binform\b|\bresearch\b|\bhow\b|\bwhy\b/.test(lower)) return "informational";
   return "response";
 }
 
@@ -1736,6 +1760,30 @@ function rubricForType(type) {
       { id: uid("rubric"), name: "Story focus", description: "Stays on one clear moment or event.", points: 4 },
       { id: uid("rubric"), name: "Details", description: "Uses details that help the reader picture what happened.", points: 4 },
       { id: uid("rubric"), name: "Sequence", description: "Events are in a clear order.", points: 4 },
+      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
+    ];
+  }
+  if (type === "process") {
+    return [
+      { id: uid("rubric"), name: "Steps in order", description: "Explains the steps clearly and in the right order.", points: 4 },
+      { id: uid("rubric"), name: "Detail and accuracy", description: "Each step has enough detail to follow.", points: 4 },
+      { id: uid("rubric"), name: "Clarity", description: "A reader unfamiliar with the topic could follow along.", points: 4 },
+      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
+    ];
+  }
+  if (type === "definition") {
+    return [
+      { id: uid("rubric"), name: "Core meaning", description: "Gives a clear and accurate definition.", points: 4 },
+      { id: uid("rubric"), name: "Examples", description: "Uses examples that help the reader understand.", points: 4 },
+      { id: uid("rubric"), name: "Clarity", description: "The explanation is easy to follow.", points: 4 },
+      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
+    ];
+  }
+  if (type === "compare") {
+    return [
+      { id: uid("rubric"), name: "Both sides covered", description: "Addresses both subjects fairly.", points: 4 },
+      { id: uid("rubric"), name: "Key differences", description: "Identifies the most important similarities or differences.", points: 4 },
+      { id: uid("rubric"), name: "Organisation", description: "Ideas are grouped logically and easy to follow.", points: 4 },
       { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
     ];
   }
@@ -1767,6 +1815,15 @@ function studentPromptForType(type, topic, languageLevel) {
             ? "Write clearly and develop your ideas with some detail."
             : "Write clearly, develop your ideas fully, and use precise language.";
 
+  if (type === "process") {
+    return `${levelIntro} Explain how to do or make ${topic}. Describe each step clearly and in the right order.`;
+  }
+  if (type === "definition") {
+    return `${levelIntro} Explain what ${topic} means. Give a clear definition and use at least one example to help the reader understand.`;
+  }
+  if (type === "compare") {
+    return `${levelIntro} Compare and contrast two things related to ${topic}. Show how they are similar and how they are different.`;
+  }
   if (type === "argument") {
     return `${levelIntro} Write an opinion piece about ${topic}. Say what you believe, give at least one strong reason or example, and explain why it matters.`;
   }
@@ -1780,6 +1837,30 @@ function studentPromptForType(type, topic, languageLevel) {
 }
 
 function focusForType(type, topic) {
+  if (type === "process") {
+    return [
+      `explaining each step of ${topic} clearly`,
+      "putting the steps in the right order",
+      "adding enough detail so someone can follow along",
+      "checking that no steps are missing or confusing",
+    ];
+  }
+  if (type === "definition") {
+    return [
+      `giving a clear, accurate meaning of ${topic}`,
+      "using at least one example that helps the reader understand",
+      "explaining any difficult words",
+      "making sure the definition is complete and easy to follow",
+    ];
+  }
+  if (type === "compare") {
+    return [
+      `identifying the key features of both sides of ${topic}`,
+      "finding at least two clear similarities or differences",
+      "organising your points so the comparison is easy to follow",
+      "checking that both sides are treated fairly",
+    ];
+  }
   if (type === "argument") {
     return [
       `a clear opinion about ${topic}`,
@@ -1940,6 +2021,36 @@ function getOutlineConfig(assignment, submission) {
   const topic = extractKeywords(`${assignment.title} ${assignment.prompt}`)[0] || "your topic";
   const outline = submission.outline || {};
 
+  if (type === "process") {
+    return {
+      fields: [
+        { key: "partOne", label: "What you are explaining how to do", placeholder: "I am going to explain how to..." },
+        { key: "partTwo", label: "The key steps", placeholder: "The main steps are..." },
+        { key: "partThree", label: "Final step or result", placeholder: "At the end, the reader will be able to..." },
+      ],
+      values: outline,
+    };
+  }
+  if (type === "definition") {
+    return {
+      fields: [
+        { key: "partOne", label: "The term and its core meaning", placeholder: `${topic} means...` },
+        { key: "partTwo", label: "An example that shows the meaning", placeholder: "For example..." },
+        { key: "partThree", label: "Why this definition matters", placeholder: "Understanding this is important because..." },
+      ],
+      values: outline,
+    };
+  }
+  if (type === "compare") {
+    return {
+      fields: [
+        { key: "partOne", label: "What you are comparing", placeholder: "I am comparing ... and ..." },
+        { key: "partTwo", label: "Key similarities", placeholder: "Both are similar because..." },
+        { key: "partThree", label: "Key differences", placeholder: "The main difference is..." },
+      ],
+      values: outline,
+    };
+  }
   if (type === "argument") {
     return {
       fields: [
@@ -2182,6 +2293,7 @@ function normalizeAssignment(assignment) {
     rubric: safeArray(assignment?.rubric).length ? assignment.rubric.map(normalizeRubricRow) : rubricForType(assignmentType),
     createdBy: assignment?.createdBy || "teacher-1",
     createdAt: assignment?.createdAt || new Date().toISOString(),
+    status: assignment?.status || "published",
   };
 }
 
