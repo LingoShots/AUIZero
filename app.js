@@ -564,7 +564,7 @@ function renderTeacherWorkspace() {
           </div>
           <div class="toolbar">
             <button class="button-secondary" data-action="generate-teacher-assist">Format With AI</button>
-            <button class="button" data-action="save-assignment" ${!ui.teacherDraft.title || !ui.teacherDraft.prompt ? "disabled title='Generate and apply the AI draft first'" : ""}>Save</button>
+            <button class="button" data-action="save-assignment" ${!ui.teacherAssist && !ui.teacherDraft.title ? "disabled" : ""}>Save</button>
           </div>
         </div>
         <div class="field-stack">
@@ -602,7 +602,6 @@ function renderTeacherWorkspace() {
                     <p class="mini-label">AI Draft — edit anything before saving</p>
                     <input class="assist-title-input" data-assist-field="title" value="${escapeAttribute(ui.teacherAssist.title)}" placeholder="Assignment title" />
                   </div>
-                  <button class="button-secondary" data-action="use-generated-assignment">Use This Version</button>
                 </div>
                 <div class="teacher-ready-card">
                   <p class="mini-label">Student instructions</p>
@@ -1217,12 +1216,35 @@ function applyTeacherAssistToDraft() {
 }
 
 function saveTeacherAssignment() {
-  const draft = normalizeTeacherDraft(ui.teacherDraft);
+  // Use the editable AI draft if present, otherwise fall back to teacherDraft
+  const source = ui.teacherAssist || ui.teacherDraft;
+  const draft = ui.teacherAssist
+    ? {
+        title: (ui.teacherAssist.title || "").trim(),
+        prompt: (ui.teacherAssist.prompt || "").trim(),
+        focus: ui.teacherDraft.focus || "",
+        brief: ui.teacherDraft.brief || "",
+        assignmentType: ui.teacherAssist.assignmentType || "response",
+        languageLevel: ui.teacherDraft.languageLevel,
+        totalPoints: ui.teacherDraft.totalPoints,
+        wordCountMin: Number(ui.teacherAssist.wordCountMin || 250),
+        wordCountMax: Number(ui.teacherAssist.wordCountMax || 400),
+        ideaRequestLimit: Number(ui.teacherDraft.ideaRequestLimit || 3),
+        feedbackRequestLimit: Number(ui.teacherDraft.feedbackRequestLimit || 2),
+        studentFocus: ui.teacherAssist.studentFocus || [],
+        rubric: (ui.teacherAssist.rubric || []).filter((item) => (item.name || "").trim()),
+      }
+    : normalizeTeacherDraft(ui.teacherDraft);
+
   if (!draft.title || !draft.prompt) {
     ui.notice = "Generate the student-ready assignment first, then save it.";
     render();
     return;
   }
+
+  const studentFocusArray = Array.isArray(draft.studentFocus)
+    ? draft.studentFocus
+    : splitLines(draft.studentFocus);
 
   const assignment = {
     id: uid("assignment"),
@@ -1236,20 +1258,15 @@ function saveTeacherAssignment() {
     wordCountMax: draft.wordCountMax,
     ideaRequestLimit: draft.ideaRequestLimit,
     feedbackRequestLimit: draft.feedbackRequestLimit,
-    studentFocus: splitLines(draft.studentFocus),
-    rubric: draft.rubric.filter((item) => item.name.trim()),
+    studentFocus: studentFocusArray,
+    rubric: draft.rubric.length ? draft.rubric : rubricForType(draft.assignmentType),
     createdBy: "teacher-1",
     createdAt: new Date().toISOString(),
     status: "draft",
   };
 
-  if (!assignment.rubric.length) {
-    assignment.rubric = rubricForType(assignment.assignmentType);
-  }
-
   state.assignments.unshift(assignment);
   ui.selectedAssignmentId = assignment.id;
-  ui.selectedStudentAssignmentId = assignment.id;
   ui.selectedReviewSubmissionId = null;
   ui.teacherDraft = createBlankTeacherDraft();
   ui.teacherAssist = null;
@@ -1535,7 +1552,7 @@ function getSelectedAssignment() {
 }
 
 function getStudentAssignment() {
-  return state.assignments.find((assignment) => assignment.id === ui.selectedStudentAssignmentId) || null;
+  return state.assignments.find((assignment) => assignment.id === ui.selectedStudentAssignmentId && assignment.status === "published") || null;
 }
 
 function getAssignmentSubmissions(assignmentId) {
@@ -1575,8 +1592,9 @@ function hydrateSelections() {
     ui.selectedAssignmentId = state.assignments[0]?.id || null;
   }
 
-  if (!state.assignments.some((assignment) => assignment.id === ui.selectedStudentAssignmentId)) {
-    ui.selectedStudentAssignmentId = state.assignments[0]?.id || null;
+  const published = getPublishedAssignments();
+  if (!published.some((assignment) => assignment.id === ui.selectedStudentAssignmentId)) {
+    ui.selectedStudentAssignmentId = published[0]?.id || null;
   }
 
   ui.studentStep = clamp(ui.studentStep, 1, 3);
