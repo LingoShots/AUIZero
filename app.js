@@ -115,7 +115,7 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
-  iif (action === "add-annotation") {
+  if (action === "add-annotation") {
     const submission = getSelectedReviewSubmission();
     if (!submission) return;
     const code = target.dataset.code;
