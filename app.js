@@ -2434,11 +2434,11 @@ function getOutlineFields(assignment, submission) {
 
 function isOutlineComplete(submission, assignment) {
   const config = getOutlineFields(assignment, submission);
-  return outline.fields.every((field) => String(submission.outline?.[field.key] || "").trim());
+  return config.fields.every((field) => String(submission.outline?.[field.key] || "").trim());
 }
 
 function renderOutlineSummary(assignment, submission) {
-  const outline = getOutlineConfig(assignment, submission);
+  const outline = getOutlineFields(assignment, submission);
   const parts = outline.fields
     .map((field) => String(submission.outline?.[field.key] || "").trim())
     .filter(Boolean);
