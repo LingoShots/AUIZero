@@ -196,6 +196,15 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
+  if (action === "focus-brief") {
+    const brief = document.getElementById("teacher-brief");
+    if (brief) {
+      brief.focus();
+      brief.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    return;
+  }
+  
   if (action === "reset-app") {
     stopPlayback();
     state = createBlankState();
@@ -846,7 +855,15 @@ function renderTeacherWorkspace() {
         </div>
         ${
           !assignments.length
-            ? `<div class="empty-state compact-empty"><h3>No assignments yet</h3><p>Create one on the left or reload the demo to explore the review flow.</p></div>`
+            ? `<div class="empty-state" style="padding:36px 28px;">
+                <div style="font-size:2.5rem;margin-bottom:12px;">✏️</div>
+                <h3 style="margin:0 0 8px;">Welcome to AUIZero</h3>
+                <p style="margin:0 0 20px;max-width:320px;margin-inline:auto;">Describe your assignment in plain English on the left, then click <strong>Format With AI</strong> to generate a student-ready task in seconds.</p>
+                <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+                  <button class="button" data-action="focus-brief">Start your first assignment</button>
+                  <button class="button-ghost" data-action="load-demo">Explore the demo</button>
+                </div>
+              </div>`
             : `
               <div class="assignment-list">
                 ${assignments.map((assignment) => `
