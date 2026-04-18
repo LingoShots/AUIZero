@@ -522,7 +522,7 @@ if (action === "sign-out") {
   }
 }
 
-function handleChange(event) {
+async function handleChange(event) {
   const target = event.target;
 
   if (target.dataset.teacherField) {
