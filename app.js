@@ -57,8 +57,15 @@ function handleClick(event) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        prompt: `Create a student-ready writing assignment based on these notes: "${ui.teacherDraft.brief}". 
-        Provide the output as a valid JSON object with the following keys: "title", "prompt", "assignmentType", "wordCountMin", "wordCountMax", "studentFocus" (as an array), and "rubric" (as an array of objects with "name", "description", and "points").` 
+        prompt: `Create a student-ready writing assignment based on these teacher notes: "${ui.teacherDraft.brief}".
+
+Rules:
+- Student CEFR level: ${ui.teacherDraft.languageLevel}. Adjust the prompt language complexity accordingly.
+- Total assignment points: ${ui.teacherDraft.totalPoints}. The rubric criteria points must add up to exactly ${ui.teacherDraft.totalPoints}.
+- If the teacher's notes mention specific rubric criteria or assessment areas, use those. Otherwise create 4 appropriate criteria for the assignment type.
+- Keep rubric criteria names short (2-4 words). Descriptions should be one clear sentence a student can understand.
+
+Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, response), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`
       })
     })
     .then(res => {
@@ -67,7 +74,9 @@ function handleClick(event) {
     })
     .then(data => {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
-      ui.teacherAssist = JSON.parse(jsonStr);
+      const parsed = JSON.parse(jsonStr);
+      parsed.rubric = (parsed.rubric || []).map((item) => ({ id: uid("rubric"), ...item }));
+      ui.teacherAssist = parsed;
       ui.notice = "Assignment generated successfully!";
       render();
     })
@@ -76,6 +85,20 @@ function handleClick(event) {
       ui.notice = "Error: Could not reach the AI. Check console.";
       render();
     });
+    return;
+  }
+
+  if (action === "add-rubric-row" && ui.teacherAssist) {
+    const defaultPts = Math.max(1, Math.floor(ui.teacherDraft.totalPoints / (ui.teacherAssist.rubric.length + 1)));
+    ui.teacherAssist.rubric.push({ id: uid("rubric"), name: "", description: "", points: defaultPts });
+    render();
+    return;
+  }
+
+  if (action === "remove-rubric-row" && ui.teacherAssist) {
+    const rubricId = target.dataset.rubricId;
+    ui.teacherAssist.rubric = ui.teacherAssist.rubric.filter((r) => r.id !== rubricId);
+    render();
     return;
   }
 
@@ -104,13 +127,6 @@ function handleClick(event) {
     ui.notice = "Workspace cleared. Ready for a fresh pilot.";
     hydrateSelections();
     persistState();
-    render();
-    return;
-  }
-
-  if (action === "generate-teacher-assist") {
-    ui.teacherAssist = generateTeacherAssist(ui.teacherDraft);
-    ui.notice = "Your assignment has been turned into a student-ready version with a suggested rubric.";
     render();
     return;
   }
@@ -305,6 +321,11 @@ function handleChange(event) {
     return;
   }
 
+  if (target.dataset.assistField && ui.teacherAssist) {
+    ui.teacherAssist[target.dataset.assistField] = target.value;
+    return;
+  }
+
   if (target.id === "role-select") {
     stopPlayback();
     ui.role = target.value;
@@ -366,6 +387,21 @@ function handleInput(event) {
 
   if (target.dataset.teacherField) {
     ui.teacherDraft[target.dataset.teacherField] = target.value;
+    return;
+  }
+
+  if (target.dataset.assistField && ui.teacherAssist) {
+    if (target.dataset.assistField === "studentFocusText") {
+      ui.teacherAssist.studentFocus = target.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    } else {
+      ui.teacherAssist[target.dataset.assistField] = target.type === "number" ? Number(target.value) : target.value;
+    }
+    return;
+  }
+
+  if (target.dataset.rubricId && target.dataset.rubricField && ui.teacherAssist) {
+    const item = ui.teacherAssist.rubric.find((r) => r.id === target.dataset.rubricId);
+    if (item) item[target.dataset.rubricField] = target.type === "number" ? Number(target.value) : target.value;
     return;
   }
 
@@ -535,6 +571,10 @@ function renderTeacherWorkspace() {
               <input id="teacher-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
             </div>
             <div class="field">
+              <label for="teacher-total-points">Total points</label>
+              <input id="teacher-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />
+            </div>
+            <div class="field">
               <label for="teacher-language-level">Student language level</label>
               <select id="teacher-language-level" data-teacher-field="languageLevel">
                 ${["A0", "A1", "A2", "B1", "B2", "C1", "C2"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(level)}</option>`).join("")}
@@ -548,34 +588,60 @@ function renderTeacherWorkspace() {
               <div class="teacher-output">
                 <div class="section-header">
                   <div>
-                    <p class="mini-label">AI Draft</p>
-                    <h2 class="panel-title">${escapeHtml(ui.teacherAssist.title)}</h2>
+                    <p class="mini-label">AI Draft — edit anything before saving</p>
+                    <input class="assist-title-input" data-assist-field="title" value="${escapeAttribute(ui.teacherAssist.title)}" placeholder="Assignment title" />
                   </div>
                   <button class="button-secondary" data-action="use-generated-assignment">Use This Version</button>
                 </div>
                 <div class="teacher-ready-card">
                   <p class="mini-label">Student instructions</p>
-                  <p><strong>Task:</strong> ${escapeHtml(ui.teacherAssist.prompt)}</p>
-                  <p><strong>Word target:</strong> ${ui.teacherAssist.wordCountMin}-${ui.teacherAssist.wordCountMax} words</p>
-                  <p><strong>Assignment type:</strong> ${escapeHtml(titleCase(ui.teacherAssist.assignmentType))}</p>
+                  <div class="field" style="margin-bottom:10px;">
+                    <label>Task prompt</label>
+                    <textarea data-assist-field="prompt">${escapeHtml(ui.teacherAssist.prompt)}</textarea>
+                  </div>
+                  <div class="field-grid" style="margin-bottom:10px;">
+                    <div class="field">
+                      <label>Min words</label>
+                      <input type="number" data-assist-field="wordCountMin" value="${ui.teacherAssist.wordCountMin}" />
+                    </div>
+                    <div class="field">
+                      <label>Max words</label>
+                      <input type="number" data-assist-field="wordCountMax" value="${ui.teacherAssist.wordCountMax}" />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label>Assignment type</label>
+                    <select data-assist-field="assignmentType">
+                      ${["argument", "narrative", "informational", "response"].map((t) => `<option value="${t}" ${ui.teacherAssist.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+                    </select>
+                  </div>
                 </div>
                 <div class="teacher-ready-card">
                   <p class="mini-label">Student focus</p>
-                  <ul class="focus-list">${ui.teacherAssist.studentFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+                  <textarea data-assist-field="studentFocusText" placeholder="One focus point per line">${escapeHtml((ui.teacherAssist.studentFocus || []).join("\n"))}</textarea>
+                  <p class="subtle" style="font-size:0.82rem;margin-top:6px;">One focus point per line</p>
                 </div>
                 <div class="teacher-ready-card">
-                  <p class="mini-label">Suggested rubric</p>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <p class="mini-label">Rubric</p>
+                    <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} / ${ui.teacherDraft.totalPoints} pts</span>
+                  </div>
                   <div class="review-stack">
                     ${ui.teacherAssist.rubric.map((item) => `
-                      <div class="rubric-score">
-                        <div>
-                          <strong>${escapeHtml(item.name)}</strong>
-                          <p class="rubric-description">${escapeHtml(item.description)}</p>
+                      <div class="rubric-edit-row">
+                        <div class="rubric-edit-fields">
+                          <input data-rubric-id="${item.id}" data-rubric-field="name" value="${escapeAttribute(item.name)}" placeholder="Criterion name" style="font-weight:700;" />
+                          <input data-rubric-id="${item.id}" data-rubric-field="description" value="${escapeAttribute(item.description)}" placeholder="Description" />
                         </div>
-                        <strong>${item.points}</strong>
+                        <div class="rubric-edit-right">
+                          <input type="number" data-rubric-id="${item.id}" data-rubric-field="points" value="${item.points}" min="1" style="width:60px;text-align:center;" />
+                          <span class="subtle" style="font-size:0.82rem;">pts</span>
+                          <button class="button-ghost" data-action="remove-rubric-row" data-rubric-id="${item.id}" style="color:var(--danger);border-color:var(--danger);padding:0 10px;min-height:36px;">✕</button>
+                        </div>
                       </div>
                     `).join("")}
                   </div>
+                  <button class="button-ghost" data-action="add-rubric-row" style="margin-top:10px;">+ Add criterion</button>
                 </div>
               </div>
             `
@@ -1620,6 +1686,14 @@ function generateTeacherAssist(draft) {
   const title = buildTitleFromBrief(brief, assignmentType, mainTopic);
   const ranges = inferWordRange(brief, assignmentType);
   const studentFocus = focusForType(assignmentType, mainTopic);
+  const totalPoints = Number(draft.totalPoints || 20);
+  const baseRubric = rubricForType(assignmentType);
+  const pointsEach = Math.floor(totalPoints / baseRubric.length);
+  const remainder = totalPoints - pointsEach * baseRubric.length;
+  const rubric = baseRubric.map((item, i) => ({
+    ...item,
+    points: i === baseRubric.length - 1 ? pointsEach + remainder : pointsEach,
+  }));
 
   return {
     title,
@@ -1630,7 +1704,7 @@ function generateTeacherAssist(draft) {
     wordCountMin: ranges.min,
     wordCountMax: ranges.max,
     studentFocus,
-    rubric: rubricForType(assignmentType),
+    rubric,
   };
 }
 
@@ -1990,6 +2064,7 @@ function createBlankTeacherDraft() {
     focus: "",
     assignmentType: "response",
     languageLevel: "B1",
+    totalPoints: 20,
     wordCountMin: 250,
     wordCountMax: 400,
     ideaRequestLimit: 3,
@@ -2007,6 +2082,7 @@ function normalizeTeacherDraft(draft) {
     focus: draft.focus.trim(),
     assignmentType: draft.assignmentType,
     languageLevel: draft.languageLevel,
+    totalPoints: Number(draft.totalPoints || 20),
     wordCountMin: Number(draft.wordCountMin || 0),
     wordCountMax: Number(draft.wordCountMax || 0),
     ideaRequestLimit: Number(draft.ideaRequestLimit || 0),
