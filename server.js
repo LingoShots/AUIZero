@@ -1,17 +1,46 @@
 require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
-const app = express();
+const { createClient } = require('@supabase/supabase-js');
 
+const app = express();
 app.use(express.static(__dirname));
 app.use(express.json());
 
+// Supabase admin client (service role — server only)
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+// Helper to get authenticated user from request
+async function getUser(req) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return null;
+  return user;
+}
+
+// Helper to get user profile including role
+async function getProfile(userId) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+// ── AI endpoint ─────────────────────────────────────────────
 app.post('/api/generate', async (req, res) => {
   try {
     const { prompt, messages, system } = req.body;
     const apiMessages = messages || [{ role: "user", content: prompt }];
     const requestBody = {
-      model: "claude-sonnet-4-5",
+      model: "claude-sonnet-4-6",
       max_tokens: 1000,
       messages: apiMessages,
     };
@@ -30,6 +59,282 @@ app.post('/api/generate', async (req, res) => {
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data.error.message });
     res.json({ response: data.content[0].text });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Auth endpoints ───────────────────────────────────────────
+
+// Sign up
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { email, password, name, role } = req.body;
+    if (!email || !password || !name || !role) {
+      return res.status(400).json({ error: 'email, password, name and role are required' });
+    }
+    const { data, error } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { name, role },
+      email_confirm: true,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ user: data.user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sign in
+app.post('/api/auth/signin', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return res.status(401).json({ error: error.message });
+    const profile = await getProfile(data.user.id);
+    res.json({ session: data.session, profile });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sign out
+app.post('/api/auth/signout', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (auth) await supabase.auth.admin.signOut(auth.slice(7));
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get current user profile
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const profile = await getProfile(user.id);
+    res.json({ profile });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Classes endpoints ────────────────────────────────────────
+
+// Get teacher's classes
+app.get('/api/classes', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('classes')
+      .select('*, class_members(student_id, profiles(id, name))')
+      .eq('teacher_id', user.id)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ classes: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a class
+app.post('/api/classes', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { name } = req.body;
+    const { data, error } = await supabase
+      .from('classes')
+      .insert({ name, teacher_id: user.id })
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ class: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add student to class
+app.post('/api/classes/:classId/members', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { studentEmail } = req.body;
+    // Find student by email
+    const { data: students, error: findError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'student');
+    if (findError) return res.status(400).json({ error: findError.message });
+    // Look up auth user by email using admin API
+    const { data: authUsers } = await supabase.auth.admin.listUsers();
+    const authUser = authUsers.users.find(u => u.email === studentEmail);
+    if (!authUser) return res.status(404).json({ error: 'No student found with that email' });
+    const { error } = await supabase
+      .from('class_members')
+      .insert({ class_id: req.params.classId, student_id: authUser.id });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get classes for a student
+app.get('/api/student/classes', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('class_members')
+      .select('class_id, classes(id, name, teacher_id, profiles(name))')
+      .eq('student_id', user.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ classes: data.map(d => d.classes) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Assignments endpoints ────────────────────────────────────
+
+// Get assignments for a class
+app.get('/api/classes/:classId/assignments', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('*')
+      .eq('class_id', req.params.classId)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ assignments: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create assignment
+app.post('/api/classes/:classId/assignments', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('assignments')
+      .insert({ ...req.body, class_id: req.params.classId })
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ assignment: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update assignment
+app.patch('/api/assignments/:id', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('assignments')
+      .update(req.body)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ assignment: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete assignment
+app.delete('/api/assignments/:id', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { error } = await supabase
+      .from('assignments')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Submissions endpoints ────────────────────────────────────
+
+// Get all submissions for an assignment (teacher)
+app.get('/api/assignments/:assignmentId/submissions', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('*, profiles(id, name)')
+      .eq('assignment_id', req.params.assignmentId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ submissions: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get or create student's own submission
+app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    let { data, error } = await supabase
+      .from('submissions')
+      .select('*')
+      .eq('assignment_id', req.params.assignmentId)
+      .eq('student_id', user.id)
+      .single();
+    if (error && error.code === 'PGRST116') {
+      // No submission yet — create one
+      const { data: newData, error: createError } = await supabase
+        .from('submissions')
+        .insert({
+          assignment_id: req.params.assignmentId,
+          student_id: user.id,
+          started_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (createError) return res.status(400).json({ error: createError.message });
+      data = newData;
+    } else if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    res.json({ submission: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update submission
+app.patch('/api/submissions/:id', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('submissions')
+      .update({ ...req.body, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ submission: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
