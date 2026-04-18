@@ -1,4 +1,4 @@
-const STORAGE_KEY = "process-writing-assistant-v2";
+const STORAGE_KEY = "AUIZero-v1";
 const LARGE_PASTE_LIMIT = 220;
 
 const ERROR_CODES = [
