@@ -13,8 +13,9 @@ const ERROR_CODES = [
 ];
 
 const ui = {
-  role: "teacher",
-  activeUserId: "teacher-1",
+  role: "student",
+  activeUserId: "",
+  pin: "",
   teacherDraft: null,
   teacherAssist: null,
   selectedAssignmentId: null,
@@ -41,16 +42,34 @@ let appEl = null;
 document.addEventListener("DOMContentLoaded", () => {
   appEl = document.getElementById("app");
   ui.teacherDraft = createBlankTeacherDraft();
+  ui.activeUserId = getStudentUsers()[0]?.id || "student-1";
   hydrateSelections();
   bindEvents();
   render();
 });
+
+let autoSaveTimer = null;
 
 function bindEvents() {
   appEl.addEventListener("click", handleClick);
   appEl.addEventListener("change", handleChange);
   appEl.addEventListener("input", handleInput);
   appEl.addEventListener("paste", handlePaste, true);
+}
+
+function scheduleAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    const submission = getStudentSubmission();
+    if (!submission) return;
+    persistState();
+    const indicator = document.getElementById("autosave-indicator");
+    if (indicator) {
+      indicator.textContent = "Saved";
+      indicator.style.opacity = "1";
+      setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
+    }
+  }, 30000);
 }
 
 function handleClick(event) {
@@ -469,8 +488,17 @@ function handleChange(event) {
   }
 
   if (target.id === "role-select") {
+    const newRole = target.value;
+    if (newRole === "teacher") {
+      const entered = prompt("Enter teacher PIN to continue (default: 1234):");
+      if (entered !== "1234") {
+        ui.notice = "Incorrect PIN.";
+        render();
+        return;
+      }
+    }
     stopPlayback();
-    ui.role = target.value;
+    ui.role = newRole;
     ui.activeUserId = ui.role === "teacher" ? "teacher-1" : getStudentUsers()[0]?.id || "";
     hydrateSelections();
     render();
@@ -572,6 +600,7 @@ function handleInput(event) {
   if (target.id === "draft-editor") {
     updateDraftSubmission(target.value);
     updateDraftMeters();
+    scheduleAutoSave();
     return;
   }
 
@@ -645,7 +674,7 @@ function renderTopbar() {
   return `
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">PW</div>
+        <div class="brand-mark">AZ</div>
         <div>
           <h1>AUIZero</h1>
           <p>Visible writing steps for teachers and students.</p>
@@ -1279,6 +1308,7 @@ function renderStudentDraftStep(assignment, submission) {
       <div class="pill-row">
         <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
         <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
+        <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
       </div>
       <div class="feedback-list">
         ${
@@ -1308,7 +1338,7 @@ function renderStudentDraftStep(assignment, submission) {
 }
 
 function renderStudentFinalStep(assignment, submission) {
-  const outline = getOutlineConfig(assignment, submission);
+  const outline = getOutlineFields(assignment, submission);
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -1328,6 +1358,32 @@ function renderStudentFinalStep(assignment, submission) {
           </div>
           <button class="button-secondary" data-action="download-work" style="flex-shrink:0;margin-left:auto;">⬇ Download my work</button>
         </div>
+        ${submission.teacherReview?.savedAt ? `
+          <div class="teacher-ready-card" style="margin-top:14px;border-left:4px solid var(--accent);">
+            <p class="mini-label">Teacher feedback</p>
+            ${submission.teacherReview.finalScore !== "" ? `
+              <div style="font-size:1.3rem;font-weight:700;margin-bottom:8px;">
+                Score: ${escapeHtml(String(submission.teacherReview.finalScore))}
+              </div>
+            ` : ""}
+            ${submission.teacherReview.finalNotes ? `
+              <p style="white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.teacherReview.finalNotes)}</p>
+            ` : ""}
+            ${submission.teacherReview.annotations?.length ? `
+              <div style="margin-top:12px;">
+                <p class="mini-label">Comments on your writing</p>
+                <div style="display:grid;gap:6px;margin-top:6px;">
+                  ${submission.teacherReview.annotations.map((ann) => `
+                    <div style="padding:8px 12px;border-radius:10px;background:#fff9e6;border:1px solid #e0c84a;font-size:0.88rem;">
+                      <strong style="color:var(--accent-deep);">${escapeHtml(ann.code)}</strong>
+                      <span style="margin-left:8px;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+          </div>
+        ` : ""}
       ` : ""}
       <div class="teacher-ready-card">
         <p class="mini-label">Guided outline</p>
