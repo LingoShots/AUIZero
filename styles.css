@@ -408,6 +408,62 @@ button {
   line-height: 1.55;
 }
 
+/* Editable AI draft */
+.assist-title-input {
+  width: 100%;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  color: var(--ink);
+  margin-top: 6px;
+}
+
+.rubric-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.rubric-edit-fields {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.rubric-edit-fields input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #fafaf8;
+  color: var(--ink);
+}
+
+.rubric-edit-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.rubric-edit-right input[type="number"] {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fafaf8;
+  color: var(--ink);
+  text-align: center;
+}
+
 .submitted-banner {
   display: flex;
   align-items: center;
