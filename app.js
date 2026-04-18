@@ -2177,11 +2177,9 @@ function getChatbotSystemPrompt(assignment) {
     other:         "help the student clarify what they want to say, find support for their ideas, and plan how to structure their response",
   };
 
-  const focus = typeGuide[assignment.assignmentType] || typeGuide.other;
+ const focus = typeGuide[assignment.assignmentType] || typeGuide.other;
 
-  return `You are a Socratic writing coach. Your ONLY role is to ${focus} — through questions.
-
-return `You are a supportive writing coach helping a student plan their writing. Your role is to ${focus}.
+  return `You are a supportive writing coach helping a student plan their writing. Your role is to ${focus}.
 
 RULES:
 1. Ask ONE question at a time. Keep it short and friendly.
@@ -2197,7 +2195,6 @@ Task: "${assignment.prompt}"
 
 Start by asking the student what topic or idea they are thinking about. If they struggle to answer, suggest they think about two or three possible ideas and pick the one they feel most confident about.`;
 }
-
 function downloadStudentWork(assignment, submission) {
   const student = getUserById(submission.studentId);
   const studentName = student?.name || "Student";
