@@ -184,12 +184,21 @@ function handleKeydown(event) {
   }
 }
 
+function handleKeydown(event) {
+  if (event.target.id === "chat-input" && event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    const btn = document.querySelector("[data-action='send-chat-message']");
+    if (btn && !btn.disabled) btn.click();
+  }
+}
+
 function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
     const submission = getStudentSubmission();
     if (!submission) return;
     persistState();
+    syncSubmissionToServer(submission);
     const indicator = document.getElementById("autosave-indicator");
     if (indicator) {
       indicator.textContent = "Saved";
@@ -235,6 +244,11 @@ async function handleClick(event) {
   const action = target.dataset.action;
 
  if (action === "generate-teacher-assist") {
+    // Capture deadline before render wipes the input value
+    const deadlineInput = document.getElementById("teacher-deadline");
+    if (deadlineInput) ui.teacherDraft.deadline = deadlineInput.value;
+    ui.notice = "AI is thinking...";
+    render();
     ui.notice = "AI is thinking...";
     render();
 
@@ -253,7 +267,15 @@ async function handleClick(event) {
     .then(data => {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
       const parsed = JSON.parse(jsonStr);
-      parsed.rubric = (parsed.rubric || []).map((item) => ({ id: uid("rubric"), ...item }));
+      parsed.rubric = (parsed.rubric || []).map((item) => ({ id: uid("rubric"), ...item, points: Number(item.points) || 1 }));
+      // Ensure rubric points add up to totalPoints
+      const targetPts = Number(ui.teacherDraft.totalPoints) || 20;
+      const currentTotal = parsed.rubric.reduce((s, r) => s + r.points, 0);
+      if (currentTotal !== targetPts && parsed.rubric.length > 0) {
+        const diff = targetPts - currentTotal;
+        parsed.rubric[parsed.rubric.length - 1].points += diff;
+      }
+      ui.teacherAssist = parsed;
       ui.teacherAssist = parsed;
       ui.notice = "Assignment generated successfully!";
       render();
@@ -2378,9 +2400,13 @@ function handleSubmission() {
   submission.status = "submitted";
   submission.submittedAt = new Date().toISOString();
   submission.updatedAt = submission.submittedAt;
-  ui.notice = "Final work submitted.";
+  ui.notice = "Submitting...";
   persistState();
   render();
+  syncSubmissionToServer(submission).then(() => {
+    ui.notice = "Final work submitted. Your teacher will review it soon.";
+    render();
+  });
 }
 
 function updateDraftSubmission(nextText) {
@@ -3889,6 +3915,39 @@ function loadState() {
     return normalized;
   }
 }
+
+async function syncSubmissionToServer(submission) {
+  if (!submission?.id) return;
+  try {
+    // Check if submission exists on server
+    const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
+    const serverId = existing?.submission?.id;
+    const payload = {
+      draft_text: submission.draftText || "",
+      final_text: submission.finalText || "",
+      reflections: submission.reflections || { improved: "" },
+      chat_history: submission.chatHistory || [],
+      writing_events: submission.writingEvents || [],
+      feedback_history: submission.feedbackHistory || [],
+      focus_annotations: submission.focusAnnotations || [],
+      self_assessment: submission.selfAssessment || {},
+      status: submission.status || "draft",
+      chat_started_at: submission.chatStartedAt || null,
+      started_at: submission.startedAt || null,
+      submitted_at: submission.submittedAt || null,
+    };
+    if (serverId) {
+      await Auth.apiFetch(`/api/submissions/${serverId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      });
+    }
+  } catch (e) {
+    console.warn("Could not sync submission to server:", e.message);
+  }
+}
+
+function persistState() {
 
 function persistState() {
   const cloned = JSON.parse(JSON.stringify(state));
