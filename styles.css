@@ -1036,3 +1036,33 @@ button {
   background: #f7dfdf;
   color: var(--danger);
 }
+
+.self-assessment-row {
+  display: flex;
+  gap: 8px;
+}
+
+.sa-option {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sa-option:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.sa-selected {
+  background: var(--accent);
+  border-color: var(--accent-deep);
+  color: white;
+}
