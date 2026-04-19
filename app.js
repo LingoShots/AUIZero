@@ -173,6 +173,15 @@ function bindEvents() {
   appEl.addEventListener("change", handleChange);
   appEl.addEventListener("input", handleInput);
   appEl.addEventListener("paste", handlePaste, true);
+  appEl.addEventListener("keydown", handleKeydown);
+}
+
+function handleKeydown(event) {
+  if (event.target.id === "chat-input" && event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    const btn = document.querySelector("[data-action='send-chat-message']");
+    if (btn && !btn.disabled) btn.click();
+  }
 }
 
 function scheduleAutoSave() {
@@ -482,11 +491,10 @@ if (action === "sign-out") {
     return;
   }
 
-  if (action === "save-assignment") {
-    saveTeacherAssignment();
+ if (action === "save-assignment") {
+    await saveTeacherAssignment();
     return;
   }
-
  if (action === "publish-assignment") {
     const assignmentId = target.dataset.assignmentId;
     const assignment = state.assignments.find((a) => a.id === assignmentId);
@@ -529,15 +537,45 @@ if (action === "sign-out") {
     return;
   }
 
-  if (action === "select-assignment") {
+ if (action === "select-assignment") {
     stopPlayback();
     ui.selectedAssignmentId = target.dataset.assignmentId;
-    ui.selectedReviewSubmissionId = getAssignmentSubmissions(ui.selectedAssignmentId)[0]?.id || null;
-    ui.notice = "Assignment opened in the review area.";
+    ui.selectedReviewSubmissionId = null;
+    ui.notice = "Loading submissions...";
     render();
+    Auth.apiFetch(`/api/assignments/${target.dataset.assignmentId}/submissions`).then(data => {
+      const subs = data.submissions || [];
+      // Remove old submissions for this assignment and replace with fresh server data
+      state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
+      subs.forEach(s => {
+        state.submissions.push(normalizeSubmission({
+          id: s.id,
+          assignmentId: s.assignment_id,
+          studentId: s.student_id,
+          draftText: s.draft_text || "",
+          finalText: s.final_text || "",
+          reflections: s.reflections || { improved: "" },
+          chatHistory: s.chat_history || [],
+          writingEvents: s.writing_events || [],
+          feedbackHistory: s.feedback_history || [],
+          focusAnnotations: s.focus_annotations || [],
+          teacherReview: s.teacher_review || { finalScore: "", finalNotes: "", annotations: [] },
+          selfAssessment: s.self_assessment || {},
+          status: s.status || "draft",
+          chatStartedAt: s.chat_started_at || null,
+          startedAt: s.started_at || null,
+          submittedAt: s.submitted_at || null,
+          updatedAt: s.updated_at || new Date().toISOString(),
+          // Map student name from joined profile
+          _studentName: s.profiles?.name || "",
+        }));
+      });
+      ui.selectedReviewSubmissionId = getAssignmentSubmissions(ui.selectedAssignmentId)[0]?.id || null;
+      ui.notice = subs.length ? "" : "No submissions yet for this assignment.";
+      render();
+    });
     return;
   }
-
   if (action === "student-next-step") {
     const nextStep = Number(target.dataset.step);
     if (canAdvanceToStep(nextStep)) {
@@ -1025,9 +1063,6 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
           </div>
         </div>
         ${inviteBanner}
-        <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
-          </div>
-        </div>
         <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
           <button id="auth-tab-signin" onclick="showAuthTab('signin')" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:#a55233;">Sign in</button>
           <button id="auth-tab-signup" onclick="showAuthTab('signup')" style="flex:1;padding:10px;border:none;background:#f4efe6;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
@@ -2111,7 +2146,7 @@ function renderStudentFinalStep(assignment, submission) {
                   <strong style="flex-shrink:0;margin-left:12px;">/ ${item.points}</strong>
                 </div>
                 <div class="self-assessment-row">
-                  ${Array.from({length: item.points}, (_, i) => i + 1).map(n => `
+                  ${Array.from({length: Math.min(item.points, 5)}, (_, i) => Math.round((i + 1) * item.points / Math.min(item.points, 5))).map(n => `
                     <label class="sa-option ${currentVal == n ? "sa-selected" : ""}">
                       <input type="radio" name="${key}" data-sa-key="${key}" value="${n}" ${currentVal == n ? "checked" : ""} style="display:none;" />
                       ${n}
@@ -2169,7 +2204,7 @@ function applyTeacherAssistToDraft() {
   ui.teacherDraft.rubric = ui.teacherAssist.rubric.map((item) => ({ ...item }));
 }
 
-function saveTeacherAssignment() {
+async function saveTeacherAssignment() {
   // Use the editable AI draft if present, otherwise fall back to teacherDraft
   const source = ui.teacherAssist || ui.teacherDraft;
   const draft = ui.teacherAssist
@@ -3104,14 +3139,19 @@ function downloadStudentWork(assignment, submission) {
       <p>${escapeHtml(m.content)}</p>
     </div>`).join("");
 
-  const eventLines = (submission.writingEvents || []).map((e) => `
-    <tr>
-      <td>${escapeHtml(formatDateTime(e.timestamp))}</td>
-      <td>${escapeHtml(titleCase(e.type))}</td>
-      <td>${e.delta >= 0 ? "+" : ""}${e.delta}</td>
-      <td>${e.flagged ? "⚠ Yes" : ""}</td>
-      <td>${escapeHtml(e.preview || "")}</td>
-    </tr>`).join("");
+  const events = submission.writingEvents || [];
+  const insertCount = events.filter(e => e.type === "insert").length;
+  const deleteCount = events.filter(e => e.type === "delete").length;
+  const pasteCount = events.filter(e => e.type === "paste").length;
+  const flaggedCount = events.filter(e => e.flagged).length;
+  const totalChars = events.reduce((sum, e) => sum + Math.abs(e.delta || 0), 0);
+  const eventSummary = `
+    <tr><td>Insertions</td><td>${insertCount} events</td></tr>
+    <tr><td>Deletions</td><td>${deleteCount} events</td></tr>
+    <tr><td>Pastes</td><td>${pasteCount} events${flaggedCount ? ` (${flaggedCount} flagged ⚠)` : ""}</td></tr>
+    <tr><td>Total characters changed</td><td>${totalChars.toLocaleString()}</td></tr>
+    <tr><td>Total editing events</td><td>${events.length}</td></tr>
+  `;
 
   const rubricLines = (assignment.rubric || []).map((r) => `
     <tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.description)}</td><td>${r.points}</td></tr>`).join("");
@@ -3157,8 +3197,8 @@ ${chatLines || "<p><em>No conversation recorded.</em></p>"}
 
 <h2>2 — Draft writing log</h2>
 <table>
-  <thead><tr><th>Time</th><th>Type</th><th>Change</th><th>Flagged?</th><th>Preview</th></tr></thead>
-  <tbody>${eventLines || "<tr><td colspan='5'>No events recorded.</td></tr>"}</tbody>
+  <thead><tr><th>Event type</th><th>Summary</th></tr></thead>
+  <tbody>${events.length ? eventSummary : "<tr><td colspan='2'>No events recorded.</td></tr>"}</tbody>
 </table>
 
 <h2>Draft text</h2>
@@ -3205,7 +3245,10 @@ ${submission.teacherReview.finalNotes ? `<p>${escapeHtml(submission.teacherRevie
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${(assignment.title || "assignment").replace(/\s+/g, "-")}-${(studentName).replace(/\s+/g, "-")}-process.html`;
+  const currentClass = currentClasses.find(c => c.id === currentClassId);
+  const className = currentClass?.name || "class";
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.download = `${(assignment.title || "assignment").replace(/\s+/g, "-")}-${className.replace(/\s+/g, "-")}-${dateStr}.html`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
