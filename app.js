@@ -303,8 +303,6 @@ if (action === "switch-class") {
   }
 
   if (action === "create-class") {
-  
-if (action === "create-class") {
     const name = prompt("Class name:");
     if (!name) return;
     const data = await Auth.apiFetch('/api/classes', {
