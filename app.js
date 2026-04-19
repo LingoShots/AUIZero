@@ -131,9 +131,8 @@ async function bootApp(profile) {
         status: a.status,
         uploadedRubricText: a.uploaded_rubric_text || '',
       }));
-    }
-  }
-  } else {
+      }
+} else {
     const data = await Auth.apiFetch('/api/student/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
