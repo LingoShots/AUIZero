@@ -262,11 +262,14 @@ app.get('/api/classes/:classId/invite', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('classes')
-      .select('id, name')
+      .select('name, profiles(name)')
       .eq('id', req.params.classId)
       .single();
     if (error || !data) return res.status(404).json({ error: 'Class not found' });
-    res.json({ class: data });
+    res.json({
+      className: data.name,
+      teacherName: data.profiles?.name || "",
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
