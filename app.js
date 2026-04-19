@@ -263,7 +263,7 @@ async function handleClick(event) {
 
   const action = target.dataset.action;
 
- if (action === "generate-teacher-assist") {
+if (action === "generate-teacher-assist") {
     // Capture all form values before render wipes them
     const deadlineInput = document.getElementById("teacher-deadline");
     if (deadlineInput) ui.teacherDraft.deadline = deadlineInput.value;
@@ -273,8 +273,10 @@ async function handleClick(event) {
     if (chatLimitInput) ui.teacherDraft.chatTimeLimit = Number(chatLimitInput.value);
     const feedbackLimitInput = document.getElementById("teacher-feedback-limit");
     if (feedbackLimitInput) ui.teacherDraft.feedbackRequestLimit = Number(feedbackLimitInput.value);
-    ui.notice = "AI is thinking...";
-    render();
+    const langLevel = document.getElementById("teacher-language-level");
+    if (langLevel) ui.teacherDraft.languageLevel = langLevel.value;
+    const totalPts = document.getElementById("teacher-total-points");
+    if (totalPts) ui.teacherDraft.totalPoints = Number(totalPts.value);
     ui.notice = "AI is thinking...";
     render();
 
@@ -859,6 +861,18 @@ async function handleChange(event) {
     return;
   }
 
+if (target.id === "playback-speed") {
+    ui.playback.speed = Number(target.value);
+    if (ui.playback.isPlaying) {
+      const submission = getSelectedReviewSubmission();
+      const frames = submission ? getPlaybackFrames(submission) : [];
+      stopPlayback();
+      startPlayback(frames);
+    }
+    render();
+    return;
+  }
+  
   if (target.dataset.assistField && ui.teacherAssist) {
     ui.teacherAssist[target.dataset.assistField] = target.value;
     return;
@@ -1004,6 +1018,11 @@ function handleInput(event) {
     return;
   }
 
+  if (target.id === "teacher-deadline") {
+    ui.teacherDraft.deadline = target.value;
+    return;
+  }
+  
   if (target.id === "draft-editor") {
     updateDraftSubmission(target.value);
     updateDraftMeters();
@@ -2038,7 +2057,7 @@ function renderStudentIdeasStep(assignment, submission) {
   const chatStartedAt = submission.chatStartedAt;
   const elapsedMins = chatStartedAt ? (Date.now() - Date.parse(chatStartedAt)) / 60000 : 0;
   const timeExpired = timeLimit > 0 && elapsedMins >= timeLimit;
-  const totalSecsRemaining = timeLimit > 0 ? Math.max(0, Math.round((timeLimit * 60) - (Date.now() - Date.parse(chatStartedAt || Date.now()))/ 1000)) : null;
+  const totalSecsRemaining = (timeLimit > 0 && chatStartedAt) ? Math.max(0, Math.round((timeLimit * 60) - (Date.now() - Date.parse(chatStartedAt)) / 1000)) : null;
   const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
   const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
   const hasEnoughChat = chatHistory.length >= 2;
@@ -2051,7 +2070,7 @@ function renderStudentIdeasStep(assignment, submission) {
           <h3>Explore your ideas</h3>
           <p class="subtle">Chat with your writing coach. Answer the questions to develop your thinking before you write.</p>
         </div>
-        ${minsRemaining !== null ? `
+        ${timeLimit > 0 && minsRemaining !== null ? `
           <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
             ${timeExpired ? "⏱ Time's up" : `⏱ ${minsRemaining}:${String(secsRemaining).padStart(2,'0')} left`}
           </div>
@@ -2446,8 +2465,15 @@ function handleSubmission() {
   ui.notice = "Submitting...";
   persistState();
   render();
-  syncSubmissionToServer(submission).then(() => {
+  syncSubmissionToServer(submission)
+  .then((result) => {
+    console.log("Sync result:", result);
     ui.notice = "Final work submitted. Your teacher will review it soon.";
+    render();
+  })
+  .catch(e => {
+    console.error("Submit sync failed:", e);
+    ui.notice = "Submitted locally but could not reach server. Please try again.";
     render();
   });
 }
@@ -2467,10 +2493,14 @@ function updateDraftSubmission(nextText) {
 
   const type = determineEventType(operation);
   const pasteContent = ui.pendingPaste?.content || "";
+
+  const isFlaggedPaste = type === "paste" && pasteContent.length >= LARGE_PASTE_LIMIT;
+
   submission.draftText = nextText;
   submission.updatedAt = now;
   submission.startedAt = submission.startedAt || now;
   submission.lastEditedAt = now;
+
   submission.writingEvents.push({
     id: uid("event"),
     timestamp: now,
@@ -2478,11 +2508,12 @@ function updateDraftSubmission(nextText) {
     start: operation.start,
     end: operation.end,
     removedText: operation.removedText,
-    insertedText: operation.insertedText,
+    insertedText: type === "paste" ? pasteContent : operation.insertedText,
     delta: operation.insertedText.length - operation.removedText.length,
-    flagged: type === "paste" && pasteContent.length >= LARGE_PASTE_LIMIT,
+    flagged: isFlaggedPaste,
     preview: trimTo(operation.insertedText || operation.removedText || nextText.slice(-40), 80),
   });
+
   ui.pendingPaste = null;
   persistState();
 }
@@ -3987,7 +4018,7 @@ async function syncSubmissionToServer(submission) {
     // Update local submission ID to match server
     submission.id = serverId;
   } catch (e) {
-    console.warn("Could not sync submission to server:", e.message);
+    console.error("Could not sync submission to server:", e.message, e);
   }
 }
 
