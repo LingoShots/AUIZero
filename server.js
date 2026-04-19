@@ -80,6 +80,14 @@ app.post('/api/auth/signup', async (req, res) => {
       email_confirm: true,
     });
     if (error) return res.status(400).json({ error: error.message });
+
+    // Create profile manually instead of relying on trigger
+    await supabase.from('profiles').insert({
+      id: data.user.id,
+      name,
+      role,
+    });
+
     res.json({ user: data.user });
   } catch (error) {
     res.status(500).json({ error: error.message });
