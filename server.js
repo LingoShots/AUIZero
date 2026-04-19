@@ -209,6 +209,36 @@ app.get('/api/student/classes', async (req, res) => {
   }
 });
 
+// Join class via invite token
+app.get('/api/classes/:classId/invite', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('classes')
+      .select('id, name')
+      .eq('id', req.params.classId)
+      .single();
+    if (error || !data) return res.status(404).json({ error: 'Class not found' });
+    res.json({ class: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auto-join class after signup
+app.post('/api/classes/:classId/join', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { error } = await supabase
+      .from('class_members')
+      .upsert({ class_id: req.params.classId, student_id: user.id });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── Assignments endpoints ────────────────────────────────────
 
 // Get assignments for a class
