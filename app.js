@@ -95,7 +95,7 @@ async function bootApp(profile) {
   ui.activeUserId = profile.id;
 
   // Auto-join class if arriving via invite link
-  await Auth.joinClassIfInvited();
+  try { await Auth.joinClassIfInvited(); } catch(e) { console.warn("Join class skipped:", e.message); }
 
   if (profile.role === 'teacher') {
     const data = await Auth.apiFetch('/api/classes');
