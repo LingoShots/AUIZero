@@ -31,6 +31,7 @@ const ui = {
   selectedStudentAssignmentId: null,
   selectedReviewSubmissionId: null,
   activeFocusIdeaId: "",
+  pasteWarning: false,
   studentStep: 1,
   playback: {
     isPlaying: false,
@@ -821,7 +822,7 @@ function handleInput(event) {
 }
 
 function handlePaste(event) {
-  if (event.target.id !== "draft-editor") {
+  if (event.target.id !== "draft-editor" && event.target.id !== "final-editor") {
     return;
   }
 
@@ -830,6 +831,15 @@ function handlePaste(event) {
     content: pasted,
     timestamp: Date.now(),
   };
+
+  if (pasted.length >= LARGE_PASTE_LIMIT) {
+    ui.pasteWarning = true;
+    render();
+    setTimeout(() => {
+      const editor = document.getElementById(event.target.id);
+      if (editor) editor.focus();
+    }, 50);
+  }
 }
 
 function render() {
@@ -980,6 +990,21 @@ async function uploadRubricFile(file) {
     ui.notice = 'Could not read the rubric file. Try a different format.';
   }
   render();
+}
+
+function renderPasteWarning() {
+  if (!ui.pasteWarning) return "";
+  return `
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:999;display:grid;place-items:center;padding:20px;">
+      <div style="background:#fffdf9;border-radius:18px;padding:28px;max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
+        <div style="font-size:2rem;margin-bottom:10px;">⚠️</div>
+        <h3 style="margin:0 0 10px;color:var(--danger);">Paste detected</h3>
+        <p style="margin:0 0 16px;line-height:1.6;">All work submitted must be your own. Pasted content has been flagged in your writing log and your teacher will be able to see it.</p>
+        <p style="margin:0 0 20px;line-height:1.6;font-weight:600;">Please remove the pasted portion and write it in your own words. Feedback will not be given on pasted sections.</p>
+        <button class="button" data-action="dismiss-paste-warning" style="width:100%;">I understand — I will rewrite it</button>
+      </div>
+    </div>
+  `;
 }
 
 function renderInvitePanel() {
@@ -1164,7 +1189,7 @@ function renderTeacherWorkspace() {
                 <div class="teacher-ready-card">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                     <p class="mini-label">Rubric</p>
-                    <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} / ${ui.teacherDraft.totalPoints} pts</span>
+                    <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts total</span>
                   </div>
                   <div class="review-stack">
                     ${ui.teacherAssist.rubric.map((item) => `
@@ -1824,9 +1849,9 @@ function renderStudentFinalStep(assignment, submission) {
               </div>`;
           }).join("")}
         </div>
-        <div class="field" style="margin-top:16px;">
-          <label>What did you improve from your draft to your final piece?</label>
-          <textarea class="reflection-input" data-reflection-field="improved" placeholder="I improved my writing by..." style="min-height:80px;">${escapeHtml(submission.reflections.improved)}</textarea>
+        <div style="text-align:right;font-size:0.9rem;font-weight:700;color:var(--accent-deep);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">
+          Total: ${assignment.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts
+        </div>
         </div>
       </div>
       <div class="wizard-nav">
