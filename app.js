@@ -136,6 +136,33 @@ function scheduleAutoSave() {
   }, 30000);
 }
 
+function buildFormatPrompt() {
+  const d = ui.teacherDraft;
+  const deadlineLine = d.deadline
+    ? `- Deadline: ${new Date(d.deadline).toLocaleDateString(undefined, {weekday:"long",day:"numeric",month:"long",year:"numeric"})}. Do not mention this in the student prompt — it is shown separately.`
+    : "";
+  const rubricLine = d.uploadedRubricText
+    ? `\nTEACHER RUBRIC (use this as the basis for the student rubric — simplify language to CEFR ${d.languageLevel}, preserve the criteria structure and point values where possible, adjust points to total exactly ${d.totalPoints}):\n${d.uploadedRubricText.slice(0, 3000)}`
+    : "- No rubric uploaded. Create 4 appropriate rubric criteria for the assignment type.";
+
+  return `Create a student-ready writing assignment based on these teacher notes: "${d.brief}".
+
+Assignment settings:
+- Student CEFR level: ${d.languageLevel}. All student-facing text (prompt, rubric descriptions, focus points) must be written at this level.
+- Total assignment points: ${d.totalPoints}. Rubric criteria points must add up to exactly ${d.totalPoints}.
+- Feedback checks allowed: ${d.feedbackRequestLimit}. Mention this in the student prompt if relevant.
+- Chat time limit: ${d.chatTimeLimit === 0 ? "unlimited" : d.chatTimeLimit + " minutes"}.
+${deadlineLine}
+${rubricLine}
+
+Rules:
+- Keep rubric criterion names short (2-4 words).
+- Rubric descriptions must be one clear sentence a student at CEFR ${d.languageLevel} can understand.
+- The student prompt should be encouraging and clear, not academic in tone.
+
+Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, response), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`;
+}
+
 async function handleClick(event) {
   const target = event.target.closest("[data-action]");
   if (!target) {
@@ -153,24 +180,7 @@ async function handleClick(event) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        prompt: `Create a student-ready writing assignment based on these teacher notes: "${ui.teacherDraft.brief}".
-
-Assignment settings:
-- Student CEFR level: ${ui.teacherDraft.languageLevel}. All student-facing text (prompt, rubric descriptions, focus points) must be written at this level.
-- Total assignment points: ${ui.teacherDraft.totalPoints}. Rubric criteria points must add up to exactly ${ui.teacherDraft.totalPoints}.
-- Feedback checks allowed: ${ui.teacherDraft.feedbackRequestLimit}. Mention this in the student prompt if relevant.
-- Chat time limit: ${ui.teacherDraft.chatTimeLimit === 0 ? "unlimited" : ui.teacherDraft.chatTimeLimit + " minutes"}.
-${ui.teacherDraft.deadline ? `- Deadline: ${new Date(ui.teacherDraft.deadline).toLocaleDateString(undefined, {weekday:"long",day:"numeric",month:"long",year:"numeric"})}. Do not mention this in the student prompt — it is shown separately.` : ""}
-${ui.teacherDraft.uploadedRubricText
-  ? `\nTEACHER RUBRIC (use this as the basis for the student rubric — simplify language to CEFR ${ui.teacherDraft.languageLevel}, preserve the criteria structure and point values where possible, adjust points to total exactly ${ui.teacherDraft.totalPoints}):\n${ui.teacherDraft.uploadedRubricText.slice(0, 3000)}`
-  : "- No rubric uploaded. Create 4 appropriate rubric criteria for the assignment type."}
-
-Rules:
-- Keep rubric criterion names short (2-4 words).
-- Rubric descriptions must be one clear sentence a student at CEFR ${ui.teacherDraft.languageLevel} can understand.
-- The student prompt should be encouraging and clear, not academic in tone.
-
-Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, response), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`
+       prompt: buildFormatPrompt()
       })
     })
     .then(res => {
