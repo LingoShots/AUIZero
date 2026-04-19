@@ -22,6 +22,7 @@ const ui = {
   activeUserId: "",
   pin: "",
   showInvitePanel: false,
+  showFullRubric: false,
   inviteText: "",
   inviteMailto: "",
   teacherDraft: null,
@@ -129,11 +130,20 @@ async function handleClick(event) {
       body: JSON.stringify({ 
         prompt: `Create a student-ready writing assignment based on these teacher notes: "${ui.teacherDraft.brief}".
 
+Assignment settings:
+- Student CEFR level: ${ui.teacherDraft.languageLevel}. All student-facing text (prompt, rubric descriptions, focus points) must be written at this level.
+- Total assignment points: ${ui.teacherDraft.totalPoints}. Rubric criteria points must add up to exactly ${ui.teacherDraft.totalPoints}.
+- Feedback checks allowed: ${ui.teacherDraft.feedbackRequestLimit}. Mention this in the student prompt if relevant.
+- Chat time limit: ${ui.teacherDraft.chatTimeLimit === 0 ? "unlimited" : ui.teacherDraft.chatTimeLimit + " minutes"}.
+${ui.teacherDraft.deadline ? `- Deadline: ${new Date(ui.teacherDraft.deadline).toLocaleDateString(undefined, {weekday:"long",day:"numeric",month:"long",year:"numeric"})}. Do not mention this in the student prompt — it is shown separately.` : ""}
+${ui.teacherDraft.uploadedRubricText
+  ? `\nTEACHER RUBRIC (use this as the basis for the student rubric — simplify language to CEFR ${ui.teacherDraft.languageLevel}, preserve the criteria structure and point values where possible, adjust points to total exactly ${ui.teacherDraft.totalPoints}):\n${ui.teacherDraft.uploadedRubricText.slice(0, 3000)}`
+  : "- No rubric uploaded. Create 4 appropriate rubric criteria for the assignment type."}
+
 Rules:
-- Student CEFR level: ${ui.teacherDraft.languageLevel}. Adjust the prompt language complexity accordingly.
-- Total assignment points: ${ui.teacherDraft.totalPoints}. The rubric criteria points must add up to exactly ${ui.teacherDraft.totalPoints}.
-- If the teacher's notes mention specific rubric criteria or assessment areas, use those. Otherwise create 4 appropriate criteria for the assignment type.
-- Keep rubric criteria names short (2-4 words). Descriptions should be one clear sentence a student can understand.
+- Keep rubric criterion names short (2-4 words).
+- Rubric descriptions must be one clear sentence a student at CEFR ${ui.teacherDraft.languageLevel} can understand.
+- The student prompt should be encouraging and clear, not academic in tone.
 
 Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, response), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`
       })
@@ -299,6 +309,13 @@ if (action === "create-class") {
     render();
     return;
   }
+  
+if (action === "toggle-full-rubric") {
+    ui.showFullRubric = !ui.showFullRubric;
+    render();
+    return;
+  }
+  
 if (action === "sign-out") {
     await Auth.signOut();
     currentProfile = null;
@@ -923,6 +940,48 @@ function renderAuthScreen() {
   };
 }
 
+window.handleRubricDrop = async (event) => {
+  event.preventDefault();
+  const file = event.dataTransfer.files[0];
+  if (file) await uploadRubricFile(file);
+  document.getElementById('rubric-drop-zone').style.borderColor = 'var(--line)';
+};
+
+window.handleRubricFile = async (file) => {
+  if (file) await uploadRubricFile(file);
+};
+
+window.clearUploadedRubric = () => {
+  ui.teacherDraft.uploadedRubricText = '';
+  ui.teacherDraft.uploadedRubricName = '';
+  render();
+};
+
+async function uploadRubricFile(file) {
+  const dropZone = document.getElementById('rubric-drop-zone');
+  if (dropZone) dropZone.innerHTML = '<p style="color:var(--muted);margin:0;">Extracting text...</p>';
+  try {
+    const formData = new FormData();
+    formData.append('rubric', file);
+    const res = await fetch('/api/extract-rubric', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${Auth.getToken()}` },
+      body: formData
+    });
+    const data = await res.json();
+    if (data.error) {
+      ui.notice = `Could not read rubric: ${data.error}`;
+    } else {
+      ui.teacherDraft.uploadedRubricText = data.text;
+      ui.teacherDraft.uploadedRubricName = file.name;
+      ui.notice = `Rubric "${file.name}" loaded — the AI will use it when formatting.`;
+    }
+  } catch (e) {
+    ui.notice = 'Could not read the rubric file. Try a different format.';
+  }
+  render();
+}
+
 function renderInvitePanel() {
   if (!ui.showInvitePanel) return "";
   const appUrl = window.location.origin;
@@ -1017,9 +1076,24 @@ function renderTeacherWorkspace() {
           </div>
         </div>
         <div class="field-stack">
-          <div class="field">
+         <div class="field">
             <label for="teacher-brief">Teacher brief</label>
-            <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 idea helps and 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
+            <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
+          </div>
+          <div class="field">
+            <label>Rubric (optional — drag and drop or click to upload)</label>
+            <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
+              ondragover="event.preventDefault();this.style.borderColor='var(--accent)';"
+              ondragleave="this.style.borderColor='var(--line)';"
+              ondrop="handleRubricDrop(event);"
+              onclick="document.getElementById('rubric-file-input').click();">
+              ${ui.teacherDraft.uploadedRubricText
+                ? `<p style="color:var(--accent-deep);font-weight:600;margin:0;">✓ Rubric loaded — ${ui.teacherDraft.uploadedRubricText.length} characters extracted</p>
+                   <button class="button-ghost" style="margin-top:8px;font-size:0.8rem;" onclick="event.stopPropagation();clearUploadedRubric();">Remove</button>`
+                : `<p style="color:var(--muted);margin:0;">Drop your rubric PDF or Word doc here, or click to browse</p>`
+              }
+            </div>
+            <input type="file" id="rubric-file-input" accept=".pdf,.doc,.docx" style="display:none;" onchange="handleRubricFile(this.files[0]);" />
           </div>
           <div class="field-grid compact-grid">
             <div class="field">
@@ -1027,8 +1101,11 @@ function renderTeacherWorkspace() {
               <input id="teacher-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
             </div>
             <div class="field">
-              <label for="teacher-total-points">Total points</label>
-              <input id="teacher-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />
+              <label>Total points</label>
+              ${ui.teacherAssist
+                ? `<div style="font-size:1.1rem;font-weight:700;padding:8px 0;">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts (auto-calculated from rubric)</div>`
+                : `<input id="teacher-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />`
+              }
             </div>
             <div class="field">
               <label for="teacher-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
@@ -1398,6 +1475,16 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                 <div class="review-card">
                   <div class="section-header">
                     <div>
+                    ${selectedSubmission && assignment.uploadedRubricText ? `
+                        <div style="margin-bottom:14px;">
+                          <button class="button-ghost" data-action="toggle-full-rubric" style="font-size:0.82rem;">
+                            ${ui.showFullRubric ? "▲ Hide full rubric" : "▼ Show full teacher rubric"}
+                          </button>
+                          ${ui.showFullRubric ? `
+                            <div style="margin-top:10px;background:#f8f3ea;border:1px solid var(--line);border-radius:10px;padding:14px;font-size:0.85rem;white-space:pre-wrap;max-height:300px;overflow-y:auto;line-height:1.6;">${escapeHtml(assignment.uploadedRubricText)}</div>
+                          ` : ""}
+                        </div>
+                      ` : ""}
                       <h2 class="panel-title">Suggested rubric score</h2>
                       <p class="subtle">Teacher remains in control.</p>
                     </div>
@@ -1835,6 +1922,7 @@ function saveTeacherAssignment() {
     status: "draft",
     deadline: ui.teacherDraft.deadline || "",
     chatTimeLimit: Number(ui.teacherDraft.chatTimeLimit || 0),
+    uploadedRubricText: ui.teacherDraft.uploadedRubricText || "",
   };
 
   state.assignments.unshift(assignment);
@@ -3041,6 +3129,8 @@ function createBlankTeacherDraft() {
     deadline: "",
     studentFocus: "",
     rubric: [],
+    uploadedRubricText: "",
+    uploadedRubricName: "",
   };
 }
 
@@ -3158,6 +3248,7 @@ function normalizeAssignment(assignment) {
     status: assignment?.status || "published",
     deadline: assignment?.deadline || "",
     chatTimeLimit: Number(assignment?.chatTimeLimit ?? 0),
+    uploadedRubricText: assignment?.uploadedRubricText || "",
   };
 }
 
