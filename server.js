@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
+const multer = require('multer');
+const mammoth = require('mammoth');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app = express();
 app.use(express.static(__dirname));
