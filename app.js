@@ -59,9 +59,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   const params = new URLSearchParams(window.location.search);
   const joinClassId = params.get('join');
 
+  const params = new URLSearchParams(window.location.search);
+  const joinClassId = params.get('join');
+  let inviteInfo = null;
+  if (joinClassId) inviteInfo = await Auth.getInviteInfo(joinClassId);
+
   const profile = await Auth.restoreSession();
   if (!profile) {
-    renderAuthScreen(joinClassId);
+    renderAuthScreen(joinClassId, inviteInfo);
     return;
   }
 
@@ -248,6 +253,25 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
     return;
   }
 
+if (action === "switch-class") {
+    currentClassId = target.dataset.classId;
+    ui.selectedStudentAssignmentId = null;
+    hydrateSelections();
+    render();
+    return;
+  }
+
+  if (action === "open-assignment") {
+    currentClassId = target.dataset.classId;
+    ui.selectedStudentAssignmentId = target.dataset.assignmentId;
+    ui.studentStep = 1;
+    ensureStudentSubmission();
+    render();
+    return;
+  }
+
+  if (action === "create-class") {
+  
 if (action === "create-class") {
     const name = prompt("Class name:");
     if (!name) return;
@@ -643,6 +667,16 @@ async function handleChange(event) {
     return;
   }
 
+if (target.id === "student-class-select") {
+    currentClassId = target.value;
+    ui.selectedStudentAssignmentId = null;
+    hydrateSelections();
+    render();
+    return;
+  }
+
+  if (target.id === "class-select") {
+  
 if (target.id === "class-select") {
     if (target.value === "__new__") {
       const name = prompt("Class name:");
@@ -863,23 +897,30 @@ function render() {
   `;
 }
 
-function renderAuthScreen(joinClassId = null) {
+function renderAuthScreen(joinClassId = null, inviteInfo = null) {
+  const teacherName = inviteInfo?.teacherName || "";
+  const className = inviteInfo?.className || "";
+  const inviteBanner = joinClassId ? `
+    <div style="background:#edf4ea;border:1px solid #cbddc6;border-radius:12px;padding:14px 16px;margin-bottom:20px;color:#2e5c28;line-height:1.55;">
+      <strong style="display:block;margin-bottom:4px;">You've been invited to join a class</strong>
+      ${teacherName && className
+        ? `You have been invited to join <strong>${escapeHtml(teacherName)}'s ${escapeHtml(className)}</strong> class.`
+        : "Sign in or create a student account to join."}
+      <span style="display:block;margin-top:6px;font-size:0.88rem;">Sign in or create a student account below to join automatically.</span>
+    </div>
+  ` : "";
   appEl.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
       <div style="width:100%;max-width:400px;background:rgba(255,253,249,0.94);border:1px solid rgba(221,210,194,0.9);border-radius:18px;padding:32px;box-shadow:0 12px 30px rgba(62,41,26,0.08);">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
           <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#a55233,#844125);color:white;font-weight:700;letter-spacing:0.08em;">AU</div>
           <div>
             <h1 style="margin:0;font-family:'Iowan Old Style','Palatino Linotype',serif;font-size:1.3rem;letter-spacing:-0.02em;">AUIZero</h1>
-          <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
+            <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
+          </div>
         </div>
-      </div>
-      ${joinClassId ? `
-        <div style="background:#edf4ea;border:1px solid #cbddc6;border-radius:12px;padding:14px 16px;margin-bottom:20px;color:#2e5c28;font-size:0.92rem;line-height:1.5;">
-          <strong>You've been invited to join a class.</strong><br>Sign in or create a student account below to join automatically.
-        </div>
-      ` : ""}
-      <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
+        ${inviteBanner}
+        <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
           </div>
         </div>
         <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
@@ -947,7 +988,7 @@ function renderAuthScreen(joinClassId = null) {
       errEl.style.display = 'block';
     }
   };
-
+  
   window.handleSignUp = async () => {
     const name = document.getElementById('auth-signup-name').value.trim();
     const email = document.getElementById('auth-signup-email').value.trim();
@@ -1670,6 +1711,7 @@ function renderStudentWorkspace() {
   const student = getUserById(ui.activeUserId);
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
+  const currentClass = currentClasses.find(c => c.id === currentClassId);
 
   return `
     <section class="student-shell">
@@ -1677,9 +1719,48 @@ function renderStudentWorkspace() {
         <div class="panel-header">
           <div>
             <p class="mini-label">Student View</p>
-            <h2 class="panel-title">${escapeHtml(student?.name || "Student")} Writing Steps</h2>
+            <h2 class="panel-title">${escapeHtml(student?.name || currentProfile?.name || "Student")}</h2>
           </div>
+          ${currentClasses.length > 1 ? `
+            <div class="field" style="min-width:180px;">
+              <label for="student-class-select" style="font-size:0.82rem;">Class</label>
+              <select id="student-class-select" aria-label="Switch class">
+                ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+              </select>
+            </div>
+          ` : ""}
         </div>
+        ${currentClass ? `
+          <div class="class-banner">
+            <span class="class-banner-icon">🎓</span>
+            <span><strong>${escapeHtml(currentClass.name)}</strong>${currentClass.teacher_name ? ` · ${escapeHtml(currentClass.teacher_name)}` : ""}</span>
+          </div>
+        ` : ""}
+        ${currentClasses.length > 0 && !assignment ? `
+          <div class="upcoming-section">
+            <p class="mini-label" style="margin-bottom:10px;">Your classes & assignments</p>
+            ${currentClasses.map(cls => {
+              const clsAssignments = state.assignments.filter(a => a.status === "published" && a.classId === cls.id);
+              return `
+                <div class="upcoming-class-block">
+                  <div class="upcoming-class-header">
+                    <strong>${escapeHtml(cls.name)}</strong>
+                    ${cls.id !== currentClassId ? `<button class="button-ghost" style="font-size:0.8rem;min-height:30px;padding:0 10px;" data-action="switch-class" data-class-id="${cls.id}">Open</button>` : `<span class="pill">Current</span>`}
+                  </div>
+                  ${clsAssignments.length ? clsAssignments.map(a => `
+                    <div class="upcoming-assignment-row">
+                      <span>${escapeHtml(a.title)}</span>
+                      <span style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
+                        ${a.deadline ? `<span class="${new Date(a.deadline) < new Date() ? "warning-pill" : "pill"}" style="font-size:0.75rem;">Due ${new Date(a.deadline).toLocaleDateString(undefined,{day:"numeric",month:"short"})}</span>` : ""}
+                        <button class="button-ghost" style="font-size:0.8rem;min-height:30px;padding:0 10px;" data-action="open-assignment" data-class-id="${cls.id}" data-assignment-id="${a.id}">Start</button>
+                      </span>
+                    </div>
+                  `).join("") : `<p class="subtle" style="font-size:0.85rem;margin:6px 0;">No published assignments yet.</p>`}
+                </div>
+              `;
+            }).join("")}
+          </div>
+        ` : ""}
         <div class="field">
           <label for="student-assignment-select">Choose assignment</label>
           <select id="student-assignment-select" aria-label="Select assignment">
