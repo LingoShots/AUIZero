@@ -170,6 +170,7 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
 
 async function handleClick(event) {
   const target = event.target.closest("[data-action]");
+  if (target) console.log("handleClick action:", target.dataset.action);
   if (!target) {
     return;
   }
