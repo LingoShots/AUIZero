@@ -387,7 +387,7 @@ if (action === "sign-out") {
     currentProfile = null;
     currentClasses = [];
     currentClassId = null;
-    renderAuthScreen();
+    setTimeout(() => renderAuthScreen(), 0);
     return;
   }
   
