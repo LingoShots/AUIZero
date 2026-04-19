@@ -47,6 +47,29 @@ const ui = {
 };
 
 let state = { assignments: [], submissions: [], users: [] };
+
+function createBlankTeacherDraft() {
+  return {
+    brief: "",
+    title: "",
+    prompt: "",
+    focus: "",
+    assignmentType: "response",
+    languageLevel: "B1",
+    totalPoints: 20,
+    wordCountMin: 250,
+    wordCountMax: 400,
+    ideaRequestLimit: 3,
+    feedbackRequestLimit: 2,
+    chatTimeLimit: 0,
+    deadline: "",
+    studentFocus: "",
+    rubric: [],
+    uploadedRubricText: "",
+    uploadedRubricName: "",
+  };
+}
+
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -3315,28 +3338,6 @@ function buildGradeJustification(assignment, submission, metrics, totalScore, ma
     ? ` The process log includes ${pasteFlags} large paste event${pasteFlags === 1 ? "" : "s"}, so authorship should be verified.`
     : " No large paste concerns detected.";
   return `Suggested score: ${totalScore}/${maxScore}. The final piece is ${metrics.targetHit ? "within" : "outside"} the target word range and includes ${submission.writingEvents.length} tracked edit events. ${outlineAssessment.note} ${chatAssessment.note} ${reflectionComplete ? "The student completed the reflection." : "The revision reflection is incomplete."}${authorshipNote}`;
-}
-
-function createBlankTeacherDraft() {
-  return {
-    brief: "",
-    title: "",
-    prompt: "",
-    focus: "",
-    assignmentType: "response",
-    languageLevel: "B1",
-    totalPoints: 20,
-    wordCountMin: 250,
-    wordCountMax: 400,
-    ideaRequestLimit: 3,
-    feedbackRequestLimit: 2,
-    chatTimeLimit: 0,
-    deadline: "",
-    studentFocus: "",
-    rubric: [],
-    uploadedRubricText: "",
-    uploadedRubricName: "",
-  };
 }
 
 function normalizeTeacherDraft(draft) {
