@@ -842,12 +842,12 @@ function handlePaste(event) {
   };
 
   if (pasted.length >= 10) {
-    ui.pasteWarning = true;
-    render();
     setTimeout(() => {
+      ui.pasteWarning = true;
+      render();
       const editor = document.getElementById(event.target.id);
       if (editor) editor.focus();
-    }, 50);
+    }, 100);
   }
 }
 
@@ -1019,9 +1019,12 @@ function renderPasteWarning() {
       <div style="background:#fffdf9;border-radius:18px;padding:28px;max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
         <div style="font-size:2rem;margin-bottom:10px;">⚠️</div>
         <h3 style="margin:0 0 10px;color:var(--danger);">Paste detected</h3>
-        <p style="margin:0 0 16px;line-height:1.6;">All work submitted must be your own. Pasted content has been flagged in your writing log and your teacher will be able to see it.</p>
-        <p style="margin:0 0 20px;line-height:1.6;font-weight:600;">Please remove the pasted portion and write it in your own words. Feedback will not be given on pasted sections.</p>
-        <button class="button" data-action="dismiss-paste-warning" style="width:100%;">I understand — I will rewrite it</button>
+        <p style="margin:0 0 12px;line-height:1.6;">Your pasted text has been added to your draft. Your teacher will be able to see it highlighted in violet.</p>
+        <p style="margin:0 0 20px;line-height:1.6;">You can leave it in if it was fair use — for example, a quote you are responding to — or remove it and write the section in your own words.</p>
+        <div style="display:grid;gap:10px;">
+          <button class="button-ghost" data-action="dismiss-paste-warning">I'll rewrite it in my own words</button>
+          <button class="button" data-action="dismiss-paste-warning">Leave it in — it's fair use</button>
+        </div>
       </div>
     </div>
   `;
