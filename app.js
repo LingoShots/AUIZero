@@ -51,7 +51,6 @@ let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   appEl = document.getElementById("app");
-  ui.teacherDraft = createBlankTeacherDraft();
 
   // Show loading screen while checking session
   appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
@@ -67,6 +66,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await bootApp(profile);
 });
 async function bootApp(profile) {
+  ui.teacherDraft = createBlankTeacherDraft();
   currentProfile = profile;
   ui.role = profile.role;
   ui.activeUserId = profile.id;
