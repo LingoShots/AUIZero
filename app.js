@@ -83,7 +83,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (joinClassId) inviteInfo = await Auth.getInviteInfo(joinClassId);
   const profile = await Auth.restoreSession();
   if (!profile) {
-    renderAuthScreen(joinClassId, inviteInfo);
+    setTimeout(() => renderAuthScreen(joinClassId, inviteInfo), 0);
     return;
   }
   await bootApp(profile);
