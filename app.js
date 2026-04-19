@@ -1523,71 +1523,81 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
             </div>
           </div>
           <div class="student-list">
-            ${(() => {
-              const total = getStudentUsers().length;
-              const submitted = submissions.filter((s) => s.status === "submitted").length;
-              const graded = submissions.filter((s) => s.teacherReview?.savedAt).length;
-              const flagged = submissions.filter((s) => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
-              return `
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
-                  <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${submitted}/${total}</div>
-                    <div style="font-size:0.75rem;color:var(--muted);">Submitted</div>
-                  </div>
-                  <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${graded}</div>
-                    <div style="font-size:0.75rem;color:var(--muted);">Graded</div>
-                  </div>
-                  <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${total - submitted}</div>
-                    <div style="font-size:0.75rem;color:var(--muted);">Not submitted</div>
-                  </div>
-                  <div style="background:${flagged ? "#fff3cd" : "var(--surface)"};border:1px solid ${flagged ? "#e0c84a" : "var(--line)"};border-radius:10px;padding:10px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${flagged}</div>
-                    <div style="font-size:0.75rem;color:var(--muted);">Paste flags</div>
-                  </div>
-                </div>
-              `;
-            })()}
-            ${getStudentUsers().map((student) => {
-              const submission = submissions.find((entry) => entry.studentId === student.id);
-              if (!submission) {
-                return `
-                  <div class="submission-card simple-card">
-                    <div class="card-top">
-                      <div>
-                        <h3>${escapeHtml(student.name)}</h3>
-                        <p>No writing yet.</p>
-                      </div>
-                      <span class="warning-pill">No work</span>
-                    </div>
-                  </div>
-                `;
-              }
-              const studentMetrics = computeProcessMetrics(assignment, submission);
-              const isGraded = Boolean(submission.teacherReview?.savedAt);
-              return `
-                <div class="submission-card simple-card">
-                  <div class="card-top">
-                    <div>
-                      <h3>${escapeHtml(student.name)}</h3>
-                      <div class="submission-status">
-                        <span class="status-pill">${escapeHtml(titleCase(submission.status))}</span>
-                        ${isGraded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded</span>` : ""}
-                        ${studentMetrics.largePasteCount ? `<span class="warning-pill">${studentMetrics.largePasteCount} paste flag${studentMetrics.largePasteCount === 1 ? "" : "s"}</span>` : ""}
-                      </div>
-                    </div>
-                    <button class="button-ghost" data-action="inspect-submission" data-submission-id="${submission.id}">Inspect</button>
-                  </div>
-                  <div class="pill-row">
-                    <span class="pill">${studentMetrics.totalMinutes} min</span>
-                    <span class="pill">${studentMetrics.revisionCount} edits</span>
-                    <span class="pill">${studentMetrics.finalWordCount} words</span>
-                    ${submission.teacherReview?.finalScore !== "" && submission.teacherReview?.finalScore != null ? `<span class="pill">Score: ${escapeHtml(String(submission.teacherReview.finalScore))}</span>` : ""}
-                  </div>
-                </div>
-              `;
-            }).join("")}
+  ${(() => {
+    const total = currentClassMembers.length || getStudentUsers().length;
+    const submitted = submissions.filter((s) => s.status === "submitted").length;
+    const graded = submissions.filter((s) => s.teacherReview?.savedAt).length;
+    const flagged = submissions.filter((s) => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
+    return `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:1.4rem;font-weight:700;">${submitted}/${total}</div>
+          <div style="font-size:0.75rem;color:var(--muted);">Submitted</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:1.4rem;font-weight:700;">${graded}</div>
+          <div style="font-size:0.75rem;color:var(--muted);">Graded</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:1.4rem;font-weight:700;">${total - submitted}</div>
+          <div style="font-size:0.75rem;color:var(--muted);">Not submitted</div>
+        </div>
+        <div style="background:${flagged ? "#fff3cd" : "var(--surface)"};border:1px solid ${flagged ? "#e0c84a" : "var(--line)"};border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:1.4rem;font-weight:700;">${flagged}</div>
+          <div style="font-size:0.75rem;color:var(--muted);">Paste flags</div>
+        </div>
+      </div>
+    `;
+  })()}
+
+  ${currentClassMembers.map((member) => {
+    const submission = submissions.find((s) => s.studentId === member.id);
+
+    // 👉 NO submission case
+    if (!submission) {
+      return `
+        <div class="submission-card simple-card">
+          <div class="card-top">
+            <div>
+              <h3>${escapeHtml(member.name)}</h3>
+              <span class="warning-pill">No submission yet</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // 👉 HAS submission
+    const studentMetrics = computeProcessMetrics(assignment, submission);
+    const isGraded = Boolean(submission.teacherReview?.savedAt);
+
+    return `
+      <div class="submission-card simple-card">
+        <div class="card-top">
+          <div>
+            <h3>${escapeHtml(member.name)}</h3>
+            <div class="submission-status">
+              <span class="status-pill">${escapeHtml(titleCase(submission.status))}</span>
+              ${isGraded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded</span>` : ""}
+              ${studentMetrics.largePasteCount ? `<span class="warning-pill">${studentMetrics.largePasteCount} paste flag${studentMetrics.largePasteCount === 1 ? "" : "s"}</span>` : ""}
+            </div>
+          </div>
+          <button class="button-ghost" data-action="inspect-submission" data-submission-id="${submission.id}">Inspect</button>
+        </div>
+        <div class="pill-row">
+          <span class="pill">${studentMetrics.totalMinutes} min</span>
+          <span class="pill">${studentMetrics.revisionCount} edits</span>
+          <span class="pill">${studentMetrics.finalWordCount} words</span>
+          ${
+            submission.teacherReview?.finalScore !== "" && submission.teacherReview?.finalScore != null
+              ? `<span class="pill">Score: ${escapeHtml(String(submission.teacherReview.finalScore))}</span>`
+              : ""
+          }
+        </div>
+      </div>
+    `;
+  }).join("")}
+</div>
           </div>
         </div>
         <div class="review-stack">
