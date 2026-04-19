@@ -68,6 +68,9 @@ async function bootApp(profile) {
   ui.role = profile.role;
   ui.activeUserId = profile.id;
 
+  // Auto-join class if arriving via invite link
+  await Auth.joinClassIfInvited();
+
   if (profile.role === 'teacher') {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
@@ -275,16 +278,17 @@ if (action === "create-class") {
     const body = encodeURIComponent(`Hello,\n\nYou have been invited to join ${className} on AUIZero.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class\n\nSee you there!`);
     const mailtoLink = `mailto:?subject=${subject}&body=${body}`;
     const copyText = `You have been invited to join ${className} on AUIZero.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class`;
-    ui.inviteText = copyText;
-    ui.inviteMailto = mailtoLink;
-    ui.showInvitePanel = true;
+   ui.showInvitePanel = true;
     render();
     return;
   }
 
   if (action === "copy-invite-text") {
-    navigator.clipboard.writeText(ui.inviteText || "").then(() => {
-      ui.notice = "Invite text copied to clipboard.";
+    const textarea = document.getElementById("invite-textarea");
+    const text = textarea ? textarea.value : "";
+    navigator.clipboard.writeText(text).then(() => {
+      ui.notice = "Invite message copied to clipboard.";
+      ui.showInvitePanel = false;
       render();
     });
     return;
@@ -295,7 +299,6 @@ if (action === "create-class") {
     render();
     return;
   }
-
 if (action === "sign-out") {
     await Auth.signOut();
     currentProfile = null;
@@ -922,15 +925,20 @@ function renderAuthScreen() {
 
 function renderInvitePanel() {
   if (!ui.showInvitePanel) return "";
+  const appUrl = window.location.origin;
+  const inviteLink = `${appUrl}?join=${currentClassId}`;
+  const currentClass = currentClasses.find(c => c.id === currentClassId);
+  const className = currentClass?.name || "your class";
+  const inviteText = `You have been invited to join ${className} on AUIZero.\n\nClick this link to join:\n${inviteLink}\n\nYou will be asked to create an account if you don't have one. Once signed in you will be added to the class automatically.`;
+
   return `
-    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:999;display:grid;place-items:center;padding:20px;" data-action="close-invite-panel">
-      <div style="background:#fffdf9;border-radius:18px;padding:28px;max-width:480px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.15);" onclick="event.stopPropagation()">
-        <h3 style="margin:0 0 6px;">Invite students</h3>
-        <p style="color:var(--muted);font-size:0.88rem;margin:0 0 16px;">Send this message to your students. They need to create an account first, then you can add them to the class by email.</p>
-        <textarea style="width:100%;min-height:160px;font-size:0.88rem;line-height:1.6;border:1px solid var(--line);border-radius:10px;padding:12px;font-family:inherit;box-sizing:border-box;background:#f8f3ea;" readonly>${escapeHtml(ui.inviteText)}</textarea>
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:999;display:grid;place-items:center;padding:20px;">
+      <div style="background:#fffdf9;border-radius:18px;padding:28px;max-width:480px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.15);">
+        <h3 style="margin:0 0 6px;">Invite students to ${escapeHtml(className)}</h3>
+        <p style="color:var(--muted);font-size:0.88rem;margin:0 0 16px;">Copy this message and paste it into your own email to send to students. When they click the link and sign up, they will be added to this class automatically.</p>
+        <textarea id="invite-textarea" style="width:100%;min-height:160px;font-size:0.88rem;line-height:1.6;border:1px solid var(--line);border-radius:10px;padding:12px;font-family:inherit;box-sizing:border-box;background:#f8f3ea;" readonly>${escapeHtml(inviteText)}</textarea>
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
-          <button class="button" data-action="copy-invite-text">Copy text</button>
-          <a href="${ui.inviteMailto}" class="button-secondary" style="text-decoration:none;display:inline-flex;align-items:center;">Open in email app</a>
+          <button class="button" data-action="copy-invite-text">Copy message</button>
           <button class="button-ghost" data-action="close-invite-panel">Close</button>
         </div>
       </div>
