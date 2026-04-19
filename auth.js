@@ -84,12 +84,19 @@ async function getInviteInfo(classId) {
   async function joinClassIfInvited() {
     const params = new URLSearchParams(window.location.search);
     const classId = params.get('join');
-    if (!classId || !session) return;
-    await fetch(`/api/classes/${classId}/join`, {
-      method: 'POST',
-      headers: authHeaders()
-    });
-    window.history.replaceState({}, '', window.location.pathname);
+    // Clear the URL param immediately regardless
+    if (classId) window.history.replaceState({}, '', window.location.pathname);
+    if (!classId) return;
+    if (!session) return;
+    try {
+      const res = await fetch(`/api/classes/${classId}/join`, {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      if (!res.ok) console.warn('Could not join class:', res.status);
+    } catch(e) {
+      console.warn('Join class error:', e.message);
+    }
   }
 
   return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession, joinClassIfInvited, getInviteInfo };
