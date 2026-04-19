@@ -185,6 +185,33 @@ function handleKeydown(event) {
   }
 }
 
+let chatTimerInterval = null;
+
+function startChatTimer() {
+  if (chatTimerInterval) clearInterval(chatTimerInterval);
+  chatTimerInterval = setInterval(() => {
+    const timerEl = document.querySelector(".chat-timer");
+    if (!timerEl) { clearInterval(chatTimerInterval); return; }
+    const assignment = getStudentAssignment();
+    const submission = getStudentSubmission();
+    if (!assignment?.chatTimeLimit || !submission?.chatStartedAt) return;
+    const totalSecs = Math.max(0, Math.round((assignment.chatTimeLimit * 60) - (Date.now() - Date.parse(submission.chatStartedAt)) / 1000));
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    const expired = totalSecs <= 0;
+    timerEl.textContent = expired ? "⏱ Time's up" : `⏱ ${mins}:${String(secs).padStart(2,'0')} left`;
+    timerEl.className = `chat-timer ${mins <= 5 ? "chat-timer-urgent" : ""}`;
+    if (expired) {
+      clearInterval(chatTimerInterval);
+      const sendBtn = document.querySelector("[data-action='send-chat-message']");
+      const nextBtn = document.querySelector("[data-action='student-next-step']");
+      if (sendBtn) sendBtn.disabled = true;
+      if (nextBtn) nextBtn.disabled = false;
+      render();
+    }
+  }, 1000);
+}
+
 function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
@@ -558,6 +585,13 @@ if (action === "sign-out") {
     return;
   }
 
+if (action === "back-to-assignments") {
+    ui.selectedAssignmentId = null;
+    ui.selectedReviewSubmissionId = null;
+    render();
+    return;
+  }
+  
  if (action === "select-assignment") {
     stopPlayback();
     ui.selectedAssignmentId = target.dataset.assignmentId;
@@ -1056,9 +1090,16 @@ function render() {
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-    ${renderInvitePanel()}
-    ${renderPasteWarning()}
-  `;
+  ` + renderInvitePanel() + renderPasteWarning();
+
+  // Start chat timer if student is on step 1 and there's a time limit
+  if (ui.role === "student" && ui.studentStep === 1) {
+    const assignment = getStudentAssignment();
+    const submission = getStudentSubmission();
+    if (assignment?.chatTimeLimit > 0 && submission?.chatStartedAt) {
+      startChatTimer();
+    }
+  }
 }
 
 function renderAuthScreen(joinClassId = null, inviteInfo = null) {
@@ -1577,6 +1618,7 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
         <div class="review-card">
           <div class="section-header">
             <div>
+              <button class="button-ghost" data-action="back-to-assignments" style="margin-bottom:10px;font-size:0.85rem;">← Back</button>
               <h2 class="panel-title">Students</h2>
               <p class="subtle">Simple status view for a tired teacher.</p>
             </div>
@@ -1996,7 +2038,9 @@ function renderStudentIdeasStep(assignment, submission) {
   const chatStartedAt = submission.chatStartedAt;
   const elapsedMins = chatStartedAt ? (Date.now() - Date.parse(chatStartedAt)) / 60000 : 0;
   const timeExpired = timeLimit > 0 && elapsedMins >= timeLimit;
-  const minsRemaining = timeLimit > 0 ? Math.max(0, Math.ceil(timeLimit - elapsedMins)) : null;
+  const totalSecsRemaining = timeLimit > 0 ? Math.max(0, Math.round((timeLimit * 60) - (Date.now() - Date.parse(chatStartedAt || Date.now()))/ 1000)) : null;
+  const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
+  const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
   const hasEnoughChat = chatHistory.length >= 2;
 
   return `
@@ -2009,7 +2053,7 @@ function renderStudentIdeasStep(assignment, submission) {
         </div>
         ${minsRemaining !== null ? `
           <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
-            ${timeExpired ? "⏱ Time's up" : `⏱ ${minsRemaining} min${minsRemaining === 1 ? "" : "s"} left`}
+            ${timeExpired ? "⏱ Time's up" : `⏱ ${minsRemaining}:${String(secsRemaining).padStart(2,'0')} left`}
           </div>
         ` : ""}
       </div>
