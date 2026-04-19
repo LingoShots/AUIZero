@@ -77,10 +77,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   appEl = document.getElementById("app");
 
   // Bind events once here so they work on auth screen and app screen
-  appEl.addEventListener("click", handleClick);
+ appEl.addEventListener("click", handleClick);
   appEl.addEventListener("change", handleChange);
   appEl.addEventListener("input", handleInput);
   appEl.addEventListener("paste", handlePaste, true);
+  appEl.addEventListener("keydown", handleKeydown);
 
   // Show loading screen while checking session
   appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
@@ -184,14 +185,6 @@ function handleKeydown(event) {
   }
 }
 
-function handleKeydown(event) {
-  if (event.target.id === "chat-input" && event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    const btn = document.querySelector("[data-action='send-chat-message']");
-    if (btn && !btn.disabled) btn.click();
-  }
-}
-
 function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
@@ -221,7 +214,7 @@ function buildFormatPrompt() {
 
 Assignment settings:
 - Student CEFR level: ${d.languageLevel}. All student-facing text (prompt, rubric descriptions, focus points) must be written at this level.
-- Total assignment points: ${d.totalPoints}. Rubric criteria points must add up to exactly ${d.totalPoints}.
+- Total assignment points: ${d.totalPoints}. Distribute points evenly across criteria where possible (e.g. for 4 criteria and 20 points, use 5/5/5/5). Only use uneven distribution if the uploaded rubric specifies different weights.
 - Feedback checks allowed: ${d.feedbackRequestLimit}. Mention this in the student prompt if relevant.
 - Chat time limit: ${d.chatTimeLimit === 0 ? "unlimited" : d.chatTimeLimit + " minutes"}.
 ${deadlineLine}
@@ -244,9 +237,15 @@ async function handleClick(event) {
   const action = target.dataset.action;
 
  if (action === "generate-teacher-assist") {
-    // Capture deadline before render wipes the input value
+    // Capture all form values before render wipes them
     const deadlineInput = document.getElementById("teacher-deadline");
     if (deadlineInput) ui.teacherDraft.deadline = deadlineInput.value;
+    const briefInput = document.getElementById("teacher-brief");
+    if (briefInput) ui.teacherDraft.brief = briefInput.value;
+    const chatLimitInput = document.getElementById("teacher-chat-limit");
+    if (chatLimitInput) ui.teacherDraft.chatTimeLimit = Number(chatLimitInput.value);
+    const feedbackLimitInput = document.getElementById("teacher-feedback-limit");
+    if (feedbackLimitInput) ui.teacherDraft.feedbackRequestLimit = Number(feedbackLimitInput.value);
     ui.notice = "AI is thinking...";
     render();
     ui.notice = "AI is thinking...";
@@ -3917,11 +3916,12 @@ function loadState() {
 }
 
 async function syncSubmissionToServer(submission) {
-  if (!submission?.id) return;
+  if (!submission?.assignmentId) return;
   try {
-    // Check if submission exists on server
     const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
-    const serverId = existing?.submission?.id;
+    if (existing.error) return;
+    const serverId = existing.submission?.id;
+    if (!serverId) return;
     const payload = {
       draft_text: submission.draftText || "",
       final_text: submission.finalText || "",
@@ -3936,12 +3936,12 @@ async function syncSubmissionToServer(submission) {
       started_at: submission.startedAt || null,
       submitted_at: submission.submittedAt || null,
     };
-    if (serverId) {
-      await Auth.apiFetch(`/api/submissions/${serverId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload)
-      });
-    }
+    await Auth.apiFetch(`/api/submissions/${serverId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+    // Update local submission ID to match server
+    submission.id = serverId;
   } catch (e) {
     console.warn("Could not sync submission to server:", e.message);
   }
