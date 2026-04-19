@@ -1074,3 +1074,49 @@ button {
   border-radius: 2px;
   cursor: help;
 }
+
+.class-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: #edf4ea;
+  border: 1px solid #cbddc6;
+  color: #2e5c28;
+  font-size: 0.9rem;
+  margin-bottom: 14px;
+}
+
+.class-banner-icon {
+  font-size: 1.1rem;
+}
+
+.upcoming-section {
+  margin-bottom: 18px;
+}
+
+.upcoming-class-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: #fff;
+}
+
+.upcoming-class-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.upcoming-assignment-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.9rem;
+}
