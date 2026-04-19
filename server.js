@@ -37,6 +37,51 @@ async function getProfile(userId) {
   return data;
 }
 
+// ── Rubric upload endpoint ───────────────────────────────────
+app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const mime = req.file.mimetype;
+    let text = '';
+
+    if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        mime === 'application/msword') {
+      const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+      text = result.value;
+    } else if (mime === 'application/pdf') {
+      // Use AI to extract text from PDF since we can't run native pdf libs easily
+      const base64 = req.file.buffer.toString('base64');
+      const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 2000,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+              { type: 'text', text: 'Extract all the text from this rubric document. Return only the raw text content, preserving the structure as much as possible.' }
+            ]
+          }]
+        })
+      });
+      const aiData = await aiRes.json();
+      text = aiData.content?.[0]?.text || '';
+    } else {
+      return res.status(400).json({ error: 'Please upload a PDF or Word document' });
+    }
+
+    res.json({ text: text.trim() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── AI endpoint ─────────────────────────────────────────────
 app.post('/api/generate', async (req, res) => {
   try {
