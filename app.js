@@ -383,10 +383,12 @@ if (action === "toggle-full-rubric") {
   }
   
 if (action === "sign-out") {
+    console.log("sign-out clicked");
     await Auth.signOut();
     currentProfile = null;
     currentClasses = [];
     currentClassId = null;
+    appEl.innerHTML = '';
     setTimeout(() => renderAuthScreen(), 0);
     return;
   }
