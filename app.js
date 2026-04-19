@@ -685,6 +685,7 @@ if (action === "sign-out") {
     render();
   }
 }
+}
 
 async function handleChange(event) {
   const target = event.target;
