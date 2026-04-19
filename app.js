@@ -1899,7 +1899,7 @@ function renderStudentFinalStep(assignment, submission) {
                   <strong style="flex-shrink:0;margin-left:12px;">/ ${item.points}</strong>
                 </div>
                 <div class="self-assessment-row">
-                  ${Array.from({length: item.points}, (_, i) => i + 1).map(n => ` `
+                  ${Array.from({length: item.points}, (_, i) => i + 1).map(n => `
                     <label class="sa-option ${currentVal == n ? "sa-selected" : ""}">
                       <input type="radio" name="${key}" data-sa-key="${key}" value="${n}" ${currentVal == n ? "checked" : ""} style="display:none;" />
                       ${n}
