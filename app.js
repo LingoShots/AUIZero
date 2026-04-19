@@ -392,14 +392,30 @@ if (action === "sign-out") {
   }
   
   if (action === "focus-brief") {
-    const brief = document.getElementById("teacher-brief");
-    if (brief) {
-      brief.focus();
-      brief.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    ui.selectedAssignmentId = null;
+    render();
+    setTimeout(() => {
+      const brief = document.getElementById("teacher-brief");
+      if (brief) {
+        brief.focus();
+        brief.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 50);
     return;
   }
-  
+
+  if (action === "load-demo") {
+    stopPlayback();
+    state = createDemoState();
+    ui.selectedAssignmentId = state.assignments[0]?.id || null;
+    ui.teacherDraft = createBlankTeacherDraft();
+    ui.teacherAssist = null;
+    ui.notice = "Demo loaded — explore the sample assignment and student work.";
+    hydrateSelections();
+    render();
+    return;
+  }
+    
   if (action === "reset-app") {
     stopPlayback();
     state = createBlankState();
@@ -976,8 +992,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <input id="auth-signup-password" type="password" placeholder="Password (min 6 characters)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <div style="display:flex;gap:8px;">
               <button onclick="setSignupRole('student')" id="role-btn-student" style="flex:1;padding:10px;border:2px solid #a55233;border-radius:10px;background:#f4e0d4;font:inherit;font-weight:700;cursor:pointer;color:#844125;">Student</button>
-              <button onclick="setSignupRole('teacher')" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>
-            </div>
+              ${!joinClassId ? `<button onclick="setSignupRole('teacher')" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
+              </div>
             <button onclick="handleSignUp()" style="background:linear-gradient(135deg,#a55233,#844125);color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;">Create account</button>
             <p id="auth-signup-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
@@ -2141,14 +2157,45 @@ function saveTeacherAssignment() {
     uploadedRubricText: ui.teacherDraft.uploadedRubricText || "",
   };
 
-  state.assignments.unshift(assignment);
-  ui.selectedAssignmentId = assignment.id;
-  ui.selectedReviewSubmissionId = null;
-  ui.teacherDraft = createBlankTeacherDraft();
-  ui.teacherAssist = null;
-  ui.notice = "Assignment saved as draft. Publish it when you're ready for students to see it.";
-  persistState();
-  render();
+  if (!currentClassId) {
+    ui.notice = "Please select or create a class before saving an assignment.";
+    render();
+    return;
+  }
+
+  // Save to Supabase
+  Auth.apiFetch(`/api/classes/${currentClassId}/assignments`, {
+    method: 'POST',
+    body: JSON.stringify({
+      title: assignment.title,
+      prompt: assignment.prompt,
+      focus: assignment.focus,
+      brief: assignment.brief,
+      assignment_type: assignment.assignmentType,
+      language_level: assignment.languageLevel,
+      word_count_min: assignment.wordCountMin,
+      word_count_max: assignment.wordCountMax,
+      feedback_request_limit: assignment.feedbackRequestLimit,
+      student_focus: assignment.studentFocus,
+      rubric: assignment.rubric,
+      deadline: assignment.deadline || null,
+      chat_time_limit: assignment.chatTimeLimit,
+      uploaded_rubric_text: assignment.uploadedRubricText,
+      status: 'draft'
+    })
+  }).then(data => {
+    if (data.error) {
+      ui.notice = "Could not save assignment: " + data.error;
+    } else {
+      state.assignments.unshift(data.assignment);
+      ui.selectedAssignmentId = data.assignment.id;
+      ui.selectedReviewSubmissionId = null;
+      ui.teacherDraft = createBlankTeacherDraft();
+      ui.teacherAssist = null;
+      ui.notice = "Assignment saved as draft. Publish it when you're ready for students to see it.";
+    }
+    render();
+  });
 }
 
 function handleIdeaRequest() {
