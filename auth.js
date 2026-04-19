@@ -57,7 +57,7 @@ const Auth = (() => {
   }
 
   async function restoreSession() {
-    const stored = localStorage.getItem('auizero_session');
+    const stored = localStorage.getItem('auizero_session') || sessionStorage.getItem('auizero_session');
     if (!stored) return null;
     try {
       session = JSON.parse(stored);
