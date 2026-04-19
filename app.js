@@ -972,8 +972,7 @@ function renderTopbar() {
               ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
               <option value="__new__">+ New class</option>
             </select>
-           <button class="button-ghost" data-action="invite-student">+ Add by email</button>
-            <button class="button-secondary" data-action="invite-by-email">✉ Invite link</button>
+           <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
           `}
         ` : ""}
         <button class="button-ghost" data-action="sign-out">Sign out</button>
