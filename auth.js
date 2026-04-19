@@ -22,7 +22,7 @@ const Auth = (() => {
     return res.json();
   }
 
-  async function signIn(email, password) {
+  async function signIn(email, password, stayLoggedIn = true) {
     const data = await fetch('/api/auth/signin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -31,7 +31,13 @@ const Auth = (() => {
     if (data.error) throw new Error(data.error);
     session = data.session;
     profile = data.profile;
-    localStorage.setItem('auizero_session', JSON.stringify(session));
+    if (stayLoggedIn) {
+      localStorage.setItem('auizero_session', JSON.stringify(session));
+    } else {
+      sessionStorage.setItem('auizero_session', JSON.stringify(session));
+    }
+    return profile;
+  }
     return profile;
   }
 
