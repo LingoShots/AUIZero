@@ -21,6 +21,9 @@ const ui = {
   role: "student",
   activeUserId: "",
   pin: "",
+  showInvitePanel: false,
+  inviteText: "",
+  inviteMailto: "",
   teacherDraft: null,
   teacherAssist: null,
   selectedAssignmentId: null,
@@ -263,6 +266,36 @@ if (action === "create-class") {
     return;
   }
 
+  if (action === "invite-by-email") {
+    if (!currentClassId) { alert("Select a class first."); return; }
+    const currentClass = currentClasses.find(c => c.id === currentClassId);
+    const className = currentClass?.name || "your class";
+    const appUrl = window.location.origin;
+    const subject = encodeURIComponent(`You have been invited to join ${className} on AUIZero`);
+    const body = encodeURIComponent(`Hello,\n\nYou have been invited to join ${className} on AUIZero.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class\n\nSee you there!`);
+    const mailtoLink = `mailto:?subject=${subject}&body=${body}`;
+    const copyText = `You have been invited to join ${className} on AUIZero.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class`;
+    ui.inviteText = copyText;
+    ui.inviteMailto = mailtoLink;
+    ui.showInvitePanel = true;
+    render();
+    return;
+  }
+
+  if (action === "copy-invite-text") {
+    navigator.clipboard.writeText(ui.inviteText || "").then(() => {
+      ui.notice = "Invite text copied to clipboard.";
+      render();
+    });
+    return;
+  }
+
+  if (action === "close-invite-panel") {
+    ui.showInvitePanel = false;
+    render();
+    return;
+  }
+
 if (action === "sign-out") {
     await Auth.signOut();
     currentProfile = null;
@@ -305,12 +338,20 @@ if (action === "sign-out") {
     return;
   }
 
-  if (action === "publish-assignment") {
+ if (action === "publish-assignment") {
     const assignmentId = target.dataset.assignmentId;
     const assignment = state.assignments.find((a) => a.id === assignmentId);
     if (!assignment) return;
+    if (!currentClassId) {
+      ui.notice = "Select a class first before publishing.";
+      render();
+      return;
+    }
+    assignment.classId = currentClassId;
     assignment.status = assignment.status === "published" ? "draft" : "published";
-    ui.notice = assignment.status === "published" ? "Assignment published — students can now see it." : "Assignment moved back to draft.";
+    ui.notice = assignment.status === "published"
+      ? "Assignment published — only students in this class can see it."
+      : "Assignment moved back to draft.";
     persistState();
     render();
     return;
@@ -778,6 +819,7 @@ function render() {
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
+    ${renderInvitePanel()}
   `;
 }
 
@@ -878,6 +920,24 @@ function renderAuthScreen() {
   };
 }
 
+function renderInvitePanel() {
+  if (!ui.showInvitePanel) return "";
+  return `
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:999;display:grid;place-items:center;padding:20px;" data-action="close-invite-panel">
+      <div style="background:#fffdf9;border-radius:18px;padding:28px;max-width:480px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.15);" onclick="event.stopPropagation()">
+        <h3 style="margin:0 0 6px;">Invite students</h3>
+        <p style="color:var(--muted);font-size:0.88rem;margin:0 0 16px;">Send this message to your students. They need to create an account first, then you can add them to the class by email.</p>
+        <textarea style="width:100%;min-height:160px;font-size:0.88rem;line-height:1.6;border:1px solid var(--line);border-radius:10px;padding:12px;font-family:inherit;box-sizing:border-box;background:#f8f3ea;" readonly>${escapeHtml(ui.inviteText)}</textarea>
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+          <button class="button" data-action="copy-invite-text">Copy text</button>
+          <a href="${ui.inviteMailto}" class="button-secondary" style="text-decoration:none;display:inline-flex;align-items:center;">Open in email app</a>
+          <button class="button-ghost" data-action="close-invite-panel">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTopbar() {
   const studentOptions = getStudentUsers()
     .map(
@@ -904,7 +964,8 @@ function renderTopbar() {
               ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
               <option value="__new__">+ New class</option>
             </select>
-            <button class="button-ghost" data-action="invite-student">+ Add student</button>
+           <button class="button-ghost" data-action="invite-student">+ Add by email</button>
+            <button class="button-secondary" data-action="invite-by-email">✉ Invite link</button>
           `}
         ` : ""}
         <button class="button-ghost" data-action="sign-out">Sign out</button>
@@ -954,10 +1015,6 @@ function renderTeacherWorkspace() {
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 idea helps and 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
           <div class="field-grid compact-grid">
-            <div class="field">
-              <label for="teacher-idea-limit">Idea helps</label>
-              <input id="teacher-idea-limit" data-teacher-field="ideaRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.ideaRequestLimit))}" />
-            </div>
             <div class="field">
               <label for="teacher-feedback-limit">Feedback checks</label>
               <input id="teacher-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
@@ -1271,16 +1328,16 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                     </div>
                   </div>
                   <div class="compare-grid">
-                    <div class="compare-column">
+                  <div class="compare-column">
                       <div class="compare-col-header">
-                        <p class="mini-label">Ideas</p>
+                        <p class="mini-label">Coaching chat</p>
                         <button class="context-expand-btn" data-action="expand-context-col" data-col="ideas">⤢ Expand</button>
                       </div>
                       <div class="context-snippet">
                         ${
-                          selectedSubmission.ideaResponses.length
-                            ? `<ul class="focus-list">${selectedSubmission.ideaResponses.flatMap((idea) => idea.aiBullets).slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-                            : `<p class="subtle">No idea help used.</p>`
+                          (selectedSubmission.chatHistory || []).length
+                            ? `<p class="subtle-clamp">${escapeHtml((selectedSubmission.chatHistory || []).filter(m => m.role === "user").map(m => m.content).join(" · ").slice(0, 180))}</p>`
+                            : `<p class="subtle">No coaching conversation yet.</p>`
                         }
                       </div>
                     </div>
@@ -2057,7 +2114,7 @@ function getAssignments() {
 }
 
 function getPublishedAssignments() {
-  return state.assignments.filter((a) => a.status === "published");
+  return state.assignments.filter((a) => a.status === "published" && (!a.classId || a.classId === currentClassId));
 }
 
 function getSelectedAssignment() {
