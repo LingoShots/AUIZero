@@ -1071,6 +1071,9 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
           <div style="display:grid;gap:12px;">
             <input id="auth-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <input id="auth-password" type="password" placeholder="Password" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--muted);cursor:pointer;">
+              <input type="checkbox" id="stay-logged-in" checked style="cursor:pointer;" /> Stay logged in
+            </label>
             <button onclick="handleSignIn()" style="background:linear-gradient(135deg,#a55233,#844125);color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;">Sign in</button>
             <p id="auth-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
@@ -1120,7 +1123,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
     const errEl = document.getElementById('auth-error');
     errEl.style.display = 'none';
     try {
-      const profile = await Auth.signIn(email, password);
+      const stayLoggedIn = document.getElementById('stay-logged-in')?.checked !== false;
+      const profile = await Auth.signIn(email, password, stayLoggedIn);
       await Auth.joinClassIfInvited();
       await bootApp(profile);
     } catch (e) {
