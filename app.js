@@ -5,6 +5,7 @@ const LARGE_PASTE_LIMIT = 220;
 let currentProfile = null;
 let currentClasses = [];
 let currentClassId = null;
+let currentClassMembers = [];
 
 const ERROR_CODES = [
   { code: "CS",  label: "Comma splice: two complete sentences joined with only a comma" },
@@ -108,6 +109,8 @@ async function bootApp(profile) {
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
     if (currentClassId) {
+      const membersData = await Auth.apiFetch(`/api/classes/${currentClassId}/members`);
+      currentClassMembers = membersData.members || [];
       const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
       const raw = assignData.assignments || [];
       state.assignments = raw.map(a => normalizeAssignment({
