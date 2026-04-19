@@ -76,6 +76,7 @@ async function bootApp(profile) {
   }
 
   bindEvents();
+  hydrateSelections();
   render();
 }
 
@@ -223,6 +224,41 @@ Respond with ONLY a valid JSON object, no extra text, with these exact keys: "ti
   if (action === "save-draft") {
     persistState();
     ui.notice = "Draft saved.";
+    render();
+    return;
+  }
+
+if (action === "create-class") {
+    const name = prompt("Class name:");
+    if (!name) return;
+    const data = await Auth.apiFetch('/api/classes', {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+    if (data.class) {
+      currentClasses.unshift(data.class);
+      currentClassId = data.class.id;
+      ui.notice = `Class "${name}" created. Now add students with the "+ Add student" button.`;
+    } else {
+      ui.notice = `Could not create class: ${data.error || "unknown error"}`;
+    }
+    render();
+    return;
+  }
+
+  if (action === "invite-student") {
+    if (!currentClassId) { alert("Select a class first."); return; }
+    const email = prompt("Student's email address:");
+    if (!email) return;
+    const data = await Auth.apiFetch(`/api/classes/${currentClassId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ studentEmail: email.trim() })
+    });
+    if (data.ok) {
+      ui.notice = "Student added. They can now log in and see published assignments for this class.";
+    } else {
+      ui.notice = `Could not add student: ${data.error || "unknown error"}`;
+    }
     render();
     return;
   }
@@ -847,11 +883,16 @@ function renderTopbar() {
       </div>
       <div class="toolbar">
         ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
-        ${ui.role === "teacher" ? `
-          <select id="class-select" aria-label="Select class">
-            ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
-            <option value="__new__">+ New class</option>
-          </select>
+       ${ui.role === "teacher" ? `
+          ${currentClasses.length === 0 ? `
+            <button class="button-secondary" data-action="create-class">+ Create first class</button>
+          ` : `
+            <select id="class-select" aria-label="Select class">
+              ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+              <option value="__new__">+ New class</option>
+            </select>
+            <button class="button-ghost" data-action="invite-student">+ Add student</button>
+          `}
         ` : ""}
         <button class="button-ghost" data-action="sign-out">Sign out</button>
       </div>
@@ -1387,7 +1428,7 @@ function renderStudentWorkspace() {
           !assignments.length
             ? `<div class="empty-state"><h3>Nothing here yet</h3><p>Your teacher hasn't published any assignments yet.</p></div>`
             : !assignment || !submission
-              ? `<div class="empty-state"><h3>No assignment yet</h3><p>Switch to Teacher and create one first.</p></div>`
+              ? `<div class="empty-state"><h3>No assignment yet</h3><p>Choose an assignment from the dropdown above to get started.</p></div>`
               : `
                 <div class="student-progress">
                   ${[1, 2, 3].map((step) => `
@@ -3138,6 +3179,9 @@ function createDemoState() {
     rubric: rubricForType("argument"),
     createdBy: "teacher-1",
     createdAt: "2026-04-17T08:00:00.000Z",
+    status: "published",
+    chatTimeLimit: 0,
+    deadline: "",
   };
 
   const submissionOne = createEmptySubmission(assignment.id, "student-1");
