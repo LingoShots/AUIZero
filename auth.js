@@ -74,7 +74,14 @@ const Auth = (() => {
     }
   }
 
- async function joinClassIfInvited() {
+async function getInviteInfo(classId) {
+    try {
+      const res = await fetch(`/api/classes/${classId}/invite`);
+      return await res.json();
+    } catch { return null; }
+  }
+
+  async function joinClassIfInvited() {
     const params = new URLSearchParams(window.location.search);
     const classId = params.get('join');
     if (!classId || !session) return;
@@ -85,5 +92,5 @@ const Auth = (() => {
     window.history.replaceState({}, '', window.location.pathname);
   }
 
-  return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession, joinClassIfInvited };
+  return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession, joinClassIfInvited, getInviteInfo };
 })();
