@@ -721,6 +721,19 @@ function handleInput(event) {
     return;
   }
 
+  if (target.dataset.saKey) {
+    const submission = getStudentSubmission();
+    if (!submission) return;
+    submission.selfAssessment = submission.selfAssessment || {};
+    submission.selfAssessment[target.dataset.saKey] = target.value;
+    submission.updatedAt = new Date().toISOString();
+    // Update visual selection without full re-render
+    document.querySelectorAll(`[name="${target.dataset.saKey}"]`).forEach(el => {
+      el.closest(".sa-option").classList.toggle("sa-selected", el === target);
+    });
+    persistState();
+    return;
+  }
   if (target.dataset.reflectionField) {
     const submission = getStudentSubmission();
     if (!submission) {
@@ -1578,14 +1591,14 @@ function renderStudentDraftStep(assignment, submission) {
 }
 
 function renderStudentFinalStep(assignment, submission) {
-  const outline = getOutlineFields(assignment, submission);
+  const selfAssessment = submission.selfAssessment || {};
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
         <div>
           <div class="step-number">3</div>
-          <h3>Plan, revise, and submit</h3>
-          <p class="subtle">Use the guided outline to shape your final piece, then explain what you improved.</p>
+          <h3>Write your final piece and reflect</h3>
+          <p class="subtle">Write or paste your final version, then rate yourself honestly against the rubric before you submit.</p>
         </div>
         ${assignment.deadline && new Date(assignment.deadline) < new Date() && submission.status !== "submitted"
           ? `<div style="font-size:0.82rem;color:var(--danger);font-weight:600;text-align:right;">Deadline passed</div>`
@@ -1628,40 +1641,41 @@ function renderStudentFinalStep(assignment, submission) {
           </div>
         ` : ""}
       ` : ""}
-      <div class="teacher-ready-card">
-        <p class="mini-label">Guided outline</p>
-        <div class="field-stack">
-          ${outline.fields.map((field) => `
-            <div class="field">
-              <label>${escapeHtml(field.label)}</label>
-              <textarea class="reflection-input" data-outline-field="${field.key}" placeholder="${escapeAttribute(field.placeholder)}">${escapeHtml(submission.outline[field.key] || "")}</textarea>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-      <textarea id="final-editor" class="final-editor" placeholder="Revise your draft into your final writing.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
+      <textarea id="final-editor" class="final-editor" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
       <div class="pill-row">
         <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
         <span class="pill">Status: ${escapeHtml(titleCase(submission.status))}</span>
       </div>
-      <div class="field-stack">
-        <div class="field">
-          <label>What did you make better?</label>
-          <textarea class="reflection-input" data-reflection-field="improved" placeholder="I made my writing better by...">${escapeHtml(submission.reflections.improved)}</textarea>
-        </div>
-      </div>
       <div class="teacher-ready-card">
-        <p class="mini-label">Rubric</p>
+        <p class="mini-label">Self-assessment — rate yourself against the rubric</p>
+        <p class="subtle" style="margin:4px 0 14px;">Be honest. Your teacher will see your ratings alongside their own assessment.</p>
         <div class="review-stack">
-          ${assignment.rubric.map((item) => `
-            <div class="rubric-score">
-              <div>
-                <strong>${escapeHtml(item.name)}</strong>
-                <p class="rubric-description">${escapeHtml(item.description)}</p>
-              </div>
-              <strong>${item.points}</strong>
-            </div>
-          `).join("")}
+          ${assignment.rubric.map((item) => {
+            const key = "sa_" + item.id;
+            const currentVal = selfAssessment[key] || "";
+            return `
+              <div class="rubric-score" style="flex-direction:column;align-items:stretch;gap:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                  <div>
+                    <strong>${escapeHtml(item.name)}</strong>
+                    <p class="rubric-description">${escapeHtml(item.description)}</p>
+                  </div>
+                  <strong style="flex-shrink:0;margin-left:12px;">/ ${item.points}</strong>
+                </div>
+                <div class="self-assessment-row">
+                  ${[1,2,3,4,5].filter(n => n <= item.points).map(n => `
+                    <label class="sa-option ${currentVal == n ? "sa-selected" : ""}">
+                      <input type="radio" name="${key}" data-sa-key="${key}" value="${n}" ${currentVal == n ? "checked" : ""} style="display:none;" />
+                      ${n}
+                    </label>
+                  `).join("")}
+                </div>
+              </div>`;
+          }).join("")}
+        </div>
+        <div class="field" style="margin-top:16px;">
+          <label>What did you improve from your draft to your final piece?</label>
+          <textarea class="reflection-input" data-reflection-field="improved" placeholder="I improved my writing by..." style="min-height:80px;">${escapeHtml(submission.reflections.improved)}</textarea>
         </div>
       </div>
       <div class="wizard-nav">
