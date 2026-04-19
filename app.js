@@ -310,6 +310,12 @@ if (action === "create-class") {
     render();
     return;
   }
+
+  if (action === "dismiss-paste-warning") {
+    ui.pasteWarning = false;
+    render();
+    return;
+  }
   
 if (action === "toggle-full-rubric") {
     ui.showFullRubric = !ui.showFullRubric;
@@ -850,6 +856,7 @@ function render() {
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
     ${renderInvitePanel()}
+    ${renderPasteWarning()}
   `;
 }
 
@@ -1002,6 +1009,53 @@ function renderPasteWarning() {
         <p style="margin:0 0 16px;line-height:1.6;">All work submitted must be your own. Pasted content has been flagged in your writing log and your teacher will be able to see it.</p>
         <p style="margin:0 0 20px;line-height:1.6;font-weight:600;">Please remove the pasted portion and write it in your own words. Feedback will not be given on pasted sections.</p>
         <button class="button" data-action="dismiss-paste-warning" style="width:100%;">I understand — I will rewrite it</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderWritingHeatmap(submission) {
+  const events = (submission?.writingEvents || []);
+  if (!events.length) return `<p class="subtle">No writing events recorded yet.</p>`;
+
+  // Group events by day and hour
+  const buckets = {};
+  for (const e of events) {
+    const d = new Date(e.timestamp);
+    const day = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const hour = d.getHours();
+    const key = `${day}__${hour}`;
+    buckets[key] = (buckets[key] || 0) + 1;
+  }
+
+  const days = [...new Set(Object.keys(buckets).map(k => k.split("__")[0]))];
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const maxCount = Math.max(...Object.values(buckets), 1);
+
+  const hourLabel = (h) => h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`;
+
+  return `
+    <div style="overflow-x:auto;">
+      <div style="display:grid;grid-template-columns:60px repeat(${days.length}, 1fr);gap:3px;min-width:${60 + days.length * 36}px;">
+        <div></div>
+        ${days.map(d => `<div style="font-size:0.7rem;color:var(--muted);text-align:center;padding-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${d}">${d.split(" ")[0]}<br>${d.split(" ").slice(1).join(" ")}</div>`).join("")}
+        ${hours.map(h => `
+          <div style="font-size:0.65rem;color:var(--muted);text-align:right;padding-right:6px;line-height:24px;">${h % 3 === 0 ? hourLabel(h) : ""}</div>
+          ${days.map(d => {
+            const count = buckets[`${d}__${h}`] || 0;
+            const intensity = count === 0 ? 0 : Math.max(0.12, count / maxCount);
+            const bg = count === 0
+              ? "#f0ece4"
+              : `rgba(165,82,51,${intensity})`;
+            return `<div title="${count} edit${count !== 1 ? "s" : ""} — ${hourLabel(h)} on ${d}" style="height:24px;border-radius:4px;background:${bg};"></div>`;
+          }).join("")}
+        `).join("")}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:0.75rem;color:var(--muted);">
+        <span>Less</span>
+        ${[0.12, 0.35, 0.6, 0.85, 1].map(v => `<div style="width:14px;height:14px;border-radius:3px;background:rgba(165,82,51,${v});"></div>`).join("")}
+        <span>More</span>
+        <span style="margin-left:12px;">${events.length} total edits across ${days.length} day${days.length !== 1 ? "s" : ""}</span>
       </div>
     </div>
   `;
@@ -1396,6 +1450,12 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                       <strong class="stat-value">${metrics.improvementLabel}</strong>
                     </div>
                   </div>
+
+                  <div style="margin-top:16px;">
+                        <p class="mini-label" style="margin-bottom:8px;">Writing activity heatmap</p>
+                        ${renderWritingHeatmap(selectedSubmission)}
+                      </div>
+                  
                 </div>
                 <div class="review-card">
                   <div class="section-header">
@@ -2659,7 +2719,15 @@ function generateStudentIdeas(assignment, submission) {
 }
 
 function generateFeedback(assignment, submission) {
-  const text = submission.draftText.trim();
+  // Strip out any flagged paste sections from the text used for feedback
+  const pasteEvents = (submission.writingEvents || []).filter(e => e.type === "paste" && e.flagged);
+  let text = submission.draftText.trim();
+  for (const paste of pasteEvents) {
+    if (paste.insertedText && text.includes(paste.insertedText)) {
+      text = text.replace(paste.insertedText, "[pasted section removed]");
+    }
+  }
+  const hasFlaggedPaste = pasteEvents.length > 0;
   const words = wordCount(text);
   const paragraphs = splitParagraphs(text);
   const sentences = splitSentences(text);
@@ -2669,6 +2737,10 @@ function generateFeedback(assignment, submission) {
       "Start with one clear sentence that says what this piece will be about.",
       "Use one of your saved ideas to help you begin.",
     ];
+  }
+
+  if (hasFlaggedPaste) {
+    primaryPool.push("Your draft contains pasted content. Please remove it and rewrite that section in your own words before requesting feedback.");
   }
 
   // Primary checks — triggered by what's actually in the draft
