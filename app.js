@@ -107,7 +107,13 @@ async function bootApp(profile) {
     currentClassId = currentClasses[0]?.id || null;
   }
 
-  bindEvents();
+  if (!appEl._bound) {
+    appEl.addEventListener("click", handleClick);
+    appEl.addEventListener("change", handleChange);
+    appEl.addEventListener("input", handleInput);
+    appEl.addEventListener("paste", handlePaste, true);
+    appEl._bound = true;
+  }
   hydrateSelections();
   render();
 }
