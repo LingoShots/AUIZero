@@ -36,11 +36,8 @@ const Auth = (() => {
     } else {
       sessionStorage.setItem('auizero_session', JSON.stringify(session));
     }
-    return profile;
+   return profile;
   }
-    return profile;
-  }
-
   async function signUp(email, password, name, role) {
     const data = await fetch('/api/auth/signup', {
       method: 'POST',
