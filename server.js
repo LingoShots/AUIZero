@@ -290,6 +290,21 @@ app.post('/api/classes/:classId/join', async (req, res) => {
   }
 });
 
+app.get('/api/classes/:classId/members', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { data, error } = await supabase
+      .from('class_members')
+      .select('student_id, profiles(id, name)')
+      .eq('class_id', req.params.classId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ members: data.map(d => d.profiles) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── Assignments endpoints ────────────────────────────────────
 
 // Get assignments for a class
