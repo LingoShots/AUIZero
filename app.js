@@ -75,6 +75,12 @@ let appEl = null;
 document.addEventListener("DOMContentLoaded", async () => {
   appEl = document.getElementById("app");
 
+  // Bind events once here so they work on auth screen and app screen
+  appEl.addEventListener("click", handleClick);
+  appEl.addEventListener("change", handleChange);
+  appEl.addEventListener("input", handleInput);
+  appEl.addEventListener("paste", handlePaste, true);
+
   // Show loading screen while checking session
   appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
   const params = new URLSearchParams(window.location.search);
@@ -107,10 +113,6 @@ async function bootApp(profile) {
     currentClassId = currentClasses[0]?.id || null;
   }
 
-  appEl.addEventListener("click", handleClick);
-  appEl.addEventListener("change", handleChange);
-  appEl.addEventListener("input", handleInput);
-  appEl.addEventListener("paste", handlePaste, true);
   hydrateSelections();
   render();
 }
