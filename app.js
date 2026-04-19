@@ -793,6 +793,7 @@ if (target.id === "class-select") {
     return;
   }
 }
+}
 
 function handleInput(event) {
   const target = event.target;
@@ -3863,5 +3864,4 @@ function escapeAttribute(value) {
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
-}
 }
