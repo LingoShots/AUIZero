@@ -56,9 +56,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Show loading screen while checking session
   appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
 
+  const params = new URLSearchParams(window.location.search);
+  const joinClassId = params.get('join');
+
   const profile = await Auth.restoreSession();
   if (!profile) {
-    renderAuthScreen();
+    renderAuthScreen(joinClassId);
     return;
   }
 
@@ -860,7 +863,7 @@ function render() {
   `;
 }
 
-function renderAuthScreen() {
+function renderAuthScreen(joinClassId = null) {
   appEl.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
       <div style="width:100%;max-width:400px;background:rgba(255,253,249,0.94);border:1px solid rgba(221,210,194,0.9);border-radius:18px;padding:32px;box-shadow:0 12px 30px rgba(62,41,26,0.08);">
@@ -868,7 +871,15 @@ function renderAuthScreen() {
           <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#a55233,#844125);color:white;font-weight:700;letter-spacing:0.08em;">AU</div>
           <div>
             <h1 style="margin:0;font-family:'Iowan Old Style','Palatino Linotype',serif;font-size:1.3rem;letter-spacing:-0.02em;">AUIZero</h1>
-            <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
+          <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
+        </div>
+      </div>
+      ${joinClassId ? `
+        <div style="background:#edf4ea;border:1px solid #cbddc6;border-radius:12px;padding:14px 16px;margin-bottom:20px;color:#2e5c28;font-size:0.92rem;line-height:1.5;">
+          <strong>You've been invited to join a class.</strong><br>Sign in or create a student account below to join automatically.
+        </div>
+      ` : ""}
+      <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
           </div>
         </div>
         <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
@@ -929,6 +940,7 @@ function renderAuthScreen() {
     errEl.style.display = 'none';
     try {
       const profile = await Auth.signIn(email, password);
+      await Auth.joinClassIfInvited();
       await bootApp(profile);
     } catch (e) {
       errEl.textContent = e.message;
@@ -949,6 +961,7 @@ function renderAuthScreen() {
     }
     try {
       const profile = await Auth.signUp(email, password, name, window.signupRole);
+      await Auth.joinClassIfInvited();
       await bootApp(profile);
     } catch (e) {
       errEl.textContent = e.message;
