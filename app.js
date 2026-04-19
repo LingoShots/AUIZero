@@ -46,7 +46,7 @@ const ui = {
   chatLoading: false,
 };
 
-let state = loadState();
+let state = createBlankState();
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
