@@ -46,7 +46,7 @@ const ui = {
   chatLoading: false,
 };
 
-let state = createBlankState();
+let state = { assignments: [], submissions: [], users: [] };
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
