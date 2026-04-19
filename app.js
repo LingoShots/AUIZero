@@ -107,10 +107,57 @@ async function bootApp(profile) {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
+    if (currentClassId) {
+      const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
+      const raw = assignData.assignments || [];
+      state.assignments = raw.map(a => normalizeAssignment({
+        id: a.id,
+        title: a.title,
+        prompt: a.prompt,
+        brief: a.brief || '',
+        focus: a.focus || '',
+        assignmentType: a.assignment_type,
+        languageLevel: a.language_level,
+        wordCountMin: a.word_count_min,
+        wordCountMax: a.word_count_max,
+        feedbackRequestLimit: a.feedback_request_limit,
+        chatTimeLimit: a.chat_time_limit || 0,
+        studentFocus: a.student_focus || [],
+        rubric: a.rubric || [],
+        deadline: a.deadline || '',
+        status: a.status,
+        uploadedRubricText: a.uploaded_rubric_text || '',
+      }));
+    }
+  }
   } else {
     const data = await Auth.apiFetch('/api/student/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
+    if (currentClassId) {
+      const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
+      const raw = assignData.assignments || [];
+      state.assignments = raw
+        .filter(a => a.status === 'published')
+        .map(a => normalizeAssignment({
+          id: a.id,
+          title: a.title,
+          prompt: a.prompt,
+          brief: a.brief || '',
+          focus: a.focus || '',
+          assignmentType: a.assignment_type,
+          languageLevel: a.language_level,
+          wordCountMin: a.word_count_min,
+          wordCountMax: a.word_count_max,
+          feedbackRequestLimit: a.feedback_request_limit,
+          chatTimeLimit: a.chat_time_limit || 0,
+          studentFocus: a.student_focus || [],
+          rubric: a.rubric || [],
+          deadline: a.deadline || '',
+          status: a.status,
+          uploadedRubricText: a.uploaded_rubric_text || '',
+        }));
+    }
   }
 
   hydrateSelections();
@@ -447,13 +494,22 @@ if (action === "sign-out") {
       render();
       return;
     }
-    assignment.classId = currentClassId;
-    assignment.status = assignment.status === "published" ? "draft" : "published";
-    ui.notice = assignment.status === "published"
-      ? "Assignment published — only students in this class can see it."
-      : "Assignment moved back to draft.";
-    persistState();
-    render();
+    const newStatus = assignment.status === "published" ? "draft" : "published";
+    Auth.apiFetch(`/api/assignments/${assignmentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: newStatus, class_id: currentClassId })
+    }).then(data => {
+      if (data.error) {
+        ui.notice = "Could not update assignment: " + data.error;
+      } else {
+        assignment.status = newStatus;
+        assignment.classId = currentClassId;
+        ui.notice = newStatus === "published"
+          ? "Assignment published — students in this class can now see it."
+          : "Assignment moved back to draft.";
+      }
+      render();
+    });
     return;
   }
 
