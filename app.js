@@ -838,7 +838,7 @@ function handlePaste(event) {
     timestamp: Date.now(),
   };
 
-  if (pasted.length >= LARGE_PASTE_LIMIT) {
+  if (pasted.length >= 10) {
     ui.pasteWarning = true;
     render();
     setTimeout(() => {
@@ -1544,9 +1544,9 @@ function renderTeacherReview(assignment, submissions, selectedSubmission) {
                               </div>`).join("")
                           : `<p class="subtle">No coaching conversation recorded.</p>`}
                       ` : ui.expandedContextCol === "draft" ? `
-                        <pre class="context-expanded-text">${escapeHtml(selectedSubmission.draftText || "No draft yet.")}</pre>
+                        ${renderTextWithPasteHighlights(selectedSubmission.draftText || "No draft yet.", selectedSubmission.writingEvents)}
                       ` : `
-                        <pre class="context-expanded-text">${escapeHtml(selectedSubmission.finalText || "No final yet.")}</pre>
+                        ${renderTextWithPasteHighlights(selectedSubmission.finalText || "No final yet.", selectedSubmission.writingEvents)}
                         <div class="muted-block" style="margin-top:14px;">
                           <strong>Outline plan:</strong> ${escapeHtml(renderOutlineSummary(assignment, selectedSubmission))}
                         </div>
@@ -1899,7 +1899,7 @@ function renderStudentFinalStep(assignment, submission) {
                   <strong style="flex-shrink:0;margin-left:12px;">/ ${item.points}</strong>
                 </div>
                 <div class="self-assessment-row">
-                  ${[1,2,3,4,5].filter(n => n <= item.points).map(n => `
+                  ${Array.from({length: item.points}, (_, i) => i + 1).map(n => ` `
                     <label class="sa-option ${currentVal == n ? "sa-selected" : ""}">
                       <input type="radio" name="${key}" data-sa-key="${key}" value="${n}" ${currentVal == n ? "checked" : ""} style="display:none;" />
                       ${n}
@@ -3039,6 +3039,24 @@ function getOutlineFields(assignment, submission) {
 function isOutlineComplete(submission, assignment) {
   const config = getOutlineFields(assignment, submission);
   return config.fields.every((field) => String(submission.outline?.[field.key] || "").trim());
+}
+
+function renderTextWithPasteHighlights(text, writingEvents) {
+  if (!text) return "";
+  const flaggedPastes = (writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
+  if (!flaggedPastes.length) return `<pre class="context-expanded-text">${escapeHtml(text)}</pre>`;
+
+  let remaining = text;
+  let html = "";
+  for (const event of flaggedPastes) {
+    const idx = remaining.indexOf(event.insertedText);
+    if (idx === -1) continue;
+    html += escapeHtml(remaining.slice(0, idx));
+    html += `<mark class="paste-highlight" title="Pasted content">${escapeHtml(event.insertedText)}</mark>`;
+    remaining = remaining.slice(idx + event.insertedText.length);
+  }
+  html += escapeHtml(remaining);
+  return `<pre class="context-expanded-text">${html}</pre>`;
 }
 
 function renderOutlineSummary(assignment, submission) {
