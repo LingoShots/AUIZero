@@ -74,5 +74,17 @@ const Auth = (() => {
     }
   }
 
-  return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession };
+ return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession, joinClassIfInvited };
+  async function joinClassIfInvited() {
+    const params = new URLSearchParams(window.location.search);
+    const classId = params.get('join');
+    if (!classId) return;
+    if (!session) return;
+    await fetch(`/api/classes/${classId}/join`, {
+      method: 'POST',
+      headers: authHeaders()
+    });
+    // Clean the URL
+    window.history.replaceState({}, '', window.location.pathname);
+  }
 })();
