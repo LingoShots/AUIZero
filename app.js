@@ -3948,8 +3948,6 @@ async function syncSubmissionToServer(submission) {
 }
 
 function persistState() {
-
-function persistState() {
   const cloned = JSON.parse(JSON.stringify(state));
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cloned));
 }
