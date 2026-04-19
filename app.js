@@ -55,24 +55,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Show loading screen while checking session
   appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
-
-  const params = new URLSearchParams(window.location.search);
-  const joinClassId = params.get('join');
-
   const params = new URLSearchParams(window.location.search);
   const joinClassId = params.get('join');
   let inviteInfo = null;
   if (joinClassId) inviteInfo = await Auth.getInviteInfo(joinClassId);
-
   const profile = await Auth.restoreSession();
   if (!profile) {
     renderAuthScreen(joinClassId, inviteInfo);
     return;
   }
-
   await bootApp(profile);
 });
-
 async function bootApp(profile) {
   currentProfile = profile;
   ui.role = profile.role;
