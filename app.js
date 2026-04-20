@@ -3316,6 +3316,17 @@ function renderAnnotatedText(submission) {
 
   const highlights = [];
 
+  for (const paste of flaggedPastes) {
+    const idx = text.indexOf(paste.insertedText);
+    if (idx !== -1) {
+      highlights.push({
+        start: idx,
+        end: idx + paste.insertedText.length,
+        type: "paste",
+      });
+    }
+  }
+
   for (const ann of annotations) {
     const idx = text.indexOf(ann.selectedText);
     if (idx !== -1) {
@@ -3338,30 +3349,11 @@ function renderAnnotatedText(submission) {
     }
   }
 
-    for (const paste of flaggedPastes) {
-    const idx = text.indexOf(paste.insertedText);
-    if (idx !== -1) {
-      const pasteStart = idx;
-      const pasteEnd = idx + paste.insertedText.length;
-      const hasAnnotationOnPaste = highlights.some(
-        (h) => h.type === "annotation" && h.start < pasteEnd && h.end > pasteStart
-      );
-
-      if (!hasAnnotationOnPaste) {
-        highlights.push({
-          start: pasteStart,
-          end: pasteEnd,
-          code: "PASTE",
-          type: "paste",
-        });
-      }
-    }
-  }
-
   if (!highlights.length) return escapeHtml(text);
 
   highlights.sort((a, b) => {
     if (a.start !== b.start) return a.start - b.start;
+    if (a.end !== b.end) return b.end - a.end;
     if (a.type === b.type) return 0;
     return a.type === "paste" ? -1 : 1;
   });
@@ -3373,16 +3365,16 @@ function renderAnnotatedText(submission) {
     if (h.start < cursor) continue;
 
     result += escapeHtml(text.slice(cursor, h.start));
+    const segment = escapeHtml(text.slice(h.start, h.end));
 
     if (h.type === "paste") {
-      result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
+      result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
     } else {
-      const isViolet = h.overlapsPaste;
-      const bg = isViolet ? "#5b2a86" : "#fff176";
-      const fg = isViolet ? "#ffffff" : "#2f2416";
-      const sup = isViolet ? "#e9d8ff" : "var(--accent-deep)";
-
-      result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:${bg};color:${fg};border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:${sup};font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+      if (h.overlapsPaste) {
+        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+      } else {
+        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+      }
     }
 
     cursor = h.end;
