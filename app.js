@@ -1709,7 +1709,9 @@ function renderTeacherReview(assignment, submissions) {
   const total = currentClassMembers.length;
   const submittedCount = submissions.filter(s => s.status === "submitted").length;
   const gradedCount = submissions.filter(s => s.teacherReview?.savedAt).length;
-  const flaggedCount = submissions.filter(s => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
+    const flaggedCount = submissions.filter(
+    s => Array.isArray(s.writingEvents) && s.writingEvents.some(e => e && e.flagged)
+  ).length;
 
   return `
     <section class="panel review-shell">
