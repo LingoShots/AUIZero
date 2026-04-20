@@ -3298,6 +3298,16 @@ ffunction flashScrollTarget(el) {
   }, 1600);
 }
 
+function flashScrollTarget(el) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.style.boxShadow = "0 0 0 3px rgba(91,42,134,0.28)";
+  el.style.transition = "box-shadow 0.2s ease";
+  window.setTimeout(() => {
+    el.style.boxShadow = "";
+  }, 1600);
+}
+
 function scrollToAnnotation(annotationId) {
   flashScrollTarget(document.getElementById(`annotation-${annotationId}`));
 }
