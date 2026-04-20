@@ -195,12 +195,10 @@ async function bootApp(profile) {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
-    if (currentClassId) {
-      const membersData = await Auth.apiFetch(`/api/classes/${currentClassId}/members`);
-      currentClassMembers = membersData.members || [];
+        if (currentClassId) {
       const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
       const raw = assignData.assignments || [];
-      state.assignments = raw.map(a => ({
+            state.assignments = raw.map(a => ({
         id: a.id,
         title: a.title || '',
         prompt: a.prompt || '',
@@ -218,43 +216,15 @@ async function bootApp(profile) {
         status: a.status || 'draft',
         uploadedRubricText: a.uploaded_rubric_text || '',
         createdAt: a.created_at || new Date().toISOString(),
+        classId: a.class_id || currentClassId,
         ideaRequestLimit: 3,
       }));
-      await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
-      }
-} else {
-    const data = await Auth.apiFetch('/api/student/classes');
-    currentClasses = data.classes || [];
-    currentClassId = currentClasses[0]?.id || null;
-    if (currentClassId) {
-      const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
-      const raw = assignData.assignments || [];
-      state.assignments = raw
-        .filter(a => a.status === 'published')
-        .map(a => ({
-          id: a.id,
-          title: a.title || '',
-          prompt: a.prompt || '',
-          brief: a.brief || '',
-          focus: a.focus || '',
-          assignmentType: a.assignment_type || 'response',
-          languageLevel: a.language_level || 'B1',
-          wordCountMin: a.word_count_min || 250,
-          wordCountMax: a.word_count_max || 400,
-          feedbackRequestLimit: a.feedback_request_limit || 2,
-          chatTimeLimit: a.chat_time_limit || 0,
-          studentFocus: a.student_focus || [],
-          rubric: a.rubric || [],
-          deadline: a.deadline || '',
-          status: a.status || 'published',
-          uploadedRubricText: a.uploaded_rubric_text || '',
-          createdAt: a.created_at || new Date().toISOString(),
-          ideaRequestLimit: 3,
-        }));
     }
   }
+  hydrateSelections();
   render();
 }
+
 function mapServerSubmission(serverSubmission) {
   return {
     id: serverSubmission?.id || `submission-${Date.now()}`,
@@ -1264,6 +1234,10 @@ function handlePaste(event) {
 }
 
 function render() {
+  if (ui.role === "student") {
+    hydrateSelections();
+  }
+
   appEl.innerHTML = `
     <div class="app-shell">
       ${renderTopbar()}
