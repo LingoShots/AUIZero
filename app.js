@@ -152,6 +152,115 @@ function createDefaultTeacherReview(review = {}) {
   };
 }
 
+function createScoreBandsForPoints(maxPoints) {
+  const ceiling = Math.max(1, Number(maxPoints || 0));
+  const labels = ["Excellent", "Good", "Satisfactory", "Developing", "Needs work"];
+  const rawPoints = [
+    ceiling,
+    Math.max(ceiling - 1, 0),
+    Math.max(Math.round(ceiling * 0.65), 0),
+    Math.max(Math.round(ceiling * 0.4), 0),
+    0,
+  ];
+  const uniquePoints = [...new Set(rawPoints)].sort((a, b) => b - a);
+
+  return uniquePoints.map((points, index) => ({
+    id: `band-${ceiling}-${points}-${index}`,
+    label: labels[index] || `Band ${index + 1}`,
+    points,
+    description: `${labels[index] || `Band ${index + 1}`} (${points})`,
+  }));
+}
+
+function createSimpleRubricCriterion(name, description, points = 4) {
+  const maxPoints = Math.max(1, Number(points || 4));
+  return {
+    id: uid("rubric"),
+    name,
+    description,
+    points: maxPoints,
+    bands: createScoreBandsForPoints(maxPoints),
+  };
+}
+
+function getCriterionBands(criterion) {
+  const levels = safeArray(criterion?.levels);
+  if (levels.length) return levels;
+  const bands = safeArray(criterion?.bands);
+  if (bands.length) return bands;
+  return createScoreBandsForPoints(Number(criterion?.points || 0));
+}
+
+function buildTeacherReviewRowScore(criterion, band) {
+  return {
+    criterionId: criterion.id,
+    criterionName: criterion.name || "Criterion",
+    bandId: band.id || `band-${criterion.id}-${band.points}`,
+    label: band.label || `${band.points}`,
+    points: Number(band.points ?? 0),
+    maxPoints: Number(criterion.points || 0),
+  };
+}
+
+function getTeacherReviewRowScoreMap(rowScores) {
+  return new Map(
+    safeArray(rowScores)
+      .filter((entry) => entry?.criterionId)
+      .map((entry) => [entry.criterionId, entry])
+  );
+}
+
+function findClosestBand(criterion, desiredPoints) {
+  const bands = getCriterionBands(criterion);
+  if (!bands.length) return null;
+  const target = Number(desiredPoints ?? 0);
+  return bands.reduce((best, band) => {
+    if (!best) return band;
+    const bestDistance = Math.abs(Number(best.points ?? 0) - target);
+    const bandDistance = Math.abs(Number(band.points ?? 0) - target);
+    if (bandDistance < bestDistance) return band;
+    if (bandDistance === bestDistance && Number(band.points ?? 0) > Number(best.points ?? 0)) return band;
+    return best;
+  }, null);
+}
+
+function calculateTeacherReviewSummary(assignment, submission, rowScores = submission?.teacherReview?.rowScores) {
+  const rubric = safeArray(assignment?.rubric).length ? assignment.rubric : rubricForType(assignment?.assignmentType);
+  const rowScoreMap = getTeacherReviewRowScoreMap(rowScores);
+  const maxScore = rubric.reduce((sum, criterion) => sum + Number(criterion.points || 0), 0);
+  const selectedCount = rubric.filter((criterion) => rowScoreMap.has(criterion.id)).length;
+  const totalScore = rubric.reduce((sum, criterion) => {
+    const entry = rowScoreMap.get(criterion.id);
+    return sum + Number(entry?.points ?? 0);
+  }, 0);
+  const fallbackScore = selectedCount === 0 && submission?.teacherReview?.finalScore !== ""
+    ? Number(submission.teacherReview.finalScore || 0)
+    : totalScore;
+
+  return {
+    rubric,
+    rowScoreMap,
+    totalScore: fallbackScore,
+    maxScore,
+    selectedCount,
+    isComplete: rubric.length > 0 && selectedCount === rubric.length,
+  };
+}
+
+async function syncTeacherReviewToServer(submission) {
+  if (!submission?.id || String(submission.id).startsWith("submission-")) return;
+  try {
+    await Auth.apiFetch(`/api/submissions/${submission.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        teacher_review: submission.teacherReview,
+      }),
+    });
+  } catch (error) {
+    console.error("Could not sync teacher review:", error.message, error);
+  }
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -478,13 +587,17 @@ if (action === "generate-teacher-assist") {
     .then(data => {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
       const parsed = JSON.parse(jsonStr);
-      parsed.rubric = (parsed.rubric || []).map((item) => ({ id: uid("rubric"), ...item, points: Number(item.points) || 1 }));
+      parsed.rubric = (parsed.rubric || []).map((item) => {
+        const points = Number(item.points) || 1;
+        return { id: uid("rubric"), ...item, points, bands: createScoreBandsForPoints(points) };
+      });
       // Ensure rubric points add up to totalPoints
       const targetPts = Number(ui.teacherDraft.totalPoints) || 20;
       const currentTotal = parsed.rubric.reduce((s, r) => s + r.points, 0);
       if (currentTotal !== targetPts && parsed.rubric.length > 0) {
         const diff = targetPts - currentTotal;
         parsed.rubric[parsed.rubric.length - 1].points += diff;
+        parsed.rubric[parsed.rubric.length - 1].bands = createScoreBandsForPoints(parsed.rubric[parsed.rubric.length - 1].points);
       }
       ui.teacherAssist = parsed;
       ui.teacherAssist = parsed;
@@ -501,7 +614,7 @@ if (action === "generate-teacher-assist") {
 
   if (action === "add-rubric-row" && ui.teacherAssist) {
     const defaultPts = Math.max(1, Math.floor(ui.teacherDraft.totalPoints / (ui.teacherAssist.rubric.length + 1)));
-    ui.teacherAssist.rubric.push({ id: uid("rubric"), name: "", description: "", points: defaultPts });
+    ui.teacherAssist.rubric.push({ id: uid("rubric"), name: "", description: "", points: defaultPts, bands: createScoreBandsForPoints(defaultPts) });
     render();
     return;
   }
@@ -963,8 +1076,10 @@ if (action === "back-to-assignments") {
       return;
     }
 
-    submission.teacherReview = submission.teacherReview || {};
+    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
+    submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
     submission.teacherReview.suggestedGrade = gradeSubmission(assignment, submission);
+    submission.teacherReview.suggestedRowScores = safeArray(submission.teacherReview.suggestedGrade?.rowScores);
     ui.notice = "Suggested grading is ready to review.";
     persistState();
     render();
@@ -987,8 +1102,11 @@ if (action === "back-to-assignments") {
       return;
     }
 
+    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
+    submission.teacherReview.rowScores = safeArray(submission.teacherReview.suggestedGrade.rowScores).map((entry) => ({ ...entry }));
     submission.teacherReview.finalScore = submission.teacherReview.suggestedGrade.totalScore;
     submission.teacherReview.finalNotes = submission.teacherReview.suggestedGrade.justification;
+    submission.teacherReview.status = "graded";
     submission.teacherReview.acceptedAt = new Date().toISOString();
     ui.notice = "Suggested grade copied into the editable review.";
     persistState();
@@ -1003,7 +1121,37 @@ if (action === "back-to-assignments") {
     }
 
     submission.teacherReview.suggestedGrade = null;
+    submission.teacherReview.suggestedRowScores = [];
     ui.notice = "Suggested grade cleared.";
+    persistState();
+    render();
+    return;
+  }
+
+  if (action === "select-rubric-band") {
+    const submission = getSelectedReviewSubmission();
+    const assignment = getSelectedAssignment();
+    if (!submission || !assignment) {
+      return;
+    }
+
+    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
+    submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
+    const rubric = safeArray(assignment.rubric).length ? assignment.rubric : rubricForType(assignment.assignmentType);
+    const criterion = rubric.find((item) => item.id === target.dataset.criterionId);
+    if (!criterion) {
+      return;
+    }
+
+    const band = getCriterionBands(criterion).find((item) => item.id === target.dataset.bandId);
+    if (!band) {
+      return;
+    }
+
+    const nextEntry = buildTeacherReviewRowScore(criterion, band);
+    const remainingRows = safeArray(submission.teacherReview.rowScores).filter((entry) => entry.criterionId !== criterion.id);
+    submission.teacherReview.rowScores = [...remainingRows, nextEntry];
+    submission.teacherReview.finalScore = calculateTeacherReviewSummary(assignment, submission, submission.teacherReview.rowScores).totalScore;
     persistState();
     render();
     return;
@@ -1011,16 +1159,20 @@ if (action === "back-to-assignments") {
 
   if (action === "save-teacher-review") {
     const submission = getSelectedReviewSubmission();
+    const assignment = getSelectedAssignment();
     if (!submission) {
       return;
     }
 
-    submission.teacherReview = submission.teacherReview || {};
-    const scoreInput = document.getElementById("teacher-score-input");
+    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
     const notesInput = document.getElementById("teacher-review-notes");
-    submission.teacherReview.finalScore = Number(scoreInput.value || 0);
-    submission.teacherReview.finalNotes = notesInput.value.trim();
+    const summary = calculateTeacherReviewSummary(assignment, submission);
+    submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
+    submission.teacherReview.finalScore = summary.totalScore;
+    submission.teacherReview.finalNotes = notesInput ? notesInput.value.trim() : "";
+    submission.teacherReview.status = "graded";
     submission.teacherReview.savedAt = new Date().toISOString();
+    await syncTeacherReviewToServer(submission);
     ui.notice = "Teacher review saved.";
     persistState();
     render();
@@ -1191,7 +1343,12 @@ function handleInput(event) {
 
   if (target.dataset.rubricId && target.dataset.rubricField && ui.teacherAssist) {
     const item = ui.teacherAssist.rubric.find((r) => r.id === target.dataset.rubricId);
-    if (item) item[target.dataset.rubricField] = target.type === "number" ? Number(target.value) : target.value;
+    if (item) {
+      item[target.dataset.rubricField] = target.type === "number" ? Number(target.value) : target.value;
+      if (target.dataset.rubricField === "points") {
+        item.bands = createScoreBandsForPoints(item.points);
+      }
+    }
     return;
   }
 
@@ -1938,6 +2095,8 @@ function renderTeacherGrading(assignment, submission) {
     totalMinutes,
   };
 
+  const reviewSummary = calculateTeacherReviewSummary(assignment, submission);
+  const suggestedRowScoreMap = getTeacherReviewRowScoreMap(submission.teacherReview?.suggestedRowScores);
   const reviewScore = submission.teacherReview?.finalScore ?? "";
   const reviewNotes = submission.teacherReview?.finalNotes ?? "";
   const studentName = submission._studentName || getUserById(submission.studentId)?.name || "Student";
@@ -2019,6 +2178,16 @@ function renderTeacherGrading(assignment, submission) {
               <p class="mini-label" style="margin-bottom:6px;">AI suggested grade</p>
               <div style="font-size:1.2rem;font-weight:700;margin-bottom:6px;">${submission.teacherReview.suggestedGrade.totalScore}/${submission.teacherReview.suggestedGrade.maxScore}</div>
               <p style="font-size:0.85rem;color:var(--muted);margin:0 0 10px;">${escapeHtml(submission.teacherReview.suggestedGrade.justification)}</p>
+              ${safeArray(submission.teacherReview.suggestedGrade.criteria).length ? `
+                <div style="display:grid;gap:6px;margin:0 0 10px;">
+                  ${submission.teacherReview.suggestedGrade.criteria.map((criterion) => `
+                    <div style="display:flex;justify-content:space-between;gap:10px;font-size:0.82rem;padding:8px 10px;background:#fff;border:1px solid var(--line);border-radius:10px;">
+                      <span>${escapeHtml(criterion.name)}</span>
+                      <strong>${escapeHtml(criterion.bandLabel || "Band")} (${criterion.score}/${criterion.points})</strong>
+                    </div>
+                  `).join("")}
+                </div>
+              ` : ""}
               ${submission.teacherReview.suggestedGrade.studentComment ? `
                 <div style="background:#f0f7ee;border-left:3px solid var(--accent);padding:10px 12px;border-radius:8px;margin-bottom:10px;">
                   <p class="mini-label" style="margin-bottom:4px;">Suggested student comment</p>
@@ -2035,21 +2204,61 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:8px;">Rubric</p>
-            ${(assignment.rubric || []).map((criterion, i) => `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);gap:10px;">
-                <div style="flex:1;">
-                  <div style="font-weight:600;font-size:0.88rem;">${escapeHtml(criterion.name)}</div>
-                  <div style="font-size:0.8rem;color:var(--muted);">${escapeHtml(criterion.description)}</div>
+            ${reviewSummary.rubric.map((criterion) => {
+              const bands = getCriterionBands(criterion);
+              const selected = reviewSummary.rowScoreMap.get(criterion.id);
+              const suggested = suggestedRowScoreMap.get(criterion.id);
+              return `
+                <div style="padding:10px 0;border-bottom:1px solid var(--line);">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                    <div style="flex:1;">
+                      <div style="font-weight:600;font-size:0.9rem;">${escapeHtml(criterion.name)}</div>
+                      <div style="font-size:0.82rem;color:var(--muted);line-height:1.5;">${escapeHtml(criterion.description)}</div>
+                    </div>
+                    <span style="font-size:0.85rem;color:var(--muted);flex-shrink:0;">/${criterion.points} pts</span>
+                  </div>
+                  ${bands.length ? `
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                      ${bands.map((band) => {
+                        const isSelected = selected?.bandId === band.id || (selected && Number(selected.points) === Number(band.points) && selected.label === band.label);
+                        const isSuggested = suggested?.bandId === band.id || (suggested && Number(suggested.points) === Number(band.points) && suggested.label === band.label);
+                        const bg = isSelected ? "#dff3e4" : isSuggested ? "#f4efe6" : "#fff";
+                        const border = isSelected ? "#4f8f68" : isSuggested ? "#c8b9a2" : "var(--line)";
+                        const color = isSelected ? "#1f5c38" : "var(--ink)";
+                        return `<button
+                          class="button-ghost"
+                          data-action="select-rubric-band"
+                          data-criterion-id="${criterion.id}"
+                          data-band-id="${escapeAttribute(band.id)}"
+                          style="padding:8px 10px;min-width:0;background:${bg};border-color:${border};color:${color};font-size:0.8rem;"
+                        >${escapeHtml(band.label)} (${band.points})</button>`;
+                      }).join("")}
+                    </div>
+                  ` : ""}
+                  ${selected ? `
+                    <p style="font-size:0.78rem;color:var(--sage);margin:8px 0 0;">Selected: ${escapeHtml(selected.label)} (${selected.points}/${selected.maxPoints})</p>
+                  ` : suggested ? `
+                    <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">AI suggestion: ${escapeHtml(suggested.label)} (${suggested.points}/${suggested.maxPoints})</p>
+                  ` : `
+                    <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Choose a band to score this criterion.</p>
+                  `}
                 </div>
-                <span style="font-size:0.85rem;color:var(--muted);flex-shrink:0;">/${criterion.points} pts</span>
-              </div>
-            `).join("")}
-            <div style="text-align:right;font-size:0.85rem;font-weight:700;margin-top:6px;">Total: ${(assignment.rubric || []).reduce((s, r) => s + Number(r.points || 0), 0)} pts</div>
+              `;
+            }).join("")}
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+              <span style="font-size:0.82rem;color:var(--muted);">${reviewSummary.selectedCount}/${reviewSummary.rubric.length} criteria scored</span>
+              <span style="font-size:0.95rem;font-weight:700;color:var(--ink);">Auto total: ${reviewSummary.totalScore}/${reviewSummary.maxScore}</span>
+            </div>
           </div>
 
           <div class="field" style="margin-bottom:12px;">
-            <label for="teacher-score-input">Final score</label>
-            <input id="teacher-score-input" type="number" min="0" max="${(assignment.rubric || []).reduce((s, r) => s + Number(r.points || 0), 0)}" value="${escapeHtml(String(reviewScore))}" placeholder="0" style="max-width:100px;" />
+            <label>Final score</label>
+            <div style="padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;font-weight:700;">
+              ${reviewSummary.totalScore}/${reviewSummary.maxScore}
+            </div>
+            ${reviewScore !== "" && Number(reviewScore) !== Number(reviewSummary.totalScore) ? `
+              <p style="font-size:0.78rem;color:var(--muted);margin-top:6px;">Previous saved total: ${escapeHtml(String(reviewScore))}</p>
+            ` : ""}
           </div>
 
           <div class="field" style="margin-bottom:12px;">
@@ -2992,6 +3201,7 @@ function generateTeacherAssist(draft) {
   const rubric = baseRubric.map((item, i) => ({
     ...item,
     points: i === baseRubric.length - 1 ? pointsEach + remainder : pointsEach,
+    bands: createScoreBandsForPoints(i === baseRubric.length - 1 ? pointsEach + remainder : pointsEach),
   }));
 
   return {
@@ -3019,60 +3229,59 @@ function detectAssignmentType(text) {
 }
 
 function rubricForType(type) {
+  const taskLabels = {
+    argument: { name: "Task Response", description: "Presents a clear opinion and develops it with relevant support." },
+    narrative: { name: "Content & Development", description: "Builds a clear story or moment with meaningful detail." },
+    process: { name: "Task Response", description: "Explains the process completely and in a way the reader can follow." },
+    definition: { name: "Content Accuracy", description: "Explains the concept clearly and accurately for the reader." },
+    compare: { name: "Comparison & Insight", description: "Covers both subjects and highlights meaningful similarities or differences." },
+    informational: { name: "Content Accuracy", description: "Explains the topic clearly with relevant supporting detail." },
+    response: { name: "Task Response", description: "Answers the prompt clearly and stays focused on the main point." },
+    other: { name: "Task Response", description: "Addresses the writing task clearly and appropriately." },
+  };
+  const taskCriterion = taskLabels[type] || taskLabels.other;
+
+  const buildRubric = (specificRows = []) => [
+    createSimpleRubricCriterion(taskCriterion.name, taskCriterion.description, 4),
+    ...specificRows,
+    createSimpleRubricCriterion("Grammar & Sentence Control", "Uses grammar and sentence structure with enough control for clear meaning.", 4),
+    createSimpleRubricCriterion("Vocabulary & Word Choice", "Uses words that fit the task and communicate ideas clearly.", 4),
+    createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+  ];
+
   if (type === "argument") {
-    return [
-      { id: uid("rubric"), name: "Clear claim", description: "Takes a clear position and stays focused on it.", points: 4 },
-      { id: uid("rubric"), name: "Reasons and evidence", description: "Gives strong reasons or examples and explains them.", points: 4 },
-      { id: uid("rubric"), name: "Organization", description: "Ideas are ordered clearly and are easy to follow.", points: 4 },
-      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-    ];
+    return buildRubric([
+      createSimpleRubricCriterion("Organization & Coherence", "Organises ideas logically so the position is easy to follow from start to finish.", 4),
+    ]);
   }
   if (type === "narrative") {
-    return [
-      { id: uid("rubric"), name: "Story focus", description: "Stays on one clear moment or event.", points: 4 },
-      { id: uid("rubric"), name: "Details", description: "Uses details that help the reader picture what happened.", points: 4 },
-      { id: uid("rubric"), name: "Sequence", description: "Events are in a clear order.", points: 4 },
-      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-    ];
+    return buildRubric([
+      createSimpleRubricCriterion("Organization & Coherence", "Sequences the story clearly so the reader can follow the event or experience.", 4),
+    ]);
   }
   if (type === "process") {
-    return [
-      { id: uid("rubric"), name: "Steps in order", description: "Explains the steps clearly and in the right order.", points: 4 },
-      { id: uid("rubric"), name: "Detail and accuracy", description: "Each step has enough detail to follow.", points: 4 },
-      { id: uid("rubric"), name: "Clarity", description: "A reader unfamiliar with the topic could follow along.", points: 4 },
-      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-    ];
+    return buildRubric([
+      createSimpleRubricCriterion("Organization & Coherence", "Presents the steps in a logical order with clear connections between them.", 4),
+    ]);
   }
   if (type === "definition") {
-    return [
-      { id: uid("rubric"), name: "Core meaning", description: "Gives a clear and accurate definition.", points: 4 },
-      { id: uid("rubric"), name: "Examples", description: "Uses examples that help the reader understand.", points: 4 },
-      { id: uid("rubric"), name: "Clarity", description: "The explanation is easy to follow.", points: 4 },
-      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-    ];
+    return buildRubric([
+      createSimpleRubricCriterion("Organization & Coherence", "Builds the explanation in a logical order that helps the reader understand the meaning.", 4),
+    ]);
   }
   if (type === "compare") {
-    return [
-      { id: uid("rubric"), name: "Both sides covered", description: "Addresses both subjects fairly.", points: 4 },
-      { id: uid("rubric"), name: "Key differences", description: "Identifies the most important similarities or differences.", points: 4 },
-      { id: uid("rubric"), name: "Organisation", description: "Ideas are grouped logically and easy to follow.", points: 4 },
-      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-    ];
+    return buildRubric([
+      createSimpleRubricCriterion("Organization & Coherence", "Groups similarities and differences clearly so the comparison is easy to follow.", 4),
+    ]);
   }
   if (type === "informational") {
-    return [
-      { id: uid("rubric"), name: "Main idea", description: "Clearly explains the topic.", points: 4 },
-      { id: uid("rubric"), name: "Facts and examples", description: "Uses useful facts, details, or examples.", points: 4 },
-      { id: uid("rubric"), name: "Clarity", description: "Explains ideas in a clear, easy-to-follow way.", points: 4 },
-      { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-    ];
+    return buildRubric([
+      createSimpleRubricCriterion("Organization & Coherence", "Organises information in a clear way so the reader can follow the explanation.", 4),
+    ]);
   }
-  return [
-    { id: uid("rubric"), name: "Task completion", description: "Answers the assignment clearly.", points: 4 },
-    { id: uid("rubric"), name: "Support", description: "Uses examples or reasons to support the writing.", points: 4 },
-    { id: uid("rubric"), name: "Clarity", description: "The writing is clear and easy to follow.", points: 4 },
-    { id: uid("rubric"), name: "Revision and reflection", description: "Shows improvement from draft to final and explains changes.", points: 4 },
-  ];
+  return buildRubric([
+    createSimpleRubricCriterion("Organization & Coherence", "Presents ideas in a logical order that is easy for the reader to follow.", 4),
+  ]);
 }
 
 function studentPromptForType(type, topic, languageLevel) {
@@ -3675,20 +3884,42 @@ function gradeSubmission(assignment, submission) {
       scoreRatio = clamp01(0.22 + revisionStrength * 0.28 + (reflectionsComplete ? 0.14 : 0.05) + (outlineComplete ? 0.14 : 0.04) + (submission.feedbackHistory.length ? 0.08 : 0.03) - Math.min(flaggedPasteCount, 2) * 0.08);
     }
 
+    const rawScore = Math.round(scoreRatio * criterion.points);
+    const suggestedBand = findClosestBand(criterion, rawScore);
+    const suggestedRowScore = suggestedBand
+      ? buildTeacherReviewRowScore(criterion, suggestedBand)
+      : buildTeacherReviewRowScore(criterion, {
+          id: `band-${criterion.id}-${rawScore}`,
+          label: `${rawScore}`,
+          points: rawScore,
+        });
+
     return {
+      criterionId: criterion.id,
       name: criterion.name,
       points: criterion.points,
-      score: Math.round(scoreRatio * criterion.points),
+      score: suggestedRowScore.points,
+      bandLabel: suggestedRowScore.label,
+      bandId: suggestedRowScore.bandId,
       reason: buildCriterionReason(criterion.name, metrics, revisionStrength, reflectionsComplete, evidenceSignals),
     };
   });
 
   const totalScore = criteria.reduce((sum, item) => sum + item.score, 0);
   const maxScore = criteria.reduce((sum, item) => sum + item.points, 0);
+  const rowScores = criteria.map((criterion) => ({
+    criterionId: criterion.criterionId,
+    criterionName: criterion.name,
+    bandId: criterion.bandId,
+    label: criterion.bandLabel,
+    points: criterion.score,
+    maxPoints: criterion.points,
+  }));
 
   return {
     generatedAt: new Date().toISOString(),
     criteria,
+    rowScores,
     totalScore,
     maxScore,
     justification: buildGradeJustification(assignment, submission, metrics, totalScore, maxScore),
@@ -3925,25 +4156,29 @@ function normalizeAssignment(assignment) {
 }
 
 function normalizeRubricRow(item) {
+  const points = Math.max(1, Number(item?.points || 4));
+  const bands = safeArray(item?.bands).map((band) => ({
+    id: band?.id || uid("band"),
+    label: band?.label || "",
+    points: Number(band?.points ?? 0),
+    description: band?.description || "",
+  }));
+  const levels = safeArray(item?.levels).map((level) => ({
+    id: level?.id || uid("level"),
+    label: level?.label || "",
+    points: Number(level?.points ?? 0),
+    description: level?.description || "",
+  }));
+
   return {
     id: item?.id || uid("rubric"),
     name: item?.name || item?.subcriterion || "Criterion",
     description: item?.description || "",
-    points: Number(item?.points || 4),
+    points,
     section: item?.section || "",
     subcriterion: item?.subcriterion || "",
-    bands: safeArray(item?.bands).map((band) => ({
-      id: band?.id || uid("band"),
-      label: band?.label || "",
-      points: Number(band?.points ?? 0),
-      description: band?.description || "",
-    })),
-    levels: safeArray(item?.levels).map((level) => ({
-      id: level?.id || uid("level"),
-      label: level?.label || "",
-      points: Number(level?.points ?? 0),
-      description: level?.description || "",
-    })),
+    bands: levels.length ? bands : (bands.length ? bands : createScoreBandsForPoints(points)),
+    levels,
   };
 }
 
