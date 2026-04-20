@@ -1117,7 +1117,6 @@ if (action === "back-to-assignments") {
     ui.playback.index = 0;
     ui.notice = "";
     render();
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
     return;
   }
   
@@ -1932,9 +1931,8 @@ function renderTeacherWorkspace() {
             <div class="field" style="grid-column:1 / -1;">
               <label for="teacher-deadline-date">Deadline</label>
               <div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:8px;align-items:end;">
-                <div style="display:flex;gap:6px;align-items:center;min-width:0;">
-                  <input id="teacher-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="flex:1;min-width:0;" />
-                  <button type="button" class="button-ghost" style="padding:8px 10px;min-width:auto;" onclick="document.getElementById('teacher-deadline-date')?.showPicker?.()" title="Open calendar">📅</button>
+                <div style="min-width:0;">
+                  <input id="teacher-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="width:100%;min-width:0;" />
                 </div>
                 <select id="teacher-deadline-time">
                   ${buildDeadlineTimeOptions(getDeadlineTimePart(ui.teacherDraft.deadline))}
@@ -2236,10 +2234,10 @@ function renderTeacherGrading(assignment, submission) {
                 const isActive = currentStatus === status;
                 return `<button class="button-ghost" data-action="set-review-status" data-status="${status}" style="background:${isActive ? "#dff3e4" : "#fff"};border-color:${isActive ? "#4f8f68" : "var(--line)"};color:${isActive ? "#1f5c38" : "var(--ink)"};">${escapeHtml(getSubmissionStatusDisplay(status))}</button>`;
               }).join("")}
-              ${deadlinePassed || currentStatus === "late" || currentStatus === "missing" ? ["late", "missing"].map((status) => {
+              ${["late", "missing"].map((status) => {
                 const isActive = currentStatus === status;
                 return `<button class="button-ghost" data-action="set-review-status" data-status="${status}" style="background:${isActive ? "#fde7e7" : "#fff"};border-color:${isActive ? "#c56b6b" : "var(--line)"};color:${isActive ? "#8a2f2f" : "var(--ink)"};">${escapeHtml(getSubmissionStatusDisplay(status))}</button>`;
-              }).join("") : ""}
+              }).join("")}
             </div>
             ${deadlinePassed ? `
               <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Deadline has passed, so you can mark this student as late or missing.</p>
