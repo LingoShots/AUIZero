@@ -1931,7 +1931,7 @@ function renderTeacherGrading(assignment, submission) {
             ${(submission.teacherReview?.annotations?.length) ? `
               <div style="margin-top:8px;display:grid;gap:6px;">
                 ${submission.teacherReview.annotations.map((ann, i) => `
-                                                      <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;">
+                                                                        <div id="comment-${escapeAttribute(ann.id)}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;scroll-margin-top:120px;">
                     <strong style="color:#5b2a86;flex-shrink:0;">${escapeHtml(ann.code)}</strong>
                     <button type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="flex:1;text-align:left;background:none;border:none;padding:0;color:#3f2a56;cursor:pointer;font:inherit;">
                       "${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}
@@ -2289,7 +2289,7 @@ function renderStudentFinalStep(assignment, submission) {
                 <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
                 <div style="display:grid;gap:6px;margin-top:6px;">
                   ${submission.teacherReview.annotations.map((ann) => `
-                    <button type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;">
+                                        <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
                       <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
                       <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
                     </button>
@@ -3288,8 +3288,7 @@ Task: "${assignment.prompt}"
 
 Start by asking the student what topic or idea they are thinking about. If they struggle to answer, suggest they think about two or three possible ideas and pick the one they feel most confident about.`;
 }
-function scrollToAnnotation(annotationId) {
-  const el = document.getElementById(`annotation-${annotationId}`);
+ffunction flashScrollTarget(el) {
   if (!el) return;
   el.scrollIntoView({ behavior: "smooth", block: "center" });
   el.style.boxShadow = "0 0 0 3px rgba(91,42,134,0.28)";
@@ -3299,24 +3298,45 @@ function scrollToAnnotation(annotationId) {
   }, 1600);
 }
 
+function scrollToAnnotation(annotationId) {
+  flashScrollTarget(document.getElementById(`annotation-${annotationId}`));
+}
+
+function scrollToComment(annotationId) {
+  flashScrollTarget(document.getElementById(`comment-${annotationId}`));
+}
+
 function renderAnnotatedText(submission) {
   const text = submission?.finalText || submission?.draftText || "No text submitted yet.";
   const annotations = submission?.teacherReview?.annotations || [];
-  const flaggedPastes = (submission?.writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
+  const flaggedPastes = (submission?.writingEvents || []).filter(
+    (e) => e.type === "paste" && e.flagged && e.insertedText
+  );
 
   const highlights = [];
+
   for (const ann of annotations) {
     const idx = text.indexOf(ann.selectedText);
     if (idx !== -1) {
+      const end = idx + ann.selectedText.length;
+      const overlapsPaste = flaggedPastes.some((paste) => {
+        const pasteIdx = text.indexOf(paste.insertedText);
+        if (pasteIdx === -1) return false;
+        const pasteEnd = pasteIdx + paste.insertedText.length;
+        return idx < pasteEnd && end > pasteIdx;
+      });
+
       highlights.push({
         start: idx,
-        end: idx + ann.selectedText.length,
+        end,
         code: ann.code,
         type: "annotation",
         id: ann.id || uid("ann"),
+        overlapsPaste,
       });
     }
   }
+
   for (const paste of flaggedPastes) {
     const idx = text.indexOf(paste.insertedText);
     if (idx !== -1) {
@@ -3331,20 +3351,34 @@ function renderAnnotatedText(submission) {
 
   if (!highlights.length) return escapeHtml(text);
 
-  highlights.sort((a, b) => a.start - b.start);
+  highlights.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start;
+    if (a.type === b.type) return 0;
+    return a.type === "paste" ? -1 : 1;
+  });
 
   let result = "";
   let cursor = 0;
+
   for (const h of highlights) {
     if (h.start < cursor) continue;
+
     result += escapeHtml(text.slice(cursor, h.start));
+
     if (h.type === "paste") {
       result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
     } else {
-      result += `<mark id="annotation-${escapeAttribute(h.id)}" style="background:#5b2a86;color:#fff;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;" title="${escapeHtml(h.code)}">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:#e9d8ff;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+      const isViolet = h.overlapsPaste;
+      const bg = isViolet ? "#5b2a86" : "#fff176";
+      const fg = isViolet ? "#ffffff" : "#2f2416";
+      const sup = isViolet ? "#e9d8ff" : "var(--accent-deep)";
+
+      result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:${bg};color:${fg};border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:${sup};font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
     }
+
     cursor = h.end;
   }
+
   result += escapeHtml(text.slice(cursor));
   return result;
 }
