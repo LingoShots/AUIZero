@@ -204,8 +204,8 @@ function startChatTimer() {
   chatTimerInterval = setInterval(() => {
     const timerEl = document.querySelector(".chat-timer");
     if (!timerEl) { clearInterval(chatTimerInterval); return; }
-    const assignment = getStudentAssignment();
-    const submission = getStudentSubmission();
+    const assignment = state.assignments.find(a => a.id === ui.selectedStudentAssignmentId) || null;
+    const submission = state.submissions.find(s => s.assignmentId === ui.selectedStudentAssignmentId && s.studentId === currentProfile?.id) || null;
     if (!assignment?.chatTimeLimit || !submission?.chatStartedAt) return;
     const totalSecs = Math.max(0, Math.round((assignment.chatTimeLimit * 60) - (Date.now() - Date.parse(submission.chatStartedAt)) / 1000));
     const mins = Math.floor(totalSecs / 60);
@@ -1437,7 +1437,7 @@ function renderHero() {
 
 function renderTeacherWorkspace() {
   const assignments = state.assignments;
-  const selectedAssignment = getSelectedAssignment();
+  const selectedAssignment = state.assignments.find(a => a.id === ui.selectedAssignmentId) || null;
   const submissions = selectedAssignment ? getAssignmentSubmissions(selectedAssignment.id) : [];
   const selectedSubmission = getSelectedReviewSubmission();
 
