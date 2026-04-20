@@ -4,6 +4,10 @@ const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
 const mammoth = require('mammoth');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app = express();
@@ -70,6 +74,40 @@ function cleanRubricCellText(text = '') {
     .trim();
 }
 
+function decodeXmlEntities(text = '') {
+  return String(text)
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_, num) => String.fromCodePoint(parseInt(num, 10)));
+}
+
+function extractWordXmlText(xml = '') {
+  return decodeXmlEntities(
+    String(xml)
+      .replace(/<w:tab\b[^>]*\/>/gi, '\t')
+      .replace(/<w:(?:br|cr)\b[^>]*\/>/gi, '\n')
+      .replace(/<\/w:p>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+  )
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function cleanRubricXmlCellText(xml = '') {
+  return extractWordXmlText(xml)
+    .replace(/\s*\|\s*/g, ' ')
+    .replace(/[ ]{2,}/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
 function parseLevelPoints(label = '') {
   const matches = String(label).match(/\d+(?:\.\d+)?/g) || [];
   if (!matches.length) return 0;
@@ -96,6 +134,93 @@ function deriveSubcriterionName(sectionText = '', firstDescription = '', rowInde
   }
 
   return cleanedSection || `Criterion ${rowIndex + 1}`;
+}
+
+function extractDocxDocumentXml(buffer) {
+  const tempPath = path.join(
+    os.tmpdir(),
+    `auizero-rubric-${Date.now()}-${Math.random().toString(36).slice(2)}.docx`
+  );
+  fs.writeFileSync(tempPath, buffer);
+  try {
+    return execFileSync('unzip', ['-p', tempPath, 'word/document.xml'], {
+      encoding: 'utf8',
+      maxBuffer: 12 * 1024 * 1024,
+    });
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (error) {
+      // Ignore cleanup failures.
+    }
+  }
+}
+
+function parseRubricDocxXml(documentXml = '', fileName = '') {
+  const xml = String(documentXml);
+  const tableMatches = [...xml.matchAll(/<w:tbl\b[\s\S]*?<\/w:tbl>/gi)].map((match) => match[0]);
+  if (!tableMatches.length) return null;
+
+  const tableXml = tableMatches.sort((a, b) => b.length - a.length)[0];
+  const preTableXml = xml.slice(0, xml.indexOf(tableXml));
+  const notes = [...preTableXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/gi)]
+    .map((match) => cleanRubricXmlCellText(match[0]))
+    .filter(Boolean);
+
+  const rowMatches = [...tableXml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/gi)].map((match) => match[0]);
+  if (rowMatches.length < 2) return null;
+
+  const rows = rowMatches.map((rowXml) =>
+    [...rowXml.matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/gi)].map((match) => cleanRubricXmlCellText(match[0]))
+  );
+
+  const headerRow = rows[0] || [];
+  if (headerRow.length < 3) return null;
+
+  const hasPointsColumn = /points?/i.test(headerRow[headerRow.length - 1] || '');
+  const levelHeaders = headerRow.slice(1, hasPointsColumn ? -1 : undefined).filter(Boolean);
+  if (!levelHeaders.length) return null;
+
+  let previousSection = '';
+  const rowsOut = rows.slice(1).map((cells, index) => {
+    const normalizedCells = [...cells];
+    while (normalizedCells.length < headerRow.length) normalizedCells.push('');
+
+    const rawSection = cleanRubricXmlCellText(normalizedCells[0] || '');
+    const section = rawSection || previousSection;
+    if (rawSection) previousSection = rawSection;
+
+    const descriptions = normalizedCells.slice(1, 1 + levelHeaders.length);
+    const pointsLabel = hasPointsColumn ? cleanRubricXmlCellText(normalizedCells[headerRow.length - 1] || '') : '';
+    const name = deriveSubcriterionName(section, descriptions[0], index, 0);
+    const levels = levelHeaders.map((header, levelIndex) => ({
+      id: `level-${index + 1}-${levelIndex + 1}`,
+      label: header,
+      points: parseLevelPoints(header),
+      description: descriptions[levelIndex] || '',
+    }));
+
+    return {
+      id: `rubric-row-${index + 1}`,
+      section,
+      subcriterion: name,
+      name,
+      description: pointsLabel || section,
+      points: Math.max(...levels.map((level) => Number(level.points || 0)), 0),
+      pointsLabel,
+      levels,
+    };
+  }).filter((row) => row.section || row.levels.some((level) => level.description));
+
+  if (!rowsOut.length) return null;
+
+  return {
+    kind: 'matrix',
+    name: fileName || 'Uploaded rubric',
+    headers: levelHeaders,
+    rows: rowsOut,
+    notes,
+  };
 }
 
 function parseRubricHtmlTable(html = '', fileName = '') {
@@ -149,25 +274,11 @@ function parseRubricHtmlTable(html = '', fileName = '') {
     };
   }).filter((row) => row.levels.some((level) => level.description));
 
-  const parsedRows = [];
-  rawRows.forEach((row) => {
-    const previous = parsedRows[parsedRows.length - 1];
-    if (previous && row.section && previous.section === row.section) {
-      previous.levels = previous.levels.map((level, index) => ({
-        ...level,
-        description: [level.description, row.levels[index]?.description].filter(Boolean).join('\n\n'),
-      }));
-      previous.pointsLabel = previous.pointsLabel || row.pointsLabel;
-      previous.description = previous.description || row.description;
-      return;
-    }
-
-    parsedRows.push({
-      ...row,
-      name: row.section || row.name,
-      subcriterion: row.section || row.subcriterion,
-    });
-  });
+  const parsedRows = rawRows.map((row) => ({
+    ...row,
+    name: row.section || row.name,
+    subcriterion: row.section || row.subcriterion,
+  }));
 
   if (!parsedRows.length) return null;
 
@@ -196,6 +307,14 @@ app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
       ]);
       text = rawTextResult.value;
       rubricData = parseRubricHtmlTable(htmlResult.value, req.file.originalname);
+      if (!rubricData) {
+        try {
+          const documentXml = extractDocxDocumentXml(req.file.buffer);
+          rubricData = parseRubricDocxXml(documentXml, req.file.originalname);
+        } catch (xmlError) {
+          // Keep the raw text fallback if XML extraction is unavailable in the environment.
+        }
+      }
     } else if (mime === 'application/pdf') {
       // Use AI to extract text from PDF since we can't run native pdf libs easily
       const base64 = req.file.buffer.toString('base64');

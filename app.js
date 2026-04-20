@@ -164,6 +164,22 @@ function saveRubricToLibrary(name, text, data = null) {
   window.localStorage.setItem(RUBRIC_LIBRARY_KEY, JSON.stringify(next));
 }
 
+function applySavedRubricSelection(rubricId) {
+  const savedRubric = getSavedRubricLibrary().find((entry) => entry.id === rubricId);
+  if (!savedRubric) {
+    ui.notice = "Choose a saved rubric first.";
+    render();
+    return;
+  }
+
+  ui.teacherDraft.uploadedRubricText = savedRubric.text || serializeRubricDataForPrompt(savedRubric.data);
+  ui.teacherDraft.uploadedRubricName = savedRubric.name;
+  ui.teacherDraft.uploadedRubricData = savedRubric.data || null;
+  ui.teacherAssist = null;
+  ui.notice = `Loaded saved rubric "${savedRubric.name}". You can save manually or use Format With AI.`;
+  render();
+}
+
 function renderRubricMatrixTable(matrixData, options = {}) {
   const matrix = getMatrixRubricData(matrixData);
   if (!matrix) return "";
@@ -961,18 +977,7 @@ if (action === "generate-teacher-assist") {
 
   if (action === "apply-saved-rubric") {
     const select = document.getElementById("saved-rubric-select");
-    const savedRubric = getSavedRubricLibrary().find((entry) => entry.id === select?.value);
-    if (!savedRubric) {
-      ui.notice = "Choose a saved rubric first.";
-      render();
-      return;
-    }
-    ui.teacherDraft.uploadedRubricText = savedRubric.text || serializeRubricDataForPrompt(savedRubric.data);
-    ui.teacherDraft.uploadedRubricName = savedRubric.name;
-    ui.teacherDraft.uploadedRubricData = savedRubric.data || null;
-    ui.teacherAssist = null;
-    ui.notice = `Loaded saved rubric "${savedRubric.name}". Click Format With AI to regenerate the assignment with it.`;
-    render();
+    applySavedRubricSelection(select?.value);
     return;
   }
 
@@ -1717,6 +1722,12 @@ if (target.id === "class-select") {
     return;
   }
 
+  if (target.id === "saved-rubric-select") {
+    if (!target.value) return;
+    applySavedRubricSelection(target.value);
+    return;
+  }
+
   if (target.id === "playback-speed") {
     ui.playback.speed = Number(target.value);
     if (ui.playback.isPlaying) {
@@ -2209,6 +2220,9 @@ function renderTeacherWorkspace() {
     ? getSelectedReviewSubmission()
     : (state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null);
   const savedRubrics = getSavedRubricLibrary();
+  const manualSaveReady = Boolean(
+    ui.teacherAssist || ((ui.teacherDraft.title || "").trim() && (ui.teacherDraft.prompt || "").trim())
+  );
 
   return `
     <section class="teacher-grid">
@@ -2220,7 +2234,7 @@ function renderTeacherWorkspace() {
           </div>
           <div class="toolbar">
             <button class="button-secondary" data-action="generate-teacher-assist">Format With AI</button>
-            <button class="button" data-action="save-assignment" ${!ui.teacherAssist && !ui.teacherDraft.title ? "disabled" : ""}>Save</button>
+            <button class="button" data-action="save-assignment" ${!manualSaveReady ? "disabled" : ""}>Save</button>
           </div>
         </div>
         <div class="field-stack">
@@ -2243,15 +2257,12 @@ function renderTeacherWorkspace() {
             </div>
             <input type="file" id="rubric-file-input" accept=".pdf,.doc,.docx" style="display:none;" onchange="handleRubricFile(this.files[0]);" />
             ${savedRubrics.length ? `
-              <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:10px;">
-                <div style="flex:1;min-width:220px;">
-                  <label for="saved-rubric-select" style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px;">Use a previous rubric</label>
-                  <select id="saved-rubric-select">
-                    <option value="">Select a saved rubric</option>
-                    ${savedRubrics.map((entry) => `<option value="${entry.id}">${escapeHtml(entry.name)}</option>`).join("")}
-                  </select>
-                </div>
-                <button class="button-ghost" data-action="apply-saved-rubric" style="min-height:40px;">Use saved rubric</button>
+              <div style="margin-top:10px;">
+                <label for="saved-rubric-select" style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px;">Use a previous rubric</label>
+                <select id="saved-rubric-select">
+                  <option value="">Select a saved rubric</option>
+                  ${savedRubrics.map((entry) => `<option value="${entry.id}">${escapeHtml(entry.name)}</option>`).join("")}
+                </select>
               </div>
             ` : ""}
             ${(ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricData?.rows?.length) ? `
@@ -2367,9 +2378,40 @@ function renderTeacherWorkspace() {
               </div>
             `
             : `
-              <div class="empty-state compact-empty">
-                <h3>Start with the assignment idea</h3>
-                <p>Write a plain-English overview, then let the tool turn it into a clean student-facing assignment and rubric.</p>
+              <div id="teacher-generated-assignment" class="teacher-output">
+                <div class="teacher-ready-card">
+                  <p class="mini-label">Manual assignment setup</p>
+                  <p class="subtle" style="margin:0 0 12px;">You can save this assignment without AI. Add the student-facing title and prompt here, or use Format With AI to draft them for you.</p>
+                  <div class="field" style="margin-bottom:10px;">
+                    <label for="teacher-title">Assignment title</label>
+                    <input id="teacher-title" data-teacher-field="title" value="${escapeAttribute(ui.teacherDraft.title)}" placeholder="Assignment title" />
+                  </div>
+                  <div class="field" style="margin-bottom:10px;">
+                    <label for="teacher-prompt">Task prompt</label>
+                    <textarea id="teacher-prompt" data-teacher-field="prompt" placeholder="Write the instructions students will see.">${escapeHtml(ui.teacherDraft.prompt)}</textarea>
+                  </div>
+                  <div class="field-grid" style="margin-bottom:10px;">
+                    <div class="field">
+                      <label for="teacher-word-min">Min words</label>
+                      <input id="teacher-word-min" type="number" data-teacher-field="wordCountMin" value="${escapeAttribute(String(ui.teacherDraft.wordCountMin))}" />
+                    </div>
+                    <div class="field">
+                      <label for="teacher-word-max">Max words</label>
+                      <input id="teacher-word-max" type="number" data-teacher-field="wordCountMax" value="${escapeAttribute(String(ui.teacherDraft.wordCountMax))}" />
+                    </div>
+                  </div>
+                  <div class="field" style="margin-bottom:10px;">
+                    <label for="teacher-assignment-type">Assignment type</label>
+                    <select id="teacher-assignment-type" data-teacher-field="assignmentType">
+                      ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="teacher-student-focus">Student focus</label>
+                    <textarea id="teacher-student-focus" data-teacher-field="studentFocus" placeholder="One focus point per line">${escapeHtml(ui.teacherDraft.studentFocus)}</textarea>
+                    <p class="subtle" style="font-size:0.82rem;margin-top:6px;">Optional. One focus point per line.</p>
+                  </div>
+                </div>
               </div>
             `
         }
@@ -3149,7 +3191,7 @@ async function saveTeacherAssignment() {
     : normalizeTeacherDraft(ui.teacherDraft);
 
   if (!draft.title || !draft.prompt) {
-    ui.notice = "Generate the student-ready assignment first, then save it.";
+    ui.notice = "Add a student-facing title and prompt, or use Format With AI first.";
     render();
     return;
   }
