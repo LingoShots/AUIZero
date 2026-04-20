@@ -4072,3 +4072,4 @@ function escapeAttribute(value) {
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
+}
