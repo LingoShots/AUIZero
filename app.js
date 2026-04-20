@@ -642,7 +642,7 @@ if (action === "back-to-assignments") {
       // Remove old submissions for this assignment and replace with fresh server data
       state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
       subs.forEach(s => {
-        state.submissions.push(normalizeSubmission({
+        state.submissions.push({
           id: s.id,
           assignmentId: s.assignment_id,
           studentId: s.student_id,
@@ -660,11 +660,10 @@ if (action === "back-to-assignments") {
           startedAt: s.started_at || null,
           submittedAt: s.submitted_at || null,
           updatedAt: s.updated_at || new Date().toISOString(),
-          // Map student name from joined profile
           _studentName: s.profiles?.name || "",
-        }));
+        });
       });
-      ui.selectedReviewSubmissionId = getAssignmentSubmissions(ui.selectedAssignmentId)[0]?.id || null;
+      ui.selectedReviewSubmissionId = state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId)[0]?.id || null;
       ui.notice = subs.length ? "" : "No submissions yet for this assignment.";
       render();
     });
