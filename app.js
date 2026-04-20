@@ -72,6 +72,15 @@ function createBlankTeacherDraft() {
   };
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -4052,15 +4061,6 @@ function averageSentenceLength(text) {
 function hasOpeningClaim(text) {
   const firstParagraph = splitParagraphs(text)[0] || text;
   return wordCount(firstParagraph) >= 12;
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function escapeAttribute(value) {
