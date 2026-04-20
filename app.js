@@ -311,6 +311,63 @@ function replaceSubmissionInState(nextSubmission) {
   state.submissions.push(nextSubmission);
 }
 
+function getTeacherReviewRowsForExport(assignment, submission) {
+  const reviewSummary = calculateTeacherReviewSummary(assignment, submission);
+  return reviewSummary.rubric.map((criterion) => {
+    const selected = reviewSummary.rowScoreMap.get(criterion.id);
+    return {
+      criterion: criterion.name,
+      description: criterion.description,
+      selectedLabel: selected?.label || "",
+      selectedPoints: Number(selected?.points ?? 0),
+      maxPoints: Number(criterion.points || 0),
+    };
+  });
+}
+
+function buildLmsGradeText(assignment, submission) {
+  const studentName = submission._studentName || getUserById(submission.studentId)?.name || "Student";
+  const rows = getTeacherReviewRowsForExport(assignment, submission);
+  const total = calculateTeacherReviewSummary(assignment, submission).totalScore;
+  const maxScore = rows.reduce((sum, row) => sum + row.maxPoints, 0);
+  const annotations = safeArray(submission.teacherReview?.annotations);
+  const lines = [
+    `${assignment.title} — ${studentName}`,
+    `Status: ${getSubmissionStatusDisplay(submission.status || submission.teacherReview?.status || "not_started")}`,
+    `Score: ${total}/${maxScore}`,
+    "",
+    "Rubric breakdown:",
+    ...rows.map((row) => `- ${row.criterion}: ${row.selectedLabel ? `${row.selectedLabel} (${row.selectedPoints}/${row.maxPoints})` : `Not scored (0/${row.maxPoints})`}`),
+  ];
+
+  if (submission.teacherReview?.finalNotes) {
+    lines.push("", "Teacher feedback:", submission.teacherReview.finalNotes.trim());
+  }
+
+  if (annotations.length) {
+    lines.push(
+      "",
+      "Annotation comments:",
+      ...annotations.map((annotation) => `- ${annotation.code}: "${annotation.selectedText}"${annotation.note ? ` — ${annotation.note}` : ""}`)
+    );
+  }
+
+  return lines.join("\n");
+}
+
+async function copyLmsGradeToClipboard(assignment, submission) {
+  if (!assignment || !submission) return false;
+  const text = buildLmsGradeText(assignment, submission);
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (error) {
+    console.error("Could not copy LMS grade text:", error.message, error);
+    return false;
+  }
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -590,11 +647,13 @@ ${deadlineLine}
 ${rubricLine}
 
 Rules:
+- Keep the student prompt short and sweet: aim for 3 short paragraphs or fewer.
+- Choose the assignmentType that best matches the teacher brief. Use one of: argument, narrative, informational, process, definition, compare, response, other.
 - Keep rubric criterion names short (2-4 words).
 - Rubric descriptions must be one clear sentence a student at CEFR ${d.languageLevel} can understand.
 - The student prompt should be encouraging and clear, not academic in tone.
 
-Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, response), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`;
+Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, process, definition, compare, response, other), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`;
 }
 
 async function handleClick(event) {
@@ -607,8 +666,12 @@ async function handleClick(event) {
 
 if (action === "generate-teacher-assist") {
     // Capture all form values before render wipes them
-    const deadlineInput = document.getElementById("teacher-deadline");
-    if (deadlineInput) ui.teacherDraft.deadline = deadlineInput.value;
+    const deadlineDateInput = document.getElementById("teacher-deadline-date");
+    const deadlineTimeInput = document.getElementById("teacher-deadline-time");
+    ui.teacherDraft.deadline = combineDeadlineParts(
+      deadlineDateInput ? deadlineDateInput.value : getDeadlineDatePart(ui.teacherDraft.deadline),
+      deadlineTimeInput ? deadlineTimeInput.value : getDeadlineTimePart(ui.teacherDraft.deadline)
+    );
     const briefInput = document.getElementById("teacher-brief");
     if (briefInput) ui.teacherDraft.brief = briefInput.value;
     const chatLimitInput = document.getElementById("teacher-chat-limit");
@@ -650,9 +713,15 @@ if (action === "generate-teacher-assist") {
         parsed.rubric[parsed.rubric.length - 1].bands = createScoreBandsForPoints(parsed.rubric[parsed.rubric.length - 1].points);
       }
       ui.teacherAssist = parsed;
-      ui.teacherAssist = parsed;
       ui.notice = "Assignment generated successfully!";
       render();
+
+      requestAnimationFrame(() => {
+        const generatedPanel = document.getElementById("teacher-generated-assignment");
+        if (generatedPanel) {
+          generatedPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
     })
     .catch(err => {
       console.error("Fetch Error:", err);
@@ -1022,6 +1091,17 @@ if (action === "back-to-assignments") {
     const submission = ui.teacherView === "grading" ? getSelectedReviewSubmission() : getStudentSubmission();
     const assignment = ui.teacherView === "grading" ? getSelectedAssignment() : getStudentAssignment();
     if (submission && assignment) downloadStudentWork(assignment, submission);
+    return;
+  }
+
+  if (action === "copy-lms-grade") {
+    const submission = getSelectedReviewSubmission();
+    const assignment = getSelectedAssignment();
+    if (!submission || !assignment) return;
+
+    const copied = await copyLmsGradeToClipboard(assignment, submission);
+    ui.notice = copied ? "LMS-ready grade text copied to clipboard." : "Could not copy grade text. Please try again.";
+    render();
     return;
   }
 
@@ -1951,7 +2031,7 @@ function renderTeacherWorkspace() {
         ${
           ui.teacherAssist
             ? `
-              <div class="teacher-output">
+              <div id="teacher-generated-assignment" class="teacher-output">
                 <div class="section-header">
                   <div>
                     <p class="mini-label">AI Draft — edit anything before saving</p>
@@ -2217,9 +2297,10 @@ function renderTeacherGrading(assignment, submission) {
         <span style="font-weight:600;font-size:0.95rem;">${escapeHtml(studentName)}</span>
         <span class="status-pill">${escapeHtml(getSubmissionStatusDisplay(currentStatus))}</span>
         ${roster.length ? `<span style="font-size:0.82rem;color:var(--muted);">${rosterIndex + 1}/${roster.length}</span>` : ""}
-        <div style="margin-left:auto;display:flex;gap:8px;">
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
           <button class="button-ghost" data-action="next-review-student" ${!nextStudentId ? "disabled" : ""} style="font-size:0.85rem;">Next student →</button>
-          <button class="button-ghost" data-action="download-work" style="font-size:0.85rem;">⬇ Download</button>
+          <button class="button-ghost" data-action="copy-lms-grade" style="font-size:0.85rem;">Copy for LMS</button>
+          <button class="button-ghost" data-action="download-work" style="font-size:0.85rem;">⬇ Grade sheet</button>
           <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
         </div>
       </div>
@@ -3840,6 +3921,10 @@ function renderAnnotatedText(submission) {
 function downloadStudentWork(assignment, submission) {
   const student = getUserById(submission.studentId);
   const studentName = student?.name || "Student";
+  const reviewRows = getTeacherReviewRowsForExport(assignment, submission);
+  const totalScore = calculateTeacherReviewSummary(assignment, submission).totalScore;
+  const maxScore = reviewRows.reduce((sum, row) => sum + row.maxPoints, 0);
+  const currentStatus = submission.status || submission.teacherReview?.status || "not_started";
   const chatLines = (submission.chatHistory || []).map((m) => `
     <div class="msg msg-${m.role}">
       <strong>${m.role === "assistant" ? "Coach" : studentName}</strong>
@@ -3860,14 +3945,19 @@ function downloadStudentWork(assignment, submission) {
     <tr><td>Total editing events</td><td>${events.length}</td></tr>
   `;
 
-  const rubricLines = (assignment.rubric || []).map((r) => `
-    <tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.description)}</td><td>${r.points}</td></tr>`).join("");
+  const rubricLines = reviewRows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.criterion)}</td>
+      <td>${escapeHtml(row.description || "—")}</td>
+      <td>${escapeHtml(row.selectedLabel || "Not scored")}</td>
+      <td>${row.selectedPoints}/${row.maxPoints}</td>
+    </tr>`).join("");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<title>${escapeHtml(assignment.title)} — ${escapeHtml(studentName)}</title>
+<title>${escapeHtml(assignment.title)} — ${escapeHtml(studentName)} Grade Sheet</title>
 <style>
   body{font-family:Georgia,serif;max-width:820px;margin:40px auto;color:#1f2a1f;line-height:1.6}
   h1{font-size:1.5rem;border-bottom:2px solid #a55233;padding-bottom:8px}
@@ -3892,12 +3982,23 @@ function downloadStudentWork(assignment, submission) {
 <h1>${escapeHtml(assignment.title)}</h1>
 <div class="meta">
   Student: <strong>${escapeHtml(studentName)}</strong> &nbsp;|&nbsp;
+  Status: <strong>${escapeHtml(getSubmissionStatusDisplay(currentStatus))}</strong> &nbsp;|&nbsp;
   Submitted: <strong>${submission.submittedAt ? escapeHtml(formatDateTime(submission.submittedAt)) : "Not yet submitted"}</strong>
   ${assignment.deadline ? `&nbsp;|&nbsp; Deadline: <strong>${escapeHtml(new Date(assignment.deadline).toLocaleString())}</strong>` : ""}
 </div>
 
 <h2>Assignment</h2>
 <p>${escapeHtml(assignment.prompt)}</p>
+
+<h2>Teacher grade summary</h2>
+<p><strong>Total score:</strong> ${totalScore}/${maxScore}</p>
+${submission.teacherReview?.finalNotes ? `<p><strong>Overall feedback:</strong> ${escapeHtml(submission.teacherReview.finalNotes)}</p>` : ""}
+
+<h2>Rubric breakdown</h2>
+<table>
+  <thead><tr><th>Criterion</th><th>Description</th><th>Selected band</th><th>Score</th></tr></thead>
+  <tbody>${rubricLines || "<tr><td colspan='4'>No rubric available.</td></tr>"}</tbody>
+</table>
 
 <h2>1 — Coaching conversation</h2>
 ${chatLines || "<p><em>No conversation recorded.</em></p>"}
@@ -3927,11 +4028,6 @@ ${(submission.teacherReview?.annotations?.length) ? `
   </tbody>
 </table>` : ""}
 
-${(submission.teacherReview?.finalScore !== "" && submission.teacherReview?.finalScore != null) ? `
-<h2>Teacher score &amp; feedback</h2>
-<p><strong>Score:</strong> ${escapeHtml(String(submission.teacherReview.finalScore))}</p>
-${submission.teacherReview.finalNotes ? `<p>${escapeHtml(submission.teacherReview.finalNotes)}</p>` : ""}` : ""}
-
 <h2>Guided outline</h2>
 <p><strong>Part 1:</strong> ${escapeHtml(submission.outline?.partOne || "—")}</p>
 <p><strong>Part 2:</strong> ${escapeHtml(submission.outline?.partTwo || "—")}</p>
@@ -3940,11 +4036,6 @@ ${submission.teacherReview.finalNotes ? `<p>${escapeHtml(submission.teacherRevie
 <h2>Reflection — what I improved</h2>
 <p>${escapeHtml(submission.reflections?.improved || "—")}</p>
 
-<h2>Rubric</h2>
-<table>
-  <thead><tr><th>Criterion</th><th>Description</th><th>Points</th></tr></thead>
-  <tbody>${rubricLines}</tbody>
-</table>
 </body>
 </html>`;
 
@@ -3955,7 +4046,7 @@ ${submission.teacherReview.finalNotes ? `<p>${escapeHtml(submission.teacherRevie
   const currentClass = currentClasses.find(c => c.id === currentClassId);
   const className = currentClass?.name || "class";
   const dateStr = new Date().toISOString().slice(0, 10);
-  a.download = `${(assignment.title || "assignment").replace(/\s+/g, "-")}-${className.replace(/\s+/g, "-")}-${dateStr}.html`;
+  a.download = `${(assignment.title || "assignment").replace(/\s+/g, "-")}-${studentName.replace(/\s+/g, "-")}-${className.replace(/\s+/g, "-")}-${dateStr}-grade-sheet.html`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
