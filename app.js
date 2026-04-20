@@ -1436,7 +1436,7 @@ function renderHero() {
 }
 
 function renderTeacherWorkspace() {
-  const assignments = getAssignments();
+  const assignments = state.assignments;
   const selectedAssignment = getSelectedAssignment();
   const submissions = selectedAssignment ? getAssignmentSubmissions(selectedAssignment.id) : [];
   const selectedSubmission = getSelectedReviewSubmission();
