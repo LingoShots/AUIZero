@@ -80,6 +80,36 @@ function buildDeadlineTimeOptions(selectedValue) {
   return options.join("");
 }
 
+function getDeadlineDatePart(value) {
+  if (!value || !String(value).includes("T")) return "";
+  return String(value).split("T")[0];
+}
+
+function getDeadlineTimePart(value) {
+  if (!value || !String(value).includes("T")) return "09:00";
+  return String(value).split("T")[1].slice(0, 5) || "09:00";
+}
+
+function combineDeadlineParts(dateValue, timeValue) {
+  if (!dateValue) return "";
+  return `${dateValue}T${timeValue || "09:00"}`;
+}
+
+function buildDeadlineTimeOptions(selectedValue) {
+  const selected = selectedValue || "09:00";
+  const options = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    for (const minute of [0, 30]) {
+      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+      const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+      const suffix = hour < 12 ? "AM" : "PM";
+      const label = `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+      options.push(`<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`);
+    }
+  }
+  return options.join("");
+}
+
 function createBlankTeacherDraft() {
   return {
     brief: "",
@@ -1144,7 +1174,7 @@ function handleInput(event) {
     return;
   }
 
-    if (target.id === "teacher-deadline-date" || target.id === "teacher-deadline-time") {
+      if (target.id === "teacher-deadline-date" || target.id === "teacher-deadline-time") {
     const dateInput = document.getElementById("teacher-deadline-date");
     const timeInput = document.getElementById("teacher-deadline-time");
     ui.teacherDraft.deadline = combineDeadlineParts(
@@ -1599,10 +1629,19 @@ function renderTeacherWorkspace() {
               <label for="teacher-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
               <input id="teacher-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.chatTimeLimit))}" />
             </div>
-            <div class="field">
-              <label for="teacher-deadline">Deadline</label>
-              <input id="teacher-deadline" data-teacher-field="deadline" type="datetime-local" value="${escapeAttribute(ui.teacherDraft.deadline)}" />
+            <div class="field" style="grid-column:1 / -1;">
+              <label for="teacher-deadline-date">Deadline</label>
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:8px;align-items:end;">
+                <div style="display:flex;gap:6px;align-items:center;min-width:0;">
+                  <input id="teacher-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="flex:1;min-width:0;" />
+                  <button type="button" class="button-ghost" style="padding:8px 10px;min-width:auto;" onclick="document.getElementById('teacher-deadline-date')?.showPicker?.()" title="Open calendar">📅</button>
+                </div>
+                <select id="teacher-deadline-time">
+                  ${buildDeadlineTimeOptions(getDeadlineTimePart(ui.teacherDraft.deadline))}
+                </select>
+              </div>
             </div>
+
             <div class="field">
               <label for="teacher-language-level">Student language level</label>
               <select id="teacher-language-level" data-teacher-field="languageLevel">
@@ -1880,7 +1919,44 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-                        <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+                                                <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${
+                          (() => {
+                            const text = submission.finalText || submission.draftText || "No text submitted yet.";
+                            const annotations = submission.teacherReview?.annotations || [];
+                            const flaggedPastes = (submission.writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
+
+                            const highlights = [];
+                            for (const ann of annotations) {
+                              const idx = text.indexOf(ann.selectedText);
+                              if (idx !== -1) {
+                                highlights.push({ start: idx, end: idx + ann.selectedText.length, code: ann.code, type: "annotation" });
+                              }
+                            }
+                            for (const paste of flaggedPastes) {
+                              const idx = text.indexOf(paste.insertedText);
+                              if (idx !== -1) {
+                                highlights.push({ start: idx, end: idx + paste.insertedText.length, code: "PASTE", type: "paste" });
+                              }
+                            }
+
+                            if (!highlights.length) return escapeHtml(text);
+
+                            highlights.sort((a, b) => a.start - b.start);
+
+                            let result = "";
+                            let cursor = 0;
+                            for (const h of highlights) {
+                              if (h.start < cursor) continue;
+                              result += escapeHtml(text.slice(cursor, h.start));
+                              if (h.type === "paste") {
+                                result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
+                              } else {
+                                result += `<mark style="background:#fff176;border-radius:3px;padding:1px 2px;" title="${escapeHtml(h.code)}">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;">${escapeHtml(h.code)}</sup></mark>`;
+                              }
+                              cursor = h.end;
+                            }
+                           
+
 
           </div>
 
