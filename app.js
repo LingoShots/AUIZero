@@ -2063,8 +2063,6 @@ function renderTeacherGrading(assignment, submission) {
 }
 
 function renderStudentWorkspace() {
-
-function renderStudentWorkspace() {
   const assignments = getPublishedAssignments();
   const student = getUserById(ui.activeUserId);
   const submission = getStudentSubmission();
