@@ -1919,7 +1919,7 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-                                                <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${
+                                                <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
                           (() => {
                             const text = submission.finalText || submission.draftText || "No text submitted yet.";
                             const annotations = submission.teacherReview?.annotations || [];
@@ -3339,7 +3339,6 @@ function renderAnnotatedText(submission) {
       highlights.push({ start: idx, end: idx + paste.insertedText.length, code: "PASTE", type: "paste" });
     }
   }
-
   if (!highlights.length) return escapeHtml(text);
 
   highlights.sort((a, b) => a.start - b.start);
