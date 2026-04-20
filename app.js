@@ -4230,4 +4230,3 @@ function hasOpeningClaim(text) {
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
-}
