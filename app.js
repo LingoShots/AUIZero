@@ -918,7 +918,7 @@ if (action === "back-to-assignments") {
     }
 
     submission.teacherReview = submission.teacherReview || {};
-    const scoreInput = document.getElementById("teacher-review-score");
+    const scoreInput = document.getElementById("teacher-score-input");
     const notesInput = document.getElementById("teacher-review-notes");
     submission.teacherReview.finalScore = Number(scoreInput.value || 0);
     submission.teacherReview.finalNotes = notesInput.value.trim();
@@ -1845,14 +1845,15 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-                        <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${escapeHtml(submission.finalText || submission.draftText || "No text submitted yet.")}</div>
+                        <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+
           </div>
 
           <div style="margin-bottom:16px;">
             <div class="error-code-toolbar">
               <span class="mini-label" style="align-self:center;">Annotate:</span>
-              ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}">${code}</button>`).join("")}
-              <button class="error-code-btn" data-action="add-annotation" data-code="NOTE" title="Add a custom note" style="background:#fff9e6;border-color:#e0c84a;">+ Note</button>
+              ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}" onmousedown="event.preventDefault()">${code}</button>`).join("")}
+              <button class="error-code-btn" data-action="add-annotation" data-code="NOTE" title="Add a custom note" onmousedown="event.preventDefault()" style="background:#fff9e6;border-color:#e0c84a;">+ Note</button>
             </div>
             ${(submission.teacherReview?.annotations?.length) ? `
               <div style="margin-top:8px;display:grid;gap:6px;">
