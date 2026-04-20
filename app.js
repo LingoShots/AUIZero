@@ -631,44 +631,55 @@ if (action === "back-to-assignments") {
   }
   
  if (action === "select-assignment") {
-    stopPlayback();
-    ui.selectedAssignmentId = target.dataset.assignmentId;
-    ui.selectedReviewSubmissionId = null;
-    ui.teacherView = "review";
-    ui.notice = "Loading submissions...";
-    render();
-    Auth.apiFetch(`/api/assignments/${target.dataset.assignmentId}/submissions`).then(data => {
-      const subs = data.submissions || [];
-      // Remove old submissions for this assignment and replace with fresh server data
-      state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
-      subs.forEach(s => {
-        state.submissions.push({
-          id: s.id,
-          assignmentId: s.assignment_id,
-          studentId: s.student_id,
-          draftText: s.draft_text || "",
-          finalText: s.final_text || "",
-          reflections: s.reflections || { improved: "" },
-          chatHistory: s.chat_history || [],
-          writingEvents: s.writing_events || [],
-          feedbackHistory: s.feedback_history || [],
-          focusAnnotations: s.focus_annotations || [],
-          teacherReview: s.teacher_review || { finalScore: "", finalNotes: "", annotations: [] },
-          selfAssessment: s.self_assessment || {},
-          status: s.status || "draft",
-          chatStartedAt: s.chat_started_at || null,
-          startedAt: s.started_at || null,
-          submittedAt: s.submitted_at || null,
-          updatedAt: s.updated_at || new Date().toISOString(),
-          _studentName: s.profiles?.name || "",
-        });
+  stopPlayback();
+  ui.selectedAssignmentId = target.dataset.assignmentId;
+  ui.selectedReviewSubmissionId = null;
+  ui.teacherView = "review";
+  ui.notice = "Loading submissions...";
+  render();
+
+  cAuth.apiFetch(`/api/classes/${currentClassId}/members`).then(membersData => {
+  currentClassMembers = membersData.members || [];
+
+  return Auth.apiFetch(`/api/assignments/${target.dataset.assignmentId}/submissions`);
+}).then(data => {
+    const subs = data.submissions || [];
+
+    // Remove old submissions for this assignment and replace with fresh server data
+    state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
+
+    subs.forEach(s => {
+      state.submissions.push({
+        id: s.id,
+        assignmentId: s.assignment_id,
+        studentId: s.student_id,
+        draftText: s.draft_text || "",
+        finalText: s.final_text || "",
+        reflections: s.reflections || { improved: "" },
+        chatHistory: s.chat_history || [],
+        writingEvents: s.writing_events || [],
+        feedbackHistory: s.feedback_history || [],
+        focusAnnotations: s.focus_annotations || [],
+        teacherReview: s.teacher_review || { finalScore: "", finalNotes: "", annotations: [] },
+        selfAssessment: s.self_assessment || {},
+        status: s.status || "draft",
+        chatStartedAt: s.chat_started_at || null,
+        startedAt: s.started_at || null,
+        submittedAt: s.submitted_at || null,
+        updatedAt: s.updated_at || new Date().toISOString(),
+        _studentName: s.profiles?.name || "",
       });
-      ui.selectedReviewSubmissionId = state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId)[0]?.id || null;
-      ui.notice = subs.length ? "" : "No submissions yet for this assignment.";
-      render();
     });
-    return;
-  }
+
+    ui.selectedReviewSubmissionId =
+      state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId)[0]?.id || null;
+
+    ui.notice = subs.length ? "" : "No submissions yet for this assignment.";
+    render();
+  });
+
+  return;
+}
   if (action === "student-next-step") {
     const nextStep = Number(target.dataset.step);
     if (canAdvanceToStep(nextStep)) {
@@ -1612,7 +1623,7 @@ function renderTeacherWorkspace() {
                   const assignmentSubs = state.submissions.filter(s => s.assignmentId === assignment.id);
                   const submittedCount = assignmentSubs.filter(s => s.status === "submitted").length;
                   const gradedCount = assignmentSubs.filter(s => s.teacherReview?.savedAt).length;
-                  const pasteCount = assignmentSubs.filter(s => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
+                  const pasteCount = assignmentSubs.filter(s => (s.writingEvents || []).some(e => e.flagged)).length;
                   const totalStudents = currentClassMembers.length;
                   return `
                   <div class="assignment-card simple-card">
