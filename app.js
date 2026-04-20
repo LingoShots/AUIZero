@@ -160,6 +160,7 @@ async function bootApp(profile) {
         createdAt: a.created_at || new Date().toISOString(),
         ideaRequestLimit: 3,
       }));
+      await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
       }
 } else {
     const data = await Auth.apiFetch('/api/student/classes');
@@ -193,6 +194,52 @@ async function bootApp(profile) {
     }
   }
   render();
+}
+function mapServerSubmission(serverSubmission) {
+  return normalizeSubmission({
+    id: serverSubmission?.id,
+    assignmentId: serverSubmission?.assignment_id,
+    studentId: serverSubmission?.student_id,
+    ideaResponses: serverSubmission?.idea_responses || [],
+    draftText: serverSubmission?.draft_text || "",
+    finalText: serverSubmission?.final_text || "",
+    reflections: serverSubmission?.reflections || { improved: "" },
+    outline: serverSubmission?.outline || {},
+    chatHistory: serverSubmission?.chat_history || [],
+    writingEvents: serverSubmission?.writing_events || [],
+    feedbackHistory: serverSubmission?.feedback_history || [],
+    focusAnnotations: serverSubmission?.focus_annotations || [],
+    teacherReview: serverSubmission?.teacher_review || {},
+    selfAssessment: serverSubmission?.self_assessment || {},
+    status: serverSubmission?.status || "draft",
+    chatStartedAt: serverSubmission?.chat_started_at || null,
+    startedAt: serverSubmission?.started_at || null,
+    submittedAt: serverSubmission?.submitted_at || null,
+    updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
+    _studentName: serverSubmission?.profiles?.name || "",
+  });
+}
+
+async function loadTeacherSubmissionsForAssignments(assignmentIds) {
+  const ids = safeArray(assignmentIds).filter(Boolean);
+  if (!currentClassId || !ids.length) return;
+
+  try {
+    const results = await Promise.all(
+      ids.map((assignmentId) => Auth.apiFetch(`/api/assignments/${assignmentId}/submissions`))
+    );
+
+    const nextSubmissions = [];
+    results.forEach((result) => {
+      safeArray(result?.submissions).forEach((submission) => {
+        nextSubmissions.push(mapServerSubmission(submission));
+      });
+    });
+
+    state.submissions = nextSubmissions;
+  } catch (error) {
+    console.error("Could not load teacher submissions:", error.message, error);
+  }
 }
 
 let autoSaveTimer = null;
@@ -638,7 +685,7 @@ if (action === "back-to-assignments") {
   ui.notice = "Loading submissions...";
   render();
 
-  cAuth.apiFetch(`/api/classes/${currentClassId}/members`).then(membersData => {
+  Auth.apiFetch(`/api/classes/${currentClassId}/members`).then(membersData => {
   currentClassMembers = membersData.members || [];
 
   return Auth.apiFetch(`/api/assignments/${target.dataset.assignmentId}/submissions`);
@@ -648,27 +695,8 @@ if (action === "back-to-assignments") {
     // Remove old submissions for this assignment and replace with fresh server data
     state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
 
-    subs.forEach(s => {
-      state.submissions.push({
-        id: s.id,
-        assignmentId: s.assignment_id,
-        studentId: s.student_id,
-        draftText: s.draft_text || "",
-        finalText: s.final_text || "",
-        reflections: s.reflections || { improved: "" },
-        chatHistory: s.chat_history || [],
-        writingEvents: s.writing_events || [],
-        feedbackHistory: s.feedback_history || [],
-        focusAnnotations: s.focus_annotations || [],
-        teacherReview: s.teacher_review || { finalScore: "", finalNotes: "", annotations: [] },
-        selfAssessment: s.self_assessment || {},
-        status: s.status || "draft",
-        chatStartedAt: s.chat_started_at || null,
-        startedAt: s.started_at || null,
-        submittedAt: s.submitted_at || null,
-        updatedAt: s.updated_at || new Date().toISOString(),
-        _studentName: s.profiles?.name || "",
-      });
+        subs.forEach(s => {
+      state.submissions.push(mapServerSubmission(s));
     });
 
     ui.selectedReviewSubmissionId =
@@ -3729,11 +3757,13 @@ function normalizeSubmission(submission) {
       timestamp: entry?.timestamp || new Date().toISOString(),
       label: entry?.label || "Writing focus",
     })),
-    teacherReview: {
+        teacherReview: {
       suggestedGrade: submission?.teacherReview?.suggestedGrade || null,
       finalScore: submission?.teacherReview?.finalScore ?? "",
       finalNotes: submission?.teacherReview?.finalNotes || "",
       annotations: safeArray(submission?.teacherReview?.annotations),
+      savedAt: submission?.teacherReview?.savedAt || null,
+      acceptedAt: submission?.teacherReview?.acceptedAt || null,
     },
     chatHistory: safeArray(submission?.chatHistory).map((msg) => ({
       role: msg?.role || "user",
@@ -3741,10 +3771,12 @@ function normalizeSubmission(submission) {
       timestamp: msg?.timestamp || new Date().toISOString(),
     })),
     chatStartedAt: submission?.chatStartedAt || null,
-    status: submission?.status || "draft",
+        status: submission?.status || "draft",
     startedAt: submission?.startedAt || null,
     updatedAt: submission?.updatedAt || new Date().toISOString(),
     submittedAt: submission?.submittedAt || null,
+    selfAssessment: submission?.selfAssessment || {},
+    _studentName: submission?._studentName || "",
   };
 }
 
