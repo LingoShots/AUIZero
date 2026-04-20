@@ -167,8 +167,6 @@ async function bootApp(profile) {
         }));
     }
   }
-
-  hydrateSelections();
   render();
 }
 
