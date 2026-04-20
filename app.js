@@ -221,7 +221,7 @@ function mapServerSubmission(serverSubmission) {
 }
 
 async function loadTeacherSubmissionsForAssignments(assignmentIds) {
-  const ids = safeArray(assignmentIds).filter(Boolean);
+  const ids = Array.isArray(assignmentIds) ? assignmentIds.filter(Boolean) : [];
   if (!currentClassId || !ids.length) return;
 
   try {
@@ -231,7 +231,8 @@ async function loadTeacherSubmissionsForAssignments(assignmentIds) {
 
     const nextSubmissions = [];
     results.forEach((result) => {
-      safeArray(result?.submissions).forEach((submission) => {
+      const submissions = Array.isArray(result?.submissions) ? result.submissions : [];
+      submissions.forEach((submission) => {
         nextSubmissions.push(mapServerSubmission(submission));
       });
     });
