@@ -1919,45 +1919,7 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-                                                <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
-                          (() => {
-                            const text = submission.finalText || submission.draftText || "No text submitted yet.";
-                            const annotations = submission.teacherReview?.annotations || [];
-                            const flaggedPastes = (submission.writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
-
-                            const highlights = [];
-                            for (const ann of annotations) {
-                              const idx = text.indexOf(ann.selectedText);
-                              if (idx !== -1) {
-                                highlights.push({ start: idx, end: idx + ann.selectedText.length, code: ann.code, type: "annotation" });
-                              }
-                            }
-                            for (const paste of flaggedPastes) {
-                              const idx = text.indexOf(paste.insertedText);
-                              if (idx !== -1) {
-                                highlights.push({ start: idx, end: idx + paste.insertedText.length, code: "PASTE", type: "paste" });
-                              }
-                            }
-
-                            if (!highlights.length) return escapeHtml(text);
-
-                            highlights.sort((a, b) => a.start - b.start);
-
-                            let result = "";
-                            let cursor = 0;
-                            for (const h of highlights) {
-                              if (h.start < cursor) continue;
-                              result += escapeHtml(text.slice(cursor, h.start));
-                              if (h.type === "paste") {
-                                result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
-                              } else {
-                                result += `<mark style="background:#fff176;border-radius:3px;padding:1px 2px;" title="${escapeHtml(h.code)}">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;">${escapeHtml(h.code)}</sup></mark>`;
-                              }
-                              cursor = h.end;
-                            }
-                           
-
-
+                                                            <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
           </div>
 
           <div style="margin-bottom:16px;">
