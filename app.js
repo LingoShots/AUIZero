@@ -196,28 +196,39 @@ async function bootApp(profile) {
   render();
 }
 function mapServerSubmission(serverSubmission) {
-  return normalizeSubmission({
-    id: serverSubmission?.id,
-    assignmentId: serverSubmission?.assignment_id,
-    studentId: serverSubmission?.student_id,
-    ideaResponses: serverSubmission?.idea_responses || [],
+  return {
+    id: serverSubmission?.id || `submission-${Date.now()}`,
+    assignmentId: serverSubmission?.assignment_id || "",
+    studentId: serverSubmission?.student_id || "",
+    ideaResponses: Array.isArray(serverSubmission?.idea_responses) ? serverSubmission.idea_responses : [],
     draftText: serverSubmission?.draft_text || "",
     finalText: serverSubmission?.final_text || "",
     reflections: serverSubmission?.reflections || { improved: "" },
-    outline: serverSubmission?.outline || {},
-    chatHistory: serverSubmission?.chat_history || [],
-    writingEvents: serverSubmission?.writing_events || [],
-    feedbackHistory: serverSubmission?.feedback_history || [],
-    focusAnnotations: serverSubmission?.focus_annotations || [],
-    teacherReview: serverSubmission?.teacher_review || {},
+    outline: serverSubmission?.outline || {
+      partOne: "",
+      partTwo: "",
+      partThree: "",
+    },
+    feedbackHistory: Array.isArray(serverSubmission?.feedback_history) ? serverSubmission.feedback_history : [],
+    writingEvents: Array.isArray(serverSubmission?.writing_events) ? serverSubmission.writing_events : [],
+    focusAnnotations: Array.isArray(serverSubmission?.focus_annotations) ? serverSubmission.focus_annotations : [],
+    teacherReview: {
+      suggestedGrade: serverSubmission?.teacher_review?.suggestedGrade || null,
+      finalScore: serverSubmission?.teacher_review?.finalScore ?? "",
+      finalNotes: serverSubmission?.teacher_review?.finalNotes || "",
+      annotations: Array.isArray(serverSubmission?.teacher_review?.annotations) ? serverSubmission.teacher_review.annotations : [],
+      savedAt: serverSubmission?.teacher_review?.savedAt || null,
+      acceptedAt: serverSubmission?.teacher_review?.acceptedAt || null,
+    },
     selfAssessment: serverSubmission?.self_assessment || {},
-    status: serverSubmission?.status || "draft",
+    chatHistory: Array.isArray(serverSubmission?.chat_history) ? serverSubmission.chat_history : [],
     chatStartedAt: serverSubmission?.chat_started_at || null,
+    status: serverSubmission?.status || "draft",
     startedAt: serverSubmission?.started_at || null,
-    submittedAt: serverSubmission?.submitted_at || null,
     updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
+    submittedAt: serverSubmission?.submitted_at || null,
     _studentName: serverSubmission?.profiles?.name || "",
-  });
+  };
 }
 
 async function loadTeacherSubmissionsForAssignments(assignmentIds) {
