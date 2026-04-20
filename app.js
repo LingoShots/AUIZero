@@ -3863,17 +3863,33 @@ function gradeSubmission(assignment, submission) {
   const rubric = assignment.rubric.length ? assignment.rubric : rubricForType(assignment.assignmentType);
   const metrics = computeProcessMetrics(assignment, submission);
   const finalText = submission.finalText || "";
+  const draftText = submission.draftText || "";
   const paragraphs = splitParagraphs(finalText);
   const evidenceSignals = (finalText.match(/\bfor example\b|\bbecause\b|\bfor instance\b|\bsuch as\b/gi) || []).length;
-  const revisionStrength = 1 - similarityRatio(submission.draftText, submission.finalText || submission.draftText);
+  const revisionStrength = 1 - similarityRatio(draftText, submission.finalText || draftText);
   const reflectionsComplete = Boolean(submission.reflections.improved.trim());
   const outlineComplete = isOutlineComplete(submission, assignment);
   const flaggedPasteCount = safeArray(submission.writingEvents).filter((entry) => entry.type === "paste" && entry.flagged).length;
+  const finalWordCount = wordCount(finalText);
+  const draftWordCount = wordCount(draftText);
+  const minimalSubmission = finalWordCount <= 1 && draftWordCount <= 1;
+  const severelyUnderdeveloped = !minimalSubmission && finalWordCount < Math.max(15, Math.min(Math.round((assignment.wordCountMin || 0) * 0.15), 40));
 
   const criteria = rubric.map((criterion) => {
     let scoreRatio = 0.65;
     const name = `${criterion.name} ${criterion.description}`.toLowerCase();
 
+    if (minimalSubmission) {
+      scoreRatio = 0;
+    } else if (severelyUnderdeveloped) {
+      scoreRatio = clamp01(
+        0.04 +
+        (finalWordCount >= 8 ? 0.08 : 0) +
+        (evidenceSignals ? 0.04 : 0) +
+        (reflectionsComplete ? 0.04 : 0) +
+        (outlineComplete ? 0.04 : 0)
+      );
+    } else
     if (name.includes("claim") || name.includes("opinion") || name.includes("main idea") || name.includes("task")) {
       scoreRatio = clamp01((metrics.targetHit ? 0.25 : 0.15) + (paragraphs.length >= 2 ? 0.25 : 0.12) + (hasOpeningClaim(finalText) ? 0.3 : 0.18));
     } else if (name.includes("reason") || name.includes("evidence") || name.includes("example") || name.includes("detail") || name.includes("support")) {
@@ -3904,6 +3920,18 @@ function gradeSubmission(assignment, submission) {
       reason: buildCriterionReason(criterion.name, metrics, revisionStrength, reflectionsComplete, evidenceSignals),
     };
   });
+
+  if (minimalSubmission) {
+    criteria.forEach((criterion) => {
+      criterion.score = 0;
+      criterion.reason = "There is almost no submitted writing here, so this criterion cannot earn credit yet.";
+    });
+  } else if (severelyUnderdeveloped) {
+    criteria.forEach((criterion) => {
+      criterion.score = Math.min(criterion.score, Math.round(criterion.points * 0.25));
+      criterion.reason = `The submission is far below the expected length, so scoring is capped until the student develops the writing further.${flaggedPasteCount ? ` The process also shows ${flaggedPasteCount} large paste event${flaggedPasteCount === 1 ? "" : "s"}, so authorship confidence should be checked.` : ""}`;
+    });
+  }
 
   const totalScore = criteria.reduce((sum, item) => sum + item.score, 0);
   const maxScore = criteria.reduce((sum, item) => sum + item.points, 0);
@@ -3955,14 +3983,21 @@ function isJibberish(text) {
 function assessChatEngagement(chatHistory) {
   const studentMessages = (chatHistory || []).filter((m) => m.role === "user");
   if (!studentMessages.length) return { engaged: false, messageCount: 0, note: "No chat engagement — student did not use the coaching conversation." };
-  const meaningful = studentMessages.filter((m) => !isJibberish(m.content) && m.content.trim().split(/\s+/).length >= 3);
+  const dismissivePhrases = /\b(no need|nothing else|idk|i don't know|dont know|skip|done|no thanks|nah|ok|okay)\b/i;
+  const meaningful = studentMessages.filter((m) => {
+    const content = String(m.content || "").trim();
+    const words = content.split(/\s+/).filter(Boolean);
+    if (dismissivePhrases.test(content) && words.length <= 4) return false;
+    return !isJibberish(content) && words.length >= 5;
+  });
   const ratio = meaningful.length / studentMessages.length;
+  const engaged = meaningful.length >= 2 && ratio >= 0.5;
   return {
-    engaged: ratio >= 0.5,
+    engaged,
     messageCount: studentMessages.length,
-    note: ratio >= 0.75
+    note: engaged && ratio >= 0.75
       ? `Student engaged meaningfully in the coaching chat (${studentMessages.length} messages).`
-      : ratio >= 0.5
+      : engaged
         ? `Student used the chat but some responses were brief or underdeveloped (${studentMessages.length} messages).`
         : `Student chat responses were mostly too short or unclear to show real thinking (${studentMessages.length} messages).`,
   };
