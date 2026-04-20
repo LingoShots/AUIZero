@@ -426,6 +426,56 @@ app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
   }
 });
 
+// Upsert a submission shell for teacher review/status updates
+app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const profile = await getProfile(user.id);
+    if (profile?.role !== 'teacher') return res.status(403).json({ error: 'Teacher access required' });
+
+    const assignmentId = req.params.assignmentId;
+    const studentId = req.params.studentId;
+    const payload = { ...req.body, updated_at: new Date().toISOString() };
+
+    let { data, error } = await supabase
+      .from('submissions')
+      .select('id')
+      .eq('assignment_id', assignmentId)
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    if (data?.id) {
+      const { data: updated, error: updateError } = await supabase
+        .from('submissions')
+        .update(payload)
+        .eq('id', data.id)
+        .select('*, profiles(id, name)')
+        .single();
+      if (updateError) return res.status(400).json({ error: updateError.message });
+      return res.json({ submission: updated });
+    }
+
+    const { data: created, error: createError } = await supabase
+      .from('submissions')
+      .insert({
+        assignment_id: assignmentId,
+        student_id: studentId,
+        started_at: payload.started_at || null,
+        ...payload,
+      })
+      .select('*, profiles(id, name)')
+      .single();
+
+    if (createError) return res.status(400).json({ error: createError.message });
+    res.json({ submission: created });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Update submission
 app.patch('/api/submissions/:id', async (req, res) => {
   try {
@@ -435,7 +485,7 @@ app.patch('/api/submissions/:id', async (req, res) => {
       .from('submissions')
       .update({ ...req.body, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
-      .select()
+      .select('*, profiles(id, name)')
       .single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ submission: data });

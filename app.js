@@ -32,6 +32,7 @@ showInvitePanel: false,
   selectedAssignmentId: null,
   selectedStudentAssignmentId: null,
   selectedReviewSubmissionId: null,
+  selectedReviewStudentId: null,
   activeFocusIdeaId: "",
   pasteWarning: false,
   studentStep: 1,
@@ -259,6 +260,55 @@ async function syncTeacherReviewToServer(submission) {
   } catch (error) {
     console.error("Could not sync teacher review:", error.message, error);
   }
+}
+
+async function upsertTeacherReviewSubmission(assignment, submission) {
+  if (!assignment?.id || !submission?.studentId) return submission;
+
+  try {
+    if (submission.id && !String(submission.id).startsWith("submission-") && !String(submission.id).startsWith("pending-review-")) {
+      const result = await Auth.apiFetch(`/api/submissions/${submission.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: submission.status,
+          teacher_review: submission.teacherReview,
+        }),
+      });
+      return mapServerSubmission(result?.submission || submission);
+    }
+
+    const result = await Auth.apiFetch(`/api/assignments/${assignment.id}/students/${submission.studentId}/submission`, {
+      method: "PUT",
+      body: JSON.stringify({
+        status: submission.status,
+        teacher_review: submission.teacherReview,
+        started_at: submission.startedAt || null,
+        submitted_at: submission.submittedAt || null,
+        draft_text: submission.draftText || "",
+        final_text: submission.finalText || "",
+        reflections: submission.reflections || { improved: "" },
+        outline: submission.outline || {},
+        chat_history: submission.chatHistory || [],
+        writing_events: submission.writingEvents || [],
+        feedback_history: submission.feedbackHistory || [],
+        focus_annotations: submission.focusAnnotations || [],
+        self_assessment: submission.selfAssessment || {},
+      }),
+    });
+
+    return mapServerSubmission(result?.submission || submission);
+  } catch (error) {
+    console.error("Could not upsert teacher review submission:", error.message, error);
+    return submission;
+  }
+}
+
+function replaceSubmissionInState(nextSubmission) {
+  if (!nextSubmission?.assignmentId || !nextSubmission?.studentId) return;
+  state.submissions = state.submissions.filter(
+    (submission) => !(submission.assignmentId === nextSubmission.assignmentId && submission.studentId === nextSubmission.studentId)
+  );
+  state.submissions.push(nextSubmission);
 }
 
 function escapeHtml(value) {
@@ -889,6 +939,7 @@ if (action === "back-to-assignments") {
     ui.teacherView = "assignments";
     ui.selectedAssignmentId = null;
     ui.selectedReviewSubmissionId = null;
+    ui.selectedReviewStudentId = null;
     render();
     return;
   }
@@ -896,6 +947,7 @@ if (action === "back-to-assignments") {
   if (action === "back-to-review") {
     ui.teacherView = "review";
     ui.selectedReviewSubmissionId = null;
+    ui.selectedReviewStudentId = null;
     render();
     return;
   }
@@ -904,6 +956,7 @@ if (action === "back-to-assignments") {
   stopPlayback();
   ui.selectedAssignmentId = target.dataset.assignmentId;
   ui.selectedReviewSubmissionId = null;
+  ui.selectedReviewStudentId = null;
   ui.teacherView = "review";
   ui.notice = "Loading submissions...";
   render();
@@ -918,14 +971,21 @@ if (action === "back-to-assignments") {
     // Remove old submissions for this assignment and replace with fresh server data
     state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
 
-        subs.forEach(s => {
+    subs.forEach(s => {
       state.submissions.push(mapServerSubmission(s));
     });
 
-    ui.selectedReviewSubmissionId =
-      state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId)[0]?.id || null;
+    const roster = getReviewRoster(ui.selectedAssignmentId);
+    ui.selectedReviewStudentId = roster[0]?.id || null;
+    ui.selectedReviewSubmissionId = ui.selectedReviewStudentId
+      ? getReviewSubmissionForStudent(ui.selectedReviewStudentId, ui.selectedAssignmentId)?.id || null
+      : null;
 
-    ui.notice = subs.length ? "" : "No submissions yet for this assignment.";
+    ui.notice = subs.length
+      ? ""
+      : (currentClassMembers.length
+          ? "No submissions yet for this assignment. You can still open students and mark late or missing."
+          : "No submissions yet for this assignment.");
     render();
 
     requestAnimationFrame(() => {
@@ -959,8 +1019,8 @@ if (action === "back-to-assignments") {
   }
 
   if (action === "download-work") {
-    const submission = getStudentSubmission();
-    const assignment = getStudentAssignment();
+    const submission = ui.teacherView === "grading" ? getSelectedReviewSubmission() : getStudentSubmission();
+    const assignment = ui.teacherView === "grading" ? getSelectedAssignment() : getStudentAssignment();
     if (submission && assignment) downloadStudentWork(assignment, submission);
     return;
   }
@@ -1038,11 +1098,26 @@ if (action === "back-to-assignments") {
 
   if (action === "inspect-submission") {
     stopPlayback();
-    ui.selectedReviewSubmissionId = target.dataset.submissionId;
+    ui.selectedReviewStudentId = target.dataset.studentId;
+    ui.selectedReviewSubmissionId = getReviewSubmissionForStudent(ui.selectedReviewStudentId, ui.selectedAssignmentId)?.id || null;
     ui.teacherView = "grading";
     ui.playback.index = 0;
     ui.notice = "";
     render();
+    return;
+  }
+
+  if (action === "next-review-student") {
+    const nextStudentId = getNextReviewStudentId(ui.selectedReviewStudentId, ui.selectedAssignmentId);
+    if (!nextStudentId) return;
+    stopPlayback();
+    ui.selectedReviewStudentId = nextStudentId;
+    ui.selectedReviewSubmissionId = getReviewSubmissionForStudent(nextStudentId, ui.selectedAssignmentId)?.id || null;
+    ui.teacherView = "grading";
+    ui.playback.index = 0;
+    ui.notice = "";
+    render();
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
     return;
   }
   
@@ -1170,10 +1245,34 @@ if (action === "back-to-assignments") {
     submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
     submission.teacherReview.finalScore = summary.totalScore;
     submission.teacherReview.finalNotes = notesInput ? notesInput.value.trim() : "";
-    submission.teacherReview.status = "graded";
+    submission.teacherReview.status = submission.teacherReview.status || "graded";
     submission.teacherReview.savedAt = new Date().toISOString();
-    await syncTeacherReviewToServer(submission);
+    const savedSubmission = await upsertTeacherReviewSubmission(assignment, submission);
+    replaceSubmissionInState(savedSubmission);
+    ui.selectedReviewSubmissionId = savedSubmission.id;
     ui.notice = "Teacher review saved.";
+    persistState();
+    render();
+    return;
+  }
+
+  if (action === "set-review-status") {
+    const submission = getSelectedReviewSubmission();
+    const assignment = getSelectedAssignment();
+    const nextStatus = target.dataset.status;
+    if (!submission || !assignment || !nextStatus) {
+      return;
+    }
+
+    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
+    submission.status = nextStatus;
+    submission.teacherReview.status = nextStatus;
+    submission.updatedAt = new Date().toISOString();
+
+    const savedSubmission = await upsertTeacherReviewSubmission(assignment, submission);
+    replaceSubmissionInState(savedSubmission);
+    ui.selectedReviewSubmissionId = savedSubmission.id;
+    ui.notice = `Marked ${savedSubmission._studentName || "student"} as ${getSubmissionStatusDisplay(nextStatus).toLowerCase()}.`;
     persistState();
     render();
     return;
@@ -1777,7 +1876,9 @@ function renderTeacherWorkspace() {
   const assignments = state.assignments;
   const selectedAssignment = state.assignments.find(a => a.id === ui.selectedAssignmentId) || null;
   const submissions = state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId);
-  const selectedSubmission = state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null;
+  const selectedSubmission = selectedAssignment && ui.teacherView === "grading"
+    ? getSelectedReviewSubmission()
+    : (state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null);
 
   return `
     <section class="teacher-grid">
@@ -1987,10 +2088,11 @@ function renderTeacherWorkspace() {
 }
 
 function renderTeacherReview(assignment, submissions) {
-  const total = currentClassMembers.length;
+  const roster = currentClassMembers.length ? currentClassMembers : getReviewRoster(assignment.id);
+  const total = roster.length;
   const submittedCount = submissions.filter(s => s.status === "submitted").length;
   const gradedCount = submissions.filter(s => s.teacherReview?.savedAt).length;
-    const flaggedCount = submissions.filter(
+  const flaggedCount = submissions.filter(
     s => Array.isArray(s.writingEvents) && s.writingEvents.some(e => e && e.flagged)
   ).length;
 
@@ -2022,9 +2124,9 @@ function renderTeacherReview(assignment, submissions) {
       </div>
 
       <div class="student-list">
-        ${currentClassMembers.length === 0 && submissions.length === 0
+        ${roster.length === 0 && submissions.length === 0
           ? `<div class="empty-state compact-empty"><h3>No students yet</h3><p>Invite students to this class using the ✉ Invite students button.</p></div>`
-          : (currentClassMembers.length > 0 ? currentClassMembers : submissions.map(s => ({ id: s.studentId, name: s._studentName || "Student" }))).map(member => {
+          : roster.map(member => {
               const submission = submissions.find(s => s.studentId === member.id);
               if (!submission) return `
                 <div class="submission-card simple-card">
@@ -2033,10 +2135,11 @@ function renderTeacherReview(assignment, submissions) {
                       <h3 style="margin:0 0 4px;">${escapeHtml(member.name)}</h3>
                       <span class="warning-pill">Not started</span>
                     </div>
+                    <button class="button" data-action="inspect-submission" data-student-id="${member.id}" style="flex-shrink:0;">Grade →</button>
                   </div>
                 </div>
               `;
-                            const events = Array.isArray(submission.writingEvents) ? submission.writingEvents : [];
+              const events = Array.isArray(submission.writingEvents) ? submission.writingEvents : [];
               const finalText = submission.finalText || submission.draftText || "";
               const startedAt = submission.startedAt || submission.updatedAt || submission.submittedAt;
               const endedAt = submission.submittedAt || submission.updatedAt || startedAt;
@@ -2058,7 +2161,7 @@ function renderTeacherReview(assignment, submissions) {
                     <div style="flex:1;">
                       <h3 style="margin:0 0 6px;">${escapeHtml(member.name)}</h3>
                       <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                        <span class="status-pill">${escapeHtml(titleCase(submission.status))}</span>
+                        <span class="status-pill">${escapeHtml(getSubmissionStatusDisplay(submission.status))}</span>
                         ${isGraded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded${score !== "" && score != null ? ` · ${escapeHtml(String(score))}` : ""}</span>` : ""}
                         ${m.largePasteCount ? `<span class="warning-pill">⚠ Paste</span>` : ""}
                       </div>
@@ -2068,7 +2171,7 @@ function renderTeacherReview(assignment, submissions) {
                         <span class="pill">${m.totalMinutes} min</span>
                       </div>
                     </div>
-                    <button class="button" data-action="inspect-submission" data-submission-id="${submission.id}" style="flex-shrink:0;">Grade →</button>
+                    <button class="button" data-action="inspect-submission" data-student-id="${member.id}" data-submission-id="${submission.id}" style="flex-shrink:0;">Grade →</button>
                   </div>
                 </div>
               `;
@@ -2100,6 +2203,11 @@ function renderTeacherGrading(assignment, submission) {
   const reviewScore = submission.teacherReview?.finalScore ?? "";
   const reviewNotes = submission.teacherReview?.finalNotes ?? "";
   const studentName = submission._studentName || getUserById(submission.studentId)?.name || "Student";
+  const roster = getReviewRoster(assignment.id);
+  const rosterIndex = roster.findIndex((student) => student.id === submission.studentId);
+  const nextStudentId = getNextReviewStudentId(submission.studentId, assignment.id);
+  const deadlinePassed = canMarkLateOrMissing(assignment);
+  const currentStatus = submission.status || submission.teacherReview?.status || "not_started";
 
   return `
     <section class="panel review-shell">
@@ -2109,7 +2217,10 @@ function renderTeacherGrading(assignment, submission) {
         <button class="button-ghost" data-action="back-to-review" style="font-size:0.85rem;">${escapeHtml(assignment.title)}</button>
         <span style="color:var(--muted);font-size:0.85rem;">/</span>
         <span style="font-weight:600;font-size:0.95rem;">${escapeHtml(studentName)}</span>
+        <span class="status-pill">${escapeHtml(getSubmissionStatusDisplay(currentStatus))}</span>
+        ${roster.length ? `<span style="font-size:0.82rem;color:var(--muted);">${rosterIndex + 1}/${roster.length}</span>` : ""}
         <div style="margin-left:auto;display:flex;gap:8px;">
+          <button class="button-ghost" data-action="next-review-student" ${!nextStudentId ? "disabled" : ""} style="font-size:0.85rem;">Next student →</button>
           <button class="button-ghost" data-action="download-work" style="font-size:0.85rem;">⬇ Download</button>
           <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
         </div>
@@ -2117,6 +2228,23 @@ function renderTeacherGrading(assignment, submission) {
 
       <div class="review-grid">
         <div class="review-card">
+
+          <div style="margin-bottom:16px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;">
+            <p class="mini-label" style="margin-bottom:8px;">Submission status</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              ${["draft", "submitted"].map((status) => {
+                const isActive = currentStatus === status;
+                return `<button class="button-ghost" data-action="set-review-status" data-status="${status}" style="background:${isActive ? "#dff3e4" : "#fff"};border-color:${isActive ? "#4f8f68" : "var(--line)"};color:${isActive ? "#1f5c38" : "var(--ink)"};">${escapeHtml(getSubmissionStatusDisplay(status))}</button>`;
+              }).join("")}
+              ${deadlinePassed || currentStatus === "late" || currentStatus === "missing" ? ["late", "missing"].map((status) => {
+                const isActive = currentStatus === status;
+                return `<button class="button-ghost" data-action="set-review-status" data-status="${status}" style="background:${isActive ? "#fde7e7" : "#fff"};border-color:${isActive ? "#c56b6b" : "var(--line)"};color:${isActive ? "#8a2f2f" : "var(--ink)"};">${escapeHtml(getSubmissionStatusDisplay(status))}</button>`;
+              }).join("") : ""}
+            </div>
+            ${deadlinePassed ? `
+              <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Deadline has passed, so you can mark this student as late or missing.</p>
+            ` : ""}
+          </div>
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
@@ -3022,8 +3150,59 @@ function getAssignmentSubmissions(assignmentId) {
   return state.submissions.filter((submission) => submission.assignmentId === assignmentId);
 }
 
+function getReviewRoster(assignmentId = ui.selectedAssignmentId) {
+  if (currentClassMembers.length) {
+    return currentClassMembers.map((member) => ({
+      id: member.id,
+      name: member.name || "Student",
+    }));
+  }
+
+  const seen = new Set();
+  return getAssignmentSubmissions(assignmentId)
+    .filter((submission) => {
+      if (seen.has(submission.studentId)) return false;
+      seen.add(submission.studentId);
+      return true;
+    })
+    .map((submission) => ({
+      id: submission.studentId,
+      name: submission._studentName || getUserById(submission.studentId)?.name || "Student",
+    }));
+}
+
+function getReviewSubmissionForStudent(studentId, assignmentId = ui.selectedAssignmentId) {
+  return state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === studentId) || null;
+}
+
+function ensureTeacherReviewSubmission(assignmentId, studentId) {
+  if (!assignmentId || !studentId) return null;
+  const existing = getReviewSubmissionForStudent(studentId, assignmentId);
+  if (existing) return existing;
+
+  const placeholder = createEmptySubmission(assignmentId, studentId);
+  placeholder.id = `pending-review-${assignmentId}-${studentId}`;
+  placeholder.status = "not_started";
+  placeholder.startedAt = null;
+  placeholder.updatedAt = new Date().toISOString();
+  placeholder._studentName = currentClassMembers.find((member) => member.id === studentId)?.name || getUserById(studentId)?.name || "Student";
+  state.submissions.push(placeholder);
+  return placeholder;
+}
+
+function getSelectedReviewStudent() {
+  return getReviewRoster().find((student) => student.id === ui.selectedReviewStudentId) || null;
+}
+
 function getSelectedReviewSubmission() {
-  return state.submissions.find((submission) => submission.id === ui.selectedReviewSubmissionId) || null;
+  if (ui.selectedReviewStudentId) {
+    return ensureTeacherReviewSubmission(ui.selectedAssignmentId, ui.selectedReviewStudentId);
+  }
+  const selected = state.submissions.find((submission) => submission.id === ui.selectedReviewSubmissionId) || null;
+  if (selected) {
+    ui.selectedReviewStudentId = selected.studentId;
+  }
+  return selected;
 }
 
 function getStudentSubmission() {
@@ -3063,13 +3242,14 @@ function hydrateSelections() {
   ui.studentStep = clamp(ui.studentStep, 1, 3);
   ensureStudentSubmission();
 
-  const assignmentSubmissionIds = new Set(
-    getAssignmentSubmissions(ui.selectedAssignmentId).map((submission) => submission.id)
-  );
-
-  if (!assignmentSubmissionIds.has(ui.selectedReviewSubmissionId)) {
-    ui.selectedReviewSubmissionId = getAssignmentSubmissions(ui.selectedAssignmentId)[0]?.id || null;
+  const reviewRoster = getReviewRoster(ui.selectedAssignmentId);
+  if (!reviewRoster.some((student) => student.id === ui.selectedReviewStudentId)) {
+    ui.selectedReviewStudentId = reviewRoster[0]?.id || null;
   }
+
+  ui.selectedReviewSubmissionId = ui.selectedReviewStudentId
+    ? getReviewSubmissionForStudent(ui.selectedReviewStudentId, ui.selectedAssignmentId)?.id || null
+    : null;
 }
 
 function getPlaybackState(submission) {
@@ -3155,6 +3335,30 @@ function getPlaybackFrames(submission) {
     frames,
   };
   return frames;
+}
+
+function getSubmissionStatusDisplay(status) {
+  const labels = {
+    not_started: "Not started",
+    draft: "In progress",
+    submitted: "Submitted",
+    late: "Late",
+    missing: "Missing",
+    graded: "Graded",
+  };
+  return labels[status] || titleCase(String(status || "").replaceAll("_", " "));
+}
+
+function canMarkLateOrMissing(assignment) {
+  if (!assignment?.deadline) return false;
+  return Date.now() > Date.parse(assignment.deadline);
+}
+
+function getNextReviewStudentId(currentStudentId, assignmentId = ui.selectedAssignmentId) {
+  const roster = getReviewRoster(assignmentId);
+  const index = roster.findIndex((student) => student.id === currentStudentId);
+  if (index === -1 || index === roster.length - 1) return null;
+  return roster[index + 1]?.id || null;
 }
 
 function computeProcessMetrics(assignment, submission) {
