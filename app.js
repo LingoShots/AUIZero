@@ -3288,15 +3288,6 @@ Task: "${assignment.prompt}"
 
 Start by asking the student what topic or idea they are thinking about. If they struggle to answer, suggest they think about two or three possible ideas and pick the one they feel most confident about.`;
 }
-ffunction flashScrollTarget(el) {
-  if (!el) return;
-  el.scrollIntoView({ behavior: "smooth", block: "center" });
-  el.style.boxShadow = "0 0 0 3px rgba(91,42,134,0.28)";
-  el.style.transition = "box-shadow 0.2s ease";
-  window.setTimeout(() => {
-    el.style.boxShadow = "";
-  }, 1600);
-}
 
 function flashScrollTarget(el) {
   if (!el) return;
