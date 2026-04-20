@@ -50,6 +50,36 @@ showInvitePanel: false,
 
 let state = { assignments: [], submissions: [], users: [] };
 
+function getDeadlineDatePart(value) {
+  if (!value || !String(value).includes("T")) return "";
+  return String(value).split("T")[0];
+}
+
+function getDeadlineTimePart(value) {
+  if (!value || !String(value).includes("T")) return "09:00";
+  return String(value).split("T")[1].slice(0, 5) || "09:00";
+}
+
+function combineDeadlineParts(dateValue, timeValue) {
+  if (!dateValue) return "";
+  return `${dateValue}T${timeValue || "09:00"}`;
+}
+
+function buildDeadlineTimeOptions(selectedValue) {
+  const selected = selectedValue || "09:00";
+  const options = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    for (const minute of [0, 30]) {
+      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+      const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+      const suffix = hour < 12 ? "AM" : "PM";
+      const label = `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+      options.push(`<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`);
+    }
+  }
+  return options.join("");
+}
+
 function createBlankTeacherDraft() {
   return {
     brief: "",
@@ -1114,8 +1144,13 @@ function handleInput(event) {
     return;
   }
 
-  if (target.id === "teacher-deadline") {
-    ui.teacherDraft.deadline = target.value;
+    if (target.id === "teacher-deadline-date" || target.id === "teacher-deadline-time") {
+    const dateInput = document.getElementById("teacher-deadline-date");
+    const timeInput = document.getElementById("teacher-deadline-time");
+    ui.teacherDraft.deadline = combineDeadlineParts(
+      dateInput ? dateInput.value : "",
+      timeInput ? timeInput.value : "09:00"
+    );
     return;
   }
   
