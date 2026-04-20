@@ -53,8 +53,9 @@ showInvitePanel: false,
 let state = { assignments: [], submissions: [], users: [] };
 
 function normalizeRubricLibraryEntry(entry = {}) {
-  const text = String(entry?.text || "").trim();
-  const data = entry?.data && typeof entry.data === "object" ? entry.data : null;
+  const rawData = entry?.data && typeof entry.data === "object" ? entry.data : null;
+  const text = String(entry?.text || "").trim() || serializeRubricDataForPrompt(rawData);
+  const data = rawData;
   if (!text && !data?.rows?.length) return null;
   return {
     id: entry?.id || uid("saved-rubric"),
@@ -131,11 +132,11 @@ function getSavedRubricLibrary() {
   })();
 
   const fromAssignments = safeArray(state.assignments)
-    .filter((assignment) => assignment?.uploadedRubricText)
+    .filter((assignment) => assignment?.uploadedRubricText || getMatrixRubricData(assignment?.uploadedRubricData || assignment?.rubric))
     .map((assignment) => normalizeRubricLibraryEntry({
       id: `assignment-rubric-${assignment.id}`,
       name: assignment.uploadedRubricName || `${assignment.title || "Assignment"} rubric`,
-      text: assignment.uploadedRubricText,
+      text: assignment.uploadedRubricText || serializeRubricDataForPrompt(assignment?.uploadedRubricData || assignment?.rubric),
       data: getMatrixRubricData(assignment?.uploadedRubricData || assignment?.rubric),
       savedAt: assignment.createdAt,
       source: "assignment",
@@ -648,7 +649,7 @@ async function bootApp(profile) {
         rubric: a.rubric || [],
         deadline: a.deadline || '',
         status: a.status || 'draft',
-        uploadedRubricText: a.uploaded_rubric_text || '',
+        uploadedRubricText: a.uploaded_rubric_text || serializeRubricDataForPrompt(a.rubric) || '',
         uploadedRubricName: a.uploaded_rubric_name || '',
         uploadedRubricData: getMatrixRubricData(a.rubric),
         createdAt: a.created_at || new Date().toISOString(),
@@ -694,7 +695,7 @@ async function loadStudentAssignmentsForCurrentClass() {
       rubric: a.rubric || [],
       deadline: a.deadline || '',
       status: a.status || 'published',
-      uploadedRubricText: a.uploaded_rubric_text || '',
+      uploadedRubricText: a.uploaded_rubric_text || serializeRubricDataForPrompt(a.rubric) || '',
       uploadedRubricName: a.uploaded_rubric_name || '',
       uploadedRubricData: getMatrixRubricData(a.rubric),
       createdAt: a.created_at || new Date().toISOString(),
@@ -966,7 +967,7 @@ if (action === "generate-teacher-assist") {
       render();
       return;
     }
-    ui.teacherDraft.uploadedRubricText = savedRubric.text;
+    ui.teacherDraft.uploadedRubricText = savedRubric.text || serializeRubricDataForPrompt(savedRubric.data);
     ui.teacherDraft.uploadedRubricName = savedRubric.name;
     ui.teacherDraft.uploadedRubricData = savedRubric.data || null;
     ui.teacherAssist = null;
@@ -2253,7 +2254,7 @@ function renderTeacherWorkspace() {
                 <button class="button-ghost" data-action="apply-saved-rubric" style="min-height:40px;">Use saved rubric</button>
               </div>
             ` : ""}
-            ${ui.teacherDraft.uploadedRubricText ? `
+            ${(ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricData?.rows?.length) ? `
               <div style="margin-top:12px;">
                 ${renderUploadedRubricPreview("Uploaded rubric", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData)}
               </div>
@@ -2338,7 +2339,7 @@ function renderTeacherWorkspace() {
                     <p class="mini-label">Rubric</p>
                     <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts total</span>
                   </div>
-                  ${ui.teacherDraft.uploadedRubricText
+                  ${(ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricData?.rows?.length)
                     ? `
                       <p class="subtle" style="font-size:0.84rem;margin:0 0 10px;">Keeping the uploaded rubric visible here so you can confirm the exact version before saving.</p>
                       ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData)}
@@ -4784,7 +4785,7 @@ function normalizeAssignment(assignment) {
     status: assignment?.status || "published",
     deadline: assignment?.deadline || "",
     chatTimeLimit: Number(assignment?.chatTimeLimit ?? 0),
-    uploadedRubricText: assignment?.uploadedRubricText || "",
+    uploadedRubricText: assignment?.uploadedRubricText || serializeRubricDataForPrompt(assignment?.uploadedRubricData || assignment?.rubric) || "",
     uploadedRubricName: assignment?.uploadedRubricName || "",
     uploadedRubricData: assignment?.uploadedRubricData || getMatrixRubricData(assignment?.rubric),
   };
