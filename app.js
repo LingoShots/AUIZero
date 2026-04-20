@@ -85,6 +85,10 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("`", "&#96;");
 }
 
+function titleCase(text) {
+  return String(text || "").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -3996,10 +4000,6 @@ function extractKeywords(text) {
     }
   }
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([word]) => word);
-}
-
-function titleCase(text) {
-  return String(text || "").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function trimTo(text, length) {
