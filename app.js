@@ -22,10 +22,11 @@ const ui = {
   role: "student",
   activeUserId: "",
   pin: "",
-  showInvitePanel: false,
+showInvitePanel: false,
   showFullRubric: false,
   inviteText: "",
   inviteMailto: "",
+  teacherView: "assignments",
   teacherDraft: null,
   teacherAssist: null,
   selectedAssignmentId: null,
@@ -588,7 +589,15 @@ if (action === "sign-out") {
   }
 
 if (action === "back-to-assignments") {
+    ui.teacherView = "assignments";
     ui.selectedAssignmentId = null;
+    ui.selectedReviewSubmissionId = null;
+    render();
+    return;
+  }
+
+  if (action === "back-to-review") {
+    ui.teacherView = "review";
     ui.selectedReviewSubmissionId = null;
     render();
     return;
@@ -598,6 +607,7 @@ if (action === "back-to-assignments") {
     stopPlayback();
     ui.selectedAssignmentId = target.dataset.assignmentId;
     ui.selectedReviewSubmissionId = null;
+    ui.teacherView = "review";
     ui.notice = "Loading submissions...";
     render();
     Auth.apiFetch(`/api/assignments/${target.dataset.assignmentId}/submissions`).then(data => {
@@ -733,12 +743,13 @@ if (action === "back-to-assignments") {
   if (action === "inspect-submission") {
     stopPlayback();
     ui.selectedReviewSubmissionId = target.dataset.submissionId;
+    ui.teacherView = "grading";
     ui.playback.index = 0;
-    ui.notice = "Student writing process opened.";
+    ui.notice = "";
     render();
     return;
   }
-
+  
   if (action === "playback-toggle") {
     const submission = getSelectedReviewSubmission();
     const frames = submission ? getPlaybackFrames(submission) : [];
@@ -1575,372 +1586,263 @@ function renderTeacherWorkspace() {
               </div>`
             : `
               <div class="assignment-list">
-                ${assignments.map((assignment) => `
+                ${assignments.map((assignment) => {
+                  const assignmentSubs = state.submissions.filter(s => s.assignmentId === assignment.id);
+                  const submittedCount = assignmentSubs.filter(s => s.status === "submitted").length;
+                  const gradedCount = assignmentSubs.filter(s => s.teacherReview?.savedAt).length;
+                  const pasteCount = assignmentSubs.filter(s => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
+                  const totalStudents = currentClassMembers.length;
+                  return `
                   <div class="assignment-card simple-card">
-                    <div class="card-top">
-                      <div>
-                        <h3>${escapeHtml(assignment.title)}</h3>
-                        <p>${escapeHtml(assignment.prompt)}</p>
-                      </div>
-                      <div style="display:flex;gap:8px;flex-shrink:0;flex-direction:column;align-items:flex-end;">
-                        <div style="display:flex;gap:8px;">
-                          <button class="button-ghost" data-action="select-assignment" data-assignment-id="${assignment.id}">Open</button>
-                          <button class="button-ghost" data-action="delete-assignment" data-assignment-id="${assignment.id}" style="color:var(--danger);border-color:var(--danger);">Delete</button>
+                    <div class="card-top" style="align-items:flex-start;">
+                      <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                          <h3 style="margin:0;">${escapeHtml(assignment.title)}</h3>
+                          <span class="${assignment.status === "published" ? "pill" : "warning-pill"}" style="font-size:0.75rem;">${assignment.status === "published" ? "Published" : "Draft"}</span>
                         </div>
-                        <button class="${assignment.status === "published" ? "button-ghost" : "button"}" data-action="publish-assignment" data-assignment-id="${assignment.id}" style="${assignment.status === "published" ? "color:var(--sage);border-color:var(--sage);" : ""}">
-                          ${assignment.status === "published" ? "✓ Published — click to unpublish" : "Publish to students"}
-                        </button>
+                        <p style="margin:0 0 8px;color:var(--muted);font-size:0.88rem;">${escapeHtml(assignment.prompt.slice(0, 100))}${assignment.prompt.length > 100 ? "…" : ""}</p>
+                        <div class="pill-row" style="flex-wrap:wrap;">
+                          <span class="pill">${escapeHtml(titleCase(assignment.assignmentType || "writing"))}</span>
+                          <span class="pill">${assignment.wordCountMin}–${assignment.wordCountMax} words</span>
+                          ${assignment.deadline ? `<span class="pill">Due: ${escapeHtml(new Date(assignment.deadline).toLocaleDateString(undefined, {day:"numeric",month:"short"}))}</span>` : ""}
+                          <span class="pill">${submittedCount}/${totalStudents} submitted</span>
+                          ${gradedCount > 0 ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${gradedCount} graded</span>` : ""}
+                          ${pasteCount > 0 ? `<span class="warning-pill">⚠ ${pasteCount} paste flag${pasteCount > 1 ? "s" : ""}</span>` : ""}
+                        </div>
                       </div>
-                    </div>
-                    <div class="pill-row">
-                      <span class="${assignment.status === "published" ? "pill" : "warning-pill"}">${assignment.status === "published" ? "Published" : "Draft"}</span>
-                      <span class="pill">${escapeHtml(titleCase(assignment.assignmentType || "writing"))}</span>
-                      <span class="pill">${assignment.wordCountMin}-${assignment.wordCountMax} words</span>
-                      ${assignment.deadline ? `<span class="pill">Due: ${escapeHtml(new Date(assignment.deadline).toLocaleDateString(undefined, {day:"numeric",month:"short",year:"numeric"}))}</span>` : ""}
+                      <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;align-items:flex-end;">
+                        <button class="button" data-action="select-assignment" data-assignment-id="${assignment.id}" style="white-space:nowrap;">Review students →</button>
+                        <div style="display:flex;gap:6px;">
+                          <button class="${assignment.status === "published" ? "button-ghost" : "button-secondary"}" data-action="publish-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;${assignment.status === "published" ? "color:var(--sage);border-color:var(--sage);" : ""}">
+                            ${assignment.status === "published" ? "✓ Published" : "Publish"}
+                          </button>
+                          <button class="button-ghost" data-action="delete-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;color:var(--danger);border-color:var(--danger);">Delete</button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                `).join("")}
+                `}).join("")}
               </div>
             `
         }
       </div>
     </section>
-    ${selectedAssignment ? renderTeacherReview(selectedAssignment, submissions, selectedSubmission) : ""}
+    ${ui.teacherView === "review" && selectedAssignment ? renderTeacherReview(selectedAssignment, submissions) : ""}
+    ${ui.teacherView === "grading" && selectedAssignment && selectedSubmission ? renderTeacherGrading(selectedAssignment, selectedSubmission) : ""}
   `;
 }
 
-function renderTeacherReview(assignment, submissions, selectedSubmission) {
-  const metrics = selectedSubmission ? computeProcessMetrics(assignment, selectedSubmission) : null;
-  const playback = selectedSubmission ? getPlaybackState(selectedSubmission) : null;
-  const reviewScore = selectedSubmission?.teacherReview?.finalScore ?? "";
-  const reviewNotes = selectedSubmission?.teacherReview?.finalNotes ?? "";
+function renderTeacherReview(assignment, submissions) {
+  const total = currentClassMembers.length;
+  const submittedCount = submissions.filter(s => s.status === "submitted").length;
+  const gradedCount = submissions.filter(s => s.teacherReview?.savedAt).length;
+  const flaggedCount = submissions.filter(s => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
 
   return `
     <section class="panel review-shell">
-      <div class="review-header">
-        <div>
-          <p class="mini-label">Reviewing</p>
-          <h2>${escapeHtml(assignment.title)}</h2>
-          <p class="subtle">${escapeHtml(assignment.prompt)}</p>
-        </div>
-        <div class="toolbar">
-          <select id="review-submission-select" aria-label="Choose student submission">
-            ${submissions.map((submission) => {
-              const student = getUserById(submission.studentId);
-              return `<option value="${submission.id}" ${selectedSubmission?.id === submission.id ? "selected" : ""}>${escapeHtml(student?.name || "Student")} • ${escapeHtml(titleCase(submission.status))}</option>`;
-            }).join("")}
-          </select>
-          <button class="button-secondary" data-action="generate-grade" ${selectedSubmission ? "" : "disabled"}>Suggest Grade</button>
-        </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+        <button class="button-ghost" data-action="back-to-assignments" style="font-size:0.85rem;">← Assignments</button>
+        <span style="color:var(--muted);font-size:0.85rem;">/</span>
+        <span style="font-weight:600;font-size:0.95rem;">${escapeHtml(assignment.title)}</span>
       </div>
-      <div class="review-grid">
-        <div class="review-card">
-          <div class="section-header">
-            <div>
-              <button class="button-ghost" data-action="back-to-assignments" style="margin-bottom:10px;font-size:0.85rem;">← Back</button>
-              <h2 class="panel-title">Students</h2>
-              <p class="subtle">Simple status view for a tired teacher.</p>
-            </div>
-          </div>
-          <div class="student-list">
-  ${(() => {
-    const total = currentClassMembers.length || getStudentUsers().length;
-    const submitted = submissions.filter((s) => s.status === "submitted").length;
-    const graded = submissions.filter((s) => s.teacherReview?.savedAt).length;
-    const flagged = submissions.filter((s) => computeProcessMetrics(assignment, s).largePasteCount > 0).length;
-    return `
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
-        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-          <div style="font-size:1.4rem;font-weight:700;">${submitted}/${total}</div>
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px;">
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:1.5rem;font-weight:700;">${submittedCount}/${total}</div>
           <div style="font-size:0.75rem;color:var(--muted);">Submitted</div>
         </div>
-        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-          <div style="font-size:1.4rem;font-weight:700;">${graded}</div>
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:1.5rem;font-weight:700;">${gradedCount}</div>
           <div style="font-size:0.75rem;color:var(--muted);">Graded</div>
         </div>
-        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-          <div style="font-size:1.4rem;font-weight:700;">${total - submitted}</div>
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:1.5rem;font-weight:700;">${total - submittedCount}</div>
           <div style="font-size:0.75rem;color:var(--muted);">Not submitted</div>
         </div>
-        <div style="background:${flagged ? "#fff3cd" : "var(--surface)"};border:1px solid ${flagged ? "#e0c84a" : "var(--line)"};border-radius:10px;padding:10px;text-align:center;">
-          <div style="font-size:1.4rem;font-weight:700;">${flagged}</div>
+        <div style="background:${flaggedCount ? "#fff3cd" : "var(--surface)"};border:1px solid ${flaggedCount ? "#e0c84a" : "var(--line)"};border-radius:10px;padding:12px;text-align:center;">
+          <div style="font-size:1.5rem;font-weight:700;">${flaggedCount}</div>
           <div style="font-size:0.75rem;color:var(--muted);">Paste flags</div>
         </div>
       </div>
-    `;
-  })()}
 
-  ${currentClassMembers.map((member) => {
-    const submission = submissions.find((s) => s.studentId === member.id);
+      <div class="student-list">
+        ${currentClassMembers.length === 0 && submissions.length === 0
+          ? `<div class="empty-state compact-empty"><h3>No students yet</h3><p>Invite students to this class using the ✉ Invite students button.</p></div>`
+          : (currentClassMembers.length > 0 ? currentClassMembers : submissions.map(s => ({ id: s.studentId, name: s._studentName || "Student" }))).map(member => {
+              const submission = submissions.find(s => s.studentId === member.id);
+              if (!submission) return `
+                <div class="submission-card simple-card">
+                  <div class="card-top">
+                    <div>
+                      <h3 style="margin:0 0 4px;">${escapeHtml(member.name)}</h3>
+                      <span class="warning-pill">Not started</span>
+                    </div>
+                  </div>
+                </div>
+              `;
+              const m = computeProcessMetrics(assignment, submission);
+              const isGraded = Boolean(submission.teacherReview?.savedAt);
+              const score = submission.teacherReview?.finalScore;
+              return `
+                <div class="submission-card simple-card">
+                  <div class="card-top">
+                    <div style="flex:1;">
+                      <h3 style="margin:0 0 6px;">${escapeHtml(member.name)}</h3>
+                      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <span class="status-pill">${escapeHtml(titleCase(submission.status))}</span>
+                        ${isGraded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded${score !== "" && score != null ? ` · ${escapeHtml(String(score))}` : ""}</span>` : ""}
+                        ${m.largePasteCount ? `<span class="warning-pill">⚠ Paste</span>` : ""}
+                      </div>
+                      <div class="pill-row" style="margin-top:6px;">
+                        <span class="pill">${m.finalWordCount} words</span>
+                        <span class="pill">${m.revisionCount} edits</span>
+                        <span class="pill">${m.totalMinutes} min</span>
+                      </div>
+                    </div>
+                    <button class="button" data-action="inspect-submission" data-submission-id="${submission.id}" style="flex-shrink:0;">Grade →</button>
+                  </div>
+                </div>
+              `;
+            }).join("")
+        }
+      </div>
+    </section>
+  `;
+}
 
-    // 👉 NO submission case
-    if (!submission) {
-      return `
-        <div class="submission-card simple-card">
-          <div class="card-top">
-            <div>
-              <h3>${escapeHtml(member.name)}</h3>
-              <span class="warning-pill">No submission yet</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }
+function renderTeacherGrading(assignment, submission) {
+  if (!submission) return `<div class="empty-state"><p>No submission selected.</p></div>`;
+  const metrics = computeProcessMetrics(assignment, submission);
+  const playback = getPlaybackState(submission);
+  const reviewScore = submission.teacherReview?.finalScore ?? "";
+  const reviewNotes = submission.teacherReview?.finalNotes ?? "";
+  const studentName = submission._studentName || getUserById(submission.studentId)?.name || "Student";
 
-    // 👉 HAS submission
-    const studentMetrics = computeProcessMetrics(assignment, submission);
-    const isGraded = Boolean(submission.teacherReview?.savedAt);
-
-    return `
-      <div class="submission-card simple-card">
-        <div class="card-top">
-          <div>
-            <h3>${escapeHtml(member.name)}</h3>
-            <div class="submission-status">
-              <span class="status-pill">${escapeHtml(titleCase(submission.status))}</span>
-              ${isGraded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded</span>` : ""}
-              ${studentMetrics.largePasteCount ? `<span class="warning-pill">${studentMetrics.largePasteCount} paste flag${studentMetrics.largePasteCount === 1 ? "" : "s"}</span>` : ""}
-            </div>
-          </div>
-          <button class="button-ghost" data-action="inspect-submission" data-submission-id="${submission.id}">Inspect</button>
-        </div>
-        <div class="pill-row">
-          <span class="pill">${studentMetrics.totalMinutes} min</span>
-          <span class="pill">${studentMetrics.revisionCount} edits</span>
-          <span class="pill">${studentMetrics.finalWordCount} words</span>
-          ${
-            submission.teacherReview?.finalScore !== "" && submission.teacherReview?.finalScore != null
-              ? `<span class="pill">Score: ${escapeHtml(String(submission.teacherReview.finalScore))}</span>`
-              : ""
-          }
+  return `
+    <section class="panel review-shell">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+        <button class="button-ghost" data-action="back-to-assignments" style="font-size:0.85rem;">← Assignments</button>
+        <span style="color:var(--muted);font-size:0.85rem;">/</span>
+        <button class="button-ghost" data-action="back-to-review" style="font-size:0.85rem;">${escapeHtml(assignment.title)}</button>
+        <span style="color:var(--muted);font-size:0.85rem;">/</span>
+        <span style="font-weight:600;font-size:0.95rem;">${escapeHtml(studentName)}</span>
+        <div style="margin-left:auto;display:flex;gap:8px;">
+          <button class="button-ghost" data-action="download-work" style="font-size:0.85rem;">⬇ Download</button>
+          <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
         </div>
       </div>
-    `;
-  }).join("")}
-</div>
-          </div>
-        </div>
-        <div class="review-stack">
-          ${
-            selectedSubmission && metrics && playback
-              ? `
-                <div class="review-card">
-                  <div class="stats-grid compact-stats">
-                    <div class="stat-card">
-                      <span class="stat-label">Writing time</span>
-                      <strong class="stat-value">${metrics.totalMinutes} min</strong>
-                    </div>
-                    <div class="stat-card">
-                      <span class="stat-label">Tracked edits</span>
-                      <strong class="stat-value">${metrics.revisionCount}</strong>
-                    </div>
-                    <div class="stat-card">
-                      <span class="stat-label">Paste flags</span>
-                      <strong class="stat-value">${metrics.largePasteCount}</strong>
-                    </div>
-                    <div class="stat-card">
-                      <span class="stat-label">Draft to final</span>
-                      <strong class="stat-value">${metrics.improvementLabel}</strong>
-                    </div>
-                  </div>
 
-                  <div style="margin-top:16px;">
-                        <p class="mini-label" style="margin-bottom:8px;">Writing activity heatmap</p>
-                        ${renderWritingHeatmap(selectedSubmission)}
-                      </div>
-                  
+      <div class="review-grid">
+        <div class="review-card">
+
+          <div style="margin-bottom:16px;">
+            <p class="mini-label" style="margin-bottom:6px;">Student text</p>
+            <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+          </div>
+
+          <div style="margin-bottom:16px;">
+            <div class="error-code-toolbar">
+              <span class="mini-label" style="align-self:center;">Annotate:</span>
+              ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}">${code}</button>`).join("")}
+              <button class="error-code-btn" data-action="add-annotation" data-code="NOTE" title="Add a custom note" style="background:#fff9e6;border-color:#e0c84a;">+ Note</button>
+            </div>
+            ${(submission.teacherReview?.annotations?.length) ? `
+              <div style="margin-top:8px;display:grid;gap:6px;">
+                ${submission.teacherReview.annotations.map((ann, i) => `
+                  <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#fff9e6;border:1px solid #e0c84a;font-size:0.88rem;">
+                    <strong style="color:var(--accent-deep);flex-shrink:0;">${escapeHtml(ann.code)}</strong>
+                    <span style="flex:1;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
+                    <button class="error-code-btn" data-action="remove-annotation" data-annotation-index="${i}" style="flex-shrink:0;color:var(--danger);">✕</button>
+                  </div>
+                `).join("")}
+              </div>
+            ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No annotations yet. Select text above then click a code.</p>`}
+          </div>
+
+          <details style="margin-bottom:16px;">
+            <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Writing process & heatmap</summary>
+            <div style="margin-top:10px;">
+              <div class="pill-row" style="margin-bottom:10px;">
+                <span class="pill">${metrics.totalMinutes} min total</span>
+                <span class="pill">${metrics.revisionCount} edits</span>
+                <span class="pill">${metrics.finalWordCount} words</span>
+                ${metrics.largePasteCount ? `<span class="warning-pill">⚠ ${metrics.largePasteCount} paste flag${metrics.largePasteCount > 1 ? "s" : ""}</span>` : ""}
+              </div>
+              ${renderWritingHeatmap(submission)}
+            </div>
+          </details>
+
+          <details style="margin-bottom:16px;">
+            <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Coaching chat (${(submission.chatHistory || []).filter(m => m.role === "user").length} student messages)</summary>
+            <div style="margin-top:10px;max-height:200px;overflow-y:auto;display:grid;gap:6px;">
+              ${(submission.chatHistory || []).map(m => `
+                <div style="padding:8px 12px;border-radius:8px;background:${m.role === "user" ? "#edf4ea" : "#f4efe6"};font-size:0.85rem;">
+                  <strong style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:2px;">${m.role === "user" ? escapeHtml(studentName) : "Coach"}</strong>
+                  ${escapeHtml(m.content)}
                 </div>
-                <div class="review-card">
-                  <div class="section-header">
-                    <div>
-                      <h2 class="panel-title">Letter-by-letter playback</h2>
-                      <p class="subtle">Watch the writing appear, disappear, and change one character at a time.</p>
-                    </div>
-                    <div class="toolbar">
-                      <button class="button-ghost" data-action="playback-step" data-direction="-1">Back</button>
-                      <button class="button" data-action="playback-toggle">${ui.playback.isPlaying ? "Pause" : "Play"}</button>
-                      <button class="button-ghost" data-action="playback-step" data-direction="1">Next</button>
-                    </div>
-                  </div>
-                  <div class="playback-controls">
-                    <input class="slider" id="playback-slider" type="range" min="0" max="${Math.max(playback.frames.length - 1, 0)}" value="${playback.index}" />
-                    <div class="toolbar">
-                      <span class="pill" id="playback-meta">Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}</span>
-                      <span class="pill" id="playback-label">${escapeHtml(playback.label)}</span>
-                      <select id="playback-speed" aria-label="Playback speed">
-                        ${[1, 2, 5, 10, 20].map((speed) => `<option value="${speed}" ${ui.playback.speed === speed ? "selected" : ""}>${speed}x</option>`).join("")}
-                      </select>
-                    </div>
-                  </div>
-                  <div class="playback-screen" id="playback-screen"><pre>${escapeHtml(playback.text)}</pre></div>
-                  <div class="timeline-list">
-                    ${selectedSubmission.writingEvents.slice().reverse().slice(0, 8).map((entry) => `
-                      <div class="timeline-card">
-                        <strong>${escapeHtml(titleCase(entry.type))}</strong>
-                        <p>${escapeHtml(renderEventSummary(entry))}</p>
-                      </div>
-                    `).join("")}
-                  </div>
+              `).join("")}
+            </div>
+          </details>
+
+        </div>
+
+        <div class="review-card">
+
+          ${submission.teacherReview?.suggestedGrade ? `
+            <div style="margin-bottom:16px;padding:14px;background:#f4efe6;border-radius:12px;border:1px solid var(--line);">
+              <p class="mini-label" style="margin-bottom:6px;">AI suggested grade</p>
+              <div style="font-size:1.2rem;font-weight:700;margin-bottom:6px;">${submission.teacherReview.suggestedGrade.totalScore}/${submission.teacherReview.suggestedGrade.maxScore}</div>
+              <p style="font-size:0.85rem;color:var(--muted);margin:0 0 10px;">${escapeHtml(submission.teacherReview.suggestedGrade.justification)}</p>
+              ${submission.teacherReview.suggestedGrade.studentComment ? `
+                <div style="background:#f0f7ee;border-left:3px solid var(--accent);padding:10px 12px;border-radius:8px;margin-bottom:10px;">
+                  <p class="mini-label" style="margin-bottom:4px;">Suggested student comment</p>
+                  <p style="font-size:0.85rem;margin:0 0 8px;">${escapeHtml(submission.teacherReview.suggestedGrade.studentComment)}</p>
+                  <button class="button-ghost" data-action="use-suggested-comment" style="font-size:0.8rem;">Copy to notes</button>
                 </div>
-                <div class="review-card">
-                  <div class="section-header">
-                    <div>
-                      <h2 class="panel-title">Writing context</h2>
-                      <p class="subtle">Ideas, draft, and final writing in one place.</p>
-                    </div>
-                  </div>
-                  <div class="compare-grid">
-                  <div class="compare-column">
-                      <div class="compare-col-header">
-                        <p class="mini-label">Coaching chat</p>
-                        <button class="context-expand-btn" data-action="expand-context-col" data-col="ideas">⤢ Expand</button>
-                      </div>
-                      <div class="context-snippet">
-                        ${
-                          (selectedSubmission.chatHistory || []).length
-                            ? `<p class="subtle-clamp">${escapeHtml((selectedSubmission.chatHistory || []).filter(m => m.role === "user").map(m => m.content).join(" · ").slice(0, 180))}</p>`
-                            : `<p class="subtle">No coaching conversation yet.</p>`
-                        }
-                      </div>
-                    </div>
-                    <div class="compare-column">
-                      <div class="compare-col-header">
-                        <p class="mini-label">Draft</p>
-                        <button class="context-expand-btn" data-action="expand-context-col" data-col="draft">⤢ Expand</button>
-                      </div>
-                      <div class="context-snippet">
-                        <p class="subtle-clamp">${escapeHtml(selectedSubmission.draftText || "No draft yet.")}</p>
-                      </div>
-                    </div>
-                    <div class="compare-column">
-                      <div class="compare-col-header">
-                        <p class="mini-label">Final</p>
-                        <button class="context-expand-btn" data-action="expand-context-col" data-col="final">⤢ Expand</button>
-                      </div>
-                      <div class="context-snippet">
-                        <p class="subtle-clamp">${escapeHtml(selectedSubmission.finalText || "No final yet.")}</p>
-                      </div>
-                    </div>
-                  </div>
-                  ${ui.expandedContextCol ? `
-                    <div class="context-expanded-panel">
-                      <div class="context-expanded-header">
-                        <strong>${ui.expandedContextCol === "ideas" ? "Ideas" : ui.expandedContextCol === "draft" ? "Draft" : "Final"}</strong>
-                        <button class="context-expand-btn" data-action="expand-context-col" data-col="">✕ Close</button>
-                      </div>
-                      ${ui.expandedContextCol === "ideas" ? `
-                        ${(selectedSubmission.chatHistory || []).length
-                          ? (selectedSubmission.chatHistory || []).map((msg) => `
-                              <div class="chat-message chat-${escapeHtml(msg.role)}" style="margin-bottom:10px;">
-                                <strong style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px;">${msg.role === "assistant" ? "Coach" : "Student"} · ${escapeHtml(formatTime(msg.timestamp))}</strong>
-                                <div class="chat-bubble">${escapeHtml(msg.content)}</div>
-                              </div>`).join("")
-                          : `<p class="subtle">No coaching conversation recorded.</p>`}
-                      ` : ui.expandedContextCol === "draft" ? `
-                        ${renderTextWithPasteHighlights(selectedSubmission.draftText || "No draft yet.", selectedSubmission.writingEvents)}
-                      ` : `
-                        ${renderTextWithPasteHighlights(selectedSubmission.finalText || "No final yet.", selectedSubmission.writingEvents)}
-                        <div class="muted-block" style="margin-top:14px;">
-                          <strong>Outline plan:</strong> ${escapeHtml(renderOutlineSummary(assignment, selectedSubmission))}
-                        </div>
-                        <div class="muted-block" style="margin-top:10px;">
-                          <strong>What I improved:</strong> ${escapeHtml(selectedSubmission.reflections.improved || "Not answered")}
-                        </div>
-                      `}
-                    </div>
-                  ` : ""}
+              ` : ""}
+              <div style="display:flex;gap:8px;">
+                <button class="button-secondary" data-action="accept-suggested-grade">Use this score</button>
+                <button class="button-ghost" data-action="ignore-suggested-grade">Ignore</button>
+              </div>
+            </div>
+          ` : ""}
+
+          <div style="margin-bottom:16px;">
+            <p class="mini-label" style="margin-bottom:8px;">Rubric</p>
+            ${(assignment.rubric || []).map((criterion, i) => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);gap:10px;">
+                <div style="flex:1;">
+                  <div style="font-weight:600;font-size:0.88rem;">${escapeHtml(criterion.name)}</div>
+                  <div style="font-size:0.8rem;color:var(--muted);">${escapeHtml(criterion.description)}</div>
                 </div>
-                <div class="review-card">
-                  <div class="section-header">
-                    <div>
-                    ${selectedSubmission && assignment.uploadedRubricText ? `
-                        <div style="margin-bottom:14px;">
-                          <button class="button-ghost" data-action="toggle-full-rubric" style="font-size:0.82rem;">
-                            ${ui.showFullRubric ? "▲ Hide full rubric" : "▼ Show full teacher rubric"}
-                          </button>
-                          ${ui.showFullRubric ? `
-                            <div style="margin-top:10px;background:#f8f3ea;border:1px solid var(--line);border-radius:10px;padding:14px;font-size:0.85rem;white-space:pre-wrap;max-height:300px;overflow-y:auto;line-height:1.6;">${escapeHtml(assignment.uploadedRubricText)}</div>
-                          ` : ""}
-                        </div>
-                      ` : ""}
-                      <h2 class="panel-title">Suggested rubric score</h2>
-                      <p class="subtle">Teacher remains in control.</p>
-                    </div>
-                  </div>
-                  ${
-                    selectedSubmission.teacherReview?.suggestedGrade
-                      ? `
-                        <div class="review-stack">
-                          ${selectedSubmission.teacherReview.suggestedGrade.criteria.map((criterion) => `
-                            <div class="rubric-score">
-                              <div>
-                                <strong>${escapeHtml(criterion.name)}</strong>
-                                <p class="rubric-description">${escapeHtml(criterion.reason)}</p>
-                              </div>
-                              <strong>${criterion.score}/${criterion.points}</strong>
-                            </div>
-                          `).join("")}
-                          <div class="muted-block">
-                            <strong>Total:</strong> ${selectedSubmission.teacherReview.suggestedGrade.totalScore}/${selectedSubmission.teacherReview.suggestedGrade.maxScore}
-                            <p style="margin-top:10px;">${escapeHtml(selectedSubmission.teacherReview.suggestedGrade.justification)}</p>
-                          </div>
-                          ${selectedSubmission.teacherReview.suggestedGrade.studentComment ? `
-                          <div class="muted-block" style="background:#f0f7ee;border-left:3px solid var(--accent);margin-top:10px;">
-                            <strong style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:6px;">SUGGESTED STUDENT COMMENT</strong>
-                            <p style="font-size:0.9rem;line-height:1.6;">${escapeHtml(selectedSubmission.teacherReview.suggestedGrade.studentComment)}</p>
-                            <button class="button-secondary" style="margin-top:10px;font-size:0.8rem;" data-action="use-suggested-comment">Copy to teacher notes</button>
-                          </div>
-                          ` : ""}
-                          <div class="toolbar">
-                            <button class="button-secondary" data-action="accept-suggested-grade">Use Suggested Score</button>
-                            <button class="button-ghost" data-action="ignore-suggested-grade">Ignore</button>
-                          </div>
-                        </div>
-                      `
-                      : `<div class="empty-state compact-empty"><h3>No suggestion yet</h3><p>Click "Suggest Grade" for a rubric-based starting point.</p></div>`
-                  }
-                  <div class="review-edit" style="margin-top:18px;">
-                    <div class="field">
-                      <label for="teacher-review-score">Teacher score</label>
-                      <input id="teacher-review-score" type="number" min="0" value="${escapeAttribute(String(reviewScore))}" />
-                    </div>
-                 <div class="field">
-                      <label>Student text — select any passage, then click a code or "Add Note" to annotate it</label>
-                      <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(selectedSubmission)}</div>
-                    </div>
-                    <div class="field" style="margin-top:6px;">
-                      <div class="error-code-toolbar">
-                        <span class="mini-label" style="align-self:center;">Annotate selection:</span>
-                        ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}">${code}</button>`).join("")}
-                        <button class="error-code-btn" data-action="add-annotation" data-code="NOTE" title="Add a custom note" style="background:#fff9e6;border-color:#e0c84a;">+ Note</button>
-                      </div>
-                      ${(selectedSubmission?.teacherReview?.annotations?.length) ? `
-                        <div style="margin-top:10px;display:grid;gap:6px;">
-                          ${selectedSubmission.teacherReview.annotations.map((ann, i) => `
-                            <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#fff9e6;border:1px solid #e0c84a;font-size:0.88rem;">
-                              <strong style="color:var(--accent-deep);flex-shrink:0;">${escapeHtml(ann.code)}</strong>
-                              <span style="flex:1;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
-                              <button class="error-code-btn" data-action="remove-annotation" data-annotation-index="${i}" style="flex-shrink:0;color:var(--danger);">✕</button>
-                            </div>
-                          `).join("")}
-                        </div>
-                      ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No annotations yet. Select text above then click a code.</p>`}
-                    </div>
-                    <div class="field">
-                      <label for="teacher-review-notes">Overall teacher notes</label>
-                      <textarea id="teacher-review-notes">${escapeHtml(reviewNotes)}</textarea>
-                    </div>
-                    <button class="button" data-action="save-teacher-review">Save Review</button>
-                  </div>
-                </div>
-              `
-              : `<div class="empty-state"><h3>No submission selected</h3><p>Choose a student to inspect the writing process.</p></div>`
-          }
+                <span style="font-size:0.85rem;color:var(--muted);flex-shrink:0;">/${criterion.points} pts</span>
+              </div>
+            `).join("")}
+            <div style="text-align:right;font-size:0.85rem;font-weight:700;margin-top:6px;">Total: ${(assignment.rubric || []).reduce((s, r) => s + Number(r.points || 0), 0)} pts</div>
+          </div>
+
+          <div class="field" style="margin-bottom:12px;">
+            <label for="teacher-score-input">Final score</label>
+            <input id="teacher-score-input" type="number" min="0" max="${(assignment.rubric || []).reduce((s, r) => s + Number(r.points || 0), 0)}" value="${escapeHtml(String(reviewScore))}" placeholder="0" style="max-width:100px;" />
+          </div>
+
+          <div class="field" style="margin-bottom:12px;">
+            <label for="teacher-review-notes">Teacher notes</label>
+            <textarea id="teacher-review-notes" style="min-height:120px;">${escapeHtml(reviewNotes)}</textarea>
+          </div>
+
+          ${submission.teacherReview?.savedAt ? `
+            <p style="font-size:0.8rem;color:var(--sage);margin-bottom:8px;">✓ Last saved ${escapeHtml(formatDateTime(submission.teacherReview.savedAt))}</p>
+          ` : ""}
+          <button class="button" data-action="save-teacher-review">Save Review</button>
+
         </div>
       </div>
     </section>
   `;
 }
+
+function renderStudentWorkspace() {
 
 function renderStudentWorkspace() {
   const assignments = getPublishedAssignments();
