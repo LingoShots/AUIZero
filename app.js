@@ -89,6 +89,14 @@ function titleCase(text) {
   return String(text || "").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function stopPlayback() {
+  ui.playback.isPlaying = false;
+  if (ui.playback.timerId) {
+    window.clearInterval(ui.playback.timerId);
+    ui.playback.timerId = null;
+  }
+}
+
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -2508,14 +2516,6 @@ function startPlayback(frames) {
     ui.playback.index += 1;
     syncPlaybackUi();
   }, Math.max(900 / ui.playback.speed, 50));
-}
-
-function stopPlayback() {
-  ui.playback.isPlaying = false;
-  if (ui.playback.timerId) {
-    window.clearInterval(ui.playback.timerId);
-    ui.playback.timerId = null;
-  }
 }
 
 function stepPlayback(direction) {
