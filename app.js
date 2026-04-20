@@ -191,14 +191,16 @@ async function bootApp(profile) {
   // Auto-join class if arriving via invite link
   try { await Auth.joinClassIfInvited(); } catch(e) { console.warn("Join class skipped:", e.message); }
 
-  if (profile.role === 'teacher') {
+    if (profile.role === 'teacher') {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
-        if (currentClassId) {
+    if (currentClassId) {
+      const membersData = await Auth.apiFetch(`/api/classes/${currentClassId}/members`);
+      currentClassMembers = membersData.members || [];
       const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
       const raw = assignData.assignments || [];
-            state.assignments = raw.map(a => ({
+      state.assignments = raw.map(a => ({
         id: a.id,
         title: a.title || '',
         prompt: a.prompt || '',
@@ -219,10 +221,50 @@ async function bootApp(profile) {
         classId: a.class_id || currentClassId,
         ideaRequestLimit: 3,
       }));
+      await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
     }
+  } else {
+    const data = await Auth.apiFetch('/api/student/classes');
+    currentClasses = data.classes || [];
+    currentClassId = currentClasses[0]?.id || null;
+    await loadStudentAssignmentsForCurrentClass();
   }
   hydrateSelections();
   render();
+}
+
+async function loadStudentAssignmentsForCurrentClass() {
+  if (!currentClassId) {
+    state.assignments = [];
+    return;
+  }
+
+  const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
+  const raw = assignData.assignments || [];
+
+  state.assignments = raw
+    .filter(a => a.status === 'published')
+    .map(a => ({
+      id: a.id,
+      title: a.title || '',
+      prompt: a.prompt || '',
+      brief: a.brief || '',
+      focus: a.focus || '',
+      assignmentType: a.assignment_type || 'response',
+      languageLevel: a.language_level || 'B1',
+      wordCountMin: a.word_count_min || 250,
+      wordCountMax: a.word_count_max || 400,
+      feedbackRequestLimit: a.feedback_request_limit || 2,
+      chatTimeLimit: a.chat_time_limit || 0,
+      studentFocus: a.student_focus || [],
+      rubric: a.rubric || [],
+      deadline: a.deadline || '',
+      status: a.status || 'published',
+      uploadedRubricText: a.uploaded_rubric_text || '',
+      createdAt: a.created_at || new Date().toISOString(),
+      classId: a.class_id || currentClassId,
+      ideaRequestLimit: 3,
+    }));
 }
 
 function mapServerSubmission(serverSubmission) {
@@ -512,6 +554,7 @@ if (action === "generate-teacher-assist") {
 if (action === "switch-class") {
     currentClassId = target.dataset.classId;
     ui.selectedStudentAssignmentId = null;
+    await loadStudentAssignmentsForCurrentClass();
     hydrateSelections();
     render();
     return;
@@ -519,6 +562,7 @@ if (action === "switch-class") {
 
   if (action === "open-assignment") {
     currentClassId = target.dataset.classId;
+    await loadStudentAssignmentsForCurrentClass();
     ui.selectedStudentAssignmentId = target.dataset.assignmentId;
     ui.studentStep = 1;
     ensureStudentSubmission();
