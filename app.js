@@ -54,14 +54,70 @@ let state = { assignments: [], submissions: [], users: [] };
 
 function normalizeRubricLibraryEntry(entry = {}) {
   const text = String(entry?.text || "").trim();
-  if (!text) return null;
+  const data = entry?.data && typeof entry.data === "object" ? entry.data : null;
+  if (!text && !data?.rows?.length) return null;
   return {
     id: entry?.id || uid("saved-rubric"),
     name: String(entry?.name || "Saved rubric").trim() || "Saved rubric",
     text,
+    data,
     savedAt: entry?.savedAt || new Date().toISOString(),
     source: entry?.source || "upload",
   };
+}
+
+function getMatrixRubricData(source) {
+  if (source?.headers && safeArray(source?.rows).length) {
+    return {
+      kind: "matrix",
+      name: source?.name || "",
+      notes: safeArray(source?.notes),
+      headers: safeArray(source?.headers),
+      rows: safeArray(source?.rows),
+    };
+  }
+
+  const rows = safeArray(source)
+    .filter((row) => safeArray(row?.levels).length)
+    .map((row) => ({
+      id: row.id,
+      section: row.section || "",
+      subcriterion: row.subcriterion || row.name || "",
+      name: row.name || row.subcriterion || "Criterion",
+      description: row.description || "",
+      points: Number(row.points || 0),
+      pointsLabel: row.pointsLabel || "",
+      levels: safeArray(row.levels),
+    }));
+
+  if (!rows.length) return null;
+
+  return {
+    kind: "matrix",
+    headers: safeArray(rows[0].levels).map((level) => level.label),
+    rows,
+    notes: [],
+    name: "",
+  };
+}
+
+function serializeRubricDataForPrompt(rubricData) {
+  const matrix = getMatrixRubricData(rubricData);
+  if (!matrix) return "";
+  const lines = [
+    ...safeArray(matrix.notes),
+    matrix.headers.length ? `Columns: ${matrix.headers.join(" | ")}` : "",
+    ...matrix.rows.map((row) => {
+      const header = row.section && row.section !== row.name
+        ? `${row.section} — ${row.name}`
+        : row.name;
+      const levelText = safeArray(row.levels)
+        .map((level) => `${level.label}: ${level.description}`)
+        .join(" | ");
+      return `${header}: ${levelText}`;
+    }),
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function getSavedRubricLibrary() {
@@ -80,14 +136,15 @@ function getSavedRubricLibrary() {
       id: `assignment-rubric-${assignment.id}`,
       name: assignment.uploadedRubricName || `${assignment.title || "Assignment"} rubric`,
       text: assignment.uploadedRubricText,
+      data: getMatrixRubricData(assignment?.uploadedRubricData || assignment?.rubric),
       savedAt: assignment.createdAt,
       source: "assignment",
     }))
     .filter(Boolean);
 
   const deduped = new Map();
-  [...fromAssignments, ...fromStorage].forEach((entry) => {
-    const key = entry.text;
+  [...fromStorage, ...fromAssignments].forEach((entry) => {
+    const key = entry.text || JSON.stringify(entry.data || {});
     if (!deduped.has(key)) {
       deduped.set(key, entry);
     }
@@ -96,30 +153,94 @@ function getSavedRubricLibrary() {
   return Array.from(deduped.values()).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
 }
 
-function saveRubricToLibrary(name, text) {
-  const normalized = normalizeRubricLibraryEntry({ name, text, source: "upload" });
+function saveRubricToLibrary(name, text, data = null) {
+  const normalized = normalizeRubricLibraryEntry({ name, text, data, source: "upload" });
   if (!normalized) return;
 
   const existing = getSavedRubricLibrary().filter((entry) => entry.source === "upload");
-  const withoutDuplicate = existing.filter((entry) => entry.text !== normalized.text);
+  const withoutDuplicate = existing.filter((entry) => (entry.text || JSON.stringify(entry.data || {})) !== (normalized.text || JSON.stringify(normalized.data || {})));
   const next = [normalized, ...withoutDuplicate].slice(0, 25);
   window.localStorage.setItem(RUBRIC_LIBRARY_KEY, JSON.stringify(next));
 }
 
-function renderUploadedRubricPreview(title = "Uploaded rubric preview", rubricText = "", rubricName = "") {
+function renderRubricMatrixTable(matrixData, options = {}) {
+  const matrix = getMatrixRubricData(matrixData);
+  if (!matrix) return "";
+
+  const clickable = Boolean(options.clickable);
+  const rowScoreMap = options.rowScoreMap || new Map();
+  const suggestedRowScoreMap = options.suggestedRowScoreMap || new Map();
+
+  return `
+    <div style="overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff;">
+      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:0.82rem;min-width:840px;">
+        <thead>
+          <tr>
+            <th style="position:sticky;top:0;background:#f4efe6;padding:10px;border-bottom:1px solid var(--line);text-align:left;min-width:180px;">Criterion</th>
+            ${safeArray(matrix.headers).map((header) => `<th style="position:sticky;top:0;background:#f4efe6;padding:10px;border-bottom:1px solid var(--line);text-align:left;min-width:160px;">${escapeHtml(header)}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>
+          ${matrix.rows.map((row) => {
+            const selected = rowScoreMap.get(row.id);
+            const suggested = suggestedRowScoreMap.get(row.id);
+            return `
+              <tr>
+                <td style="padding:10px;vertical-align:top;border-bottom:1px solid var(--line);background:#faf7f0;">
+                  ${row.section && row.section !== row.name ? `<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">${escapeHtml(row.section)}</div>` : ""}
+                  <div style="font-weight:700;">${escapeHtml(row.name)}</div>
+                  ${row.pointsLabel ? `<div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escapeHtml(row.pointsLabel)}</div>` : ""}
+                </td>
+                ${safeArray(row.levels).map((level) => {
+                  const isSelected = selected?.bandId === level.id;
+                  const isSuggested = suggested?.bandId === level.id;
+                  const background = isSelected ? "#dff3e4" : isSuggested ? "#f4efe6" : "#fff";
+                  const border = isSelected ? "#4f8f68" : isSuggested ? "#c8b9a2" : "transparent";
+                  const content = `
+                    <div style="font-weight:700;font-size:0.78rem;margin-bottom:6px;">${escapeHtml(level.label)}</div>
+                    <div style="line-height:1.5;">${escapeHtml(level.description || "—")}</div>
+                  `;
+                  return `
+                    <td style="padding:8px;vertical-align:top;border-bottom:1px solid var(--line);">
+                      ${clickable
+                        ? `<button class="button-ghost" data-action="select-rubric-band" data-criterion-id="${row.id}" data-band-id="${escapeAttribute(level.id)}" style="width:100%;min-height:100%;padding:10px;white-space:normal;text-align:left;background:${background};border-color:${border};">${content}</button>`
+                        : `<div style="padding:10px;border:1px solid ${border};border-radius:10px;background:${background};min-height:110px;">${content}</div>`
+                      }
+                    </td>
+                  `;
+                }).join("")}
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderUploadedRubricPreview(title = "Uploaded rubric preview", rubricText = "", rubricName = "", rubricData = null) {
   const trimmed = String(rubricText || "").trim();
-  if (!trimmed) return "";
+  const matrix = getMatrixRubricData(rubricData);
+  if (!trimmed && !matrix) return "";
 
   return `
     <div style="background:#fffdf9;border:1px solid var(--line);border-radius:14px;padding:16px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
         <div>
           <p class="mini-label" style="margin-bottom:4px;">${escapeHtml(title)}</p>
-          <p style="margin:0;font-size:0.88rem;color:var(--muted);">${escapeHtml(rubricName || "Uploaded rubric")}</p>
+          <p style="margin:0;font-size:0.88rem;color:var(--muted);">${escapeHtml(rubricName || matrix?.name || "Uploaded rubric")}</p>
         </div>
-        <span class="pill">${trimmed.split(/\n+/).filter(Boolean).length} lines</span>
+        <span class="pill">${matrix ? `${matrix.rows.length} criteria` : `${trimmed.split(/\n+/).filter(Boolean).length} lines`}</span>
       </div>
-      <pre style="margin:0;max-height:320px;overflow:auto;background:#faf7f0;border:1px solid var(--line);border-radius:12px;padding:14px;font-size:0.84rem;line-height:1.55;white-space:pre-wrap;">${escapeHtml(trimmed)}</pre>
+      ${safeArray(matrix?.notes).length ? `
+        <div style="display:grid;gap:6px;margin:0 0 12px;">
+          ${matrix.notes.map((note) => `<div style="font-size:0.82rem;color:var(--muted);line-height:1.5;">${escapeHtml(note)}</div>`).join("")}
+        </div>
+      ` : ""}
+      ${matrix
+        ? renderRubricMatrixTable(matrix)
+        : `<pre style="margin:0;max-height:320px;overflow:auto;background:#faf7f0;border:1px solid var(--line);border-radius:12px;padding:14px;font-size:0.84rem;line-height:1.55;white-space:pre-wrap;">${escapeHtml(trimmed)}</pre>`
+      }
     </div>
   `;
 }
@@ -203,11 +324,13 @@ function createBlankTeacherDraft() {
     rubric: [],
     uploadedRubricText: "",
     uploadedRubricName: "",
+    uploadedRubricData: null,
   };
 }
 
 function getAssignmentRubricType(assignment) {
   if (assignment?.rubricType) return assignment.rubricType;
+  if (safeArray(assignment?.rubric).some((row) => safeArray(row?.levels).length)) return "matrix";
   return assignment?.uploadedRubricText ? "matrix" : "simple_band";
 }
 
@@ -527,6 +650,7 @@ async function bootApp(profile) {
         status: a.status || 'draft',
         uploadedRubricText: a.uploaded_rubric_text || '',
         uploadedRubricName: a.uploaded_rubric_name || '',
+        uploadedRubricData: getMatrixRubricData(a.rubric),
         createdAt: a.created_at || new Date().toISOString(),
         classId: a.class_id || currentClassId,
         ideaRequestLimit: 3,
@@ -572,6 +696,7 @@ async function loadStudentAssignmentsForCurrentClass() {
       status: a.status || 'published',
       uploadedRubricText: a.uploaded_rubric_text || '',
       uploadedRubricName: a.uploaded_rubric_name || '',
+      uploadedRubricData: getMatrixRubricData(a.rubric),
       createdAt: a.created_at || new Date().toISOString(),
       classId: a.class_id || currentClassId,
       ideaRequestLimit: 3,
@@ -708,8 +833,9 @@ function buildFormatPrompt() {
   const deadlineLine = d.deadline
     ? `- Deadline: ${new Date(d.deadline).toLocaleDateString(undefined, {weekday:"long",day:"numeric",month:"long",year:"numeric"})}. Do not mention this in the student prompt — it is shown separately.`
     : "";
-  const rubricLine = d.uploadedRubricText
-    ? `\nTEACHER RUBRIC (use this as the basis for the student rubric — simplify language to CEFR ${d.languageLevel}, preserve the criteria structure and point values where possible, adjust points to total exactly ${d.totalPoints}):\n${d.uploadedRubricText.slice(0, 3000)}`
+  const rubricSourceText = serializeRubricDataForPrompt(d.uploadedRubricData) || d.uploadedRubricText;
+  const rubricLine = rubricSourceText
+    ? `\nTEACHER RUBRIC (use this as the basis for the student rubric — simplify language to CEFR ${d.languageLevel}, preserve the criteria structure and point values where possible, adjust points to total exactly ${d.totalPoints}):\n${rubricSourceText.slice(0, 3000)}`
     : "- No rubric uploaded. Create 4 appropriate rubric criteria for the assignment type.";
   const rubricGuidance = d.uploadedRubricText
     ? ""
@@ -793,17 +919,25 @@ if (action === "generate-teacher-assist") {
     .then(data => {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
       const parsed = JSON.parse(jsonStr);
-      parsed.rubric = (parsed.rubric || []).map((item) => {
-        const points = Number(item.points) || 1;
-        return { id: uid("rubric"), ...item, points, bands: createScoreBandsForPoints(points) };
-      });
-      // Ensure rubric points add up to totalPoints
-      const targetPts = Number(ui.teacherDraft.totalPoints) || 20;
-      const currentTotal = parsed.rubric.reduce((s, r) => s + r.points, 0);
-      if (currentTotal !== targetPts && parsed.rubric.length > 0) {
-        const diff = targetPts - currentTotal;
-        parsed.rubric[parsed.rubric.length - 1].points += diff;
-        parsed.rubric[parsed.rubric.length - 1].bands = createScoreBandsForPoints(parsed.rubric[parsed.rubric.length - 1].points);
+      if (ui.teacherDraft.uploadedRubricData?.rows?.length) {
+        parsed.rubric = safeArray(ui.teacherDraft.uploadedRubricData.rows).map((item, index) => normalizeRubricRow({
+          ...item,
+          id: item.id || `uploaded-rubric-${index + 1}`,
+        }));
+        parsed.rubricType = "matrix";
+      } else {
+        parsed.rubric = (parsed.rubric || []).map((item) => {
+          const points = Number(item.points) || 1;
+          return { id: uid("rubric"), ...item, points, bands: createScoreBandsForPoints(points) };
+        });
+        // Ensure rubric points add up to totalPoints
+        const targetPts = Number(ui.teacherDraft.totalPoints) || 20;
+        const currentTotal = parsed.rubric.reduce((s, r) => s + r.points, 0);
+        if (currentTotal !== targetPts && parsed.rubric.length > 0) {
+          const diff = targetPts - currentTotal;
+          parsed.rubric[parsed.rubric.length - 1].points += diff;
+          parsed.rubric[parsed.rubric.length - 1].bands = createScoreBandsForPoints(parsed.rubric[parsed.rubric.length - 1].points);
+        }
       }
       ui.teacherAssist = parsed;
       ui.notice = "Assignment generated successfully!";
@@ -834,6 +968,7 @@ if (action === "generate-teacher-assist") {
     }
     ui.teacherDraft.uploadedRubricText = savedRubric.text;
     ui.teacherDraft.uploadedRubricName = savedRubric.name;
+    ui.teacherDraft.uploadedRubricData = savedRubric.data || null;
     ui.teacherAssist = null;
     ui.notice = `Loaded saved rubric "${savedRubric.name}". Click Format With AI to regenerate the assignment with it.`;
     render();
@@ -1897,6 +2032,7 @@ window.handleRubricFile = async (file) => {
 window.clearUploadedRubric = () => {
   ui.teacherDraft.uploadedRubricText = '';
   ui.teacherDraft.uploadedRubricName = '';
+  ui.teacherDraft.uploadedRubricData = null;
   ui.teacherAssist = null;
   render();
 };
@@ -1918,8 +2054,9 @@ async function uploadRubricFile(file) {
     } else {
       ui.teacherDraft.uploadedRubricText = data.text;
       ui.teacherDraft.uploadedRubricName = file.name;
+      ui.teacherDraft.uploadedRubricData = data.rubricData || null;
       ui.teacherAssist = null;
-      saveRubricToLibrary(file.name, data.text);
+      saveRubricToLibrary(file.name, data.text, data.rubricData || null);
       ui.notice = `Rubric "${file.name}" loaded and saved for reuse. Click Format With AI to rebuild the assignment with it.`;
     }
   } catch (e) {
@@ -2118,7 +2255,7 @@ function renderTeacherWorkspace() {
             ` : ""}
             ${ui.teacherDraft.uploadedRubricText ? `
               <div style="margin-top:12px;">
-                ${renderUploadedRubricPreview("Uploaded rubric", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName)}
+                ${renderUploadedRubricPreview("Uploaded rubric", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData)}
               </div>
             ` : ""}
           </div>
@@ -2204,7 +2341,7 @@ function renderTeacherWorkspace() {
                   ${ui.teacherDraft.uploadedRubricText
                     ? `
                       <p class="subtle" style="font-size:0.84rem;margin:0 0 10px;">Keeping the uploaded rubric visible here so you can confirm the exact version before saving.</p>
-                      ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName)}
+                      ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData)}
                     `
                     : `
                       <div class="review-stack">
@@ -2424,6 +2561,7 @@ function renderTeacherGrading(assignment, submission) {
   const nextStudentId = getNextReviewStudentId(submission.studentId, assignment.id);
   const deadlinePassed = canMarkLateOrMissing(assignment);
   const currentStatus = submission.status || submission.teacherReview?.status || "not_started";
+  const matrixRubric = getMatrixRubricData(assignment.uploadedRubricData || assignment.rubric);
 
   return `
     <section class="panel review-shell">
@@ -2547,47 +2685,57 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:8px;">Rubric</p>
-            ${reviewSummary.rubric.map((criterion) => {
-              const bands = getCriterionBands(criterion);
-              const selected = reviewSummary.rowScoreMap.get(criterion.id);
-              const suggested = suggestedRowScoreMap.get(criterion.id);
-              return `
-                <div style="padding:10px 0;border-bottom:1px solid var(--line);">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
-                    <div style="flex:1;">
-                      <div style="font-weight:600;font-size:0.9rem;">${escapeHtml(criterion.name)}</div>
-                      <div style="font-size:0.82rem;color:var(--muted);line-height:1.5;">${escapeHtml(criterion.description)}</div>
-                    </div>
-                    <span style="font-size:0.85rem;color:var(--muted);flex-shrink:0;">/${criterion.points} pts</span>
+            ${matrixRubric
+              ? `
+                ${safeArray(matrixRubric.notes).length ? `
+                  <div style="display:grid;gap:6px;margin:0 0 12px;">
+                    ${matrixRubric.notes.map((note) => `<div style="font-size:0.8rem;color:var(--muted);line-height:1.5;">${escapeHtml(note)}</div>`).join("")}
                   </div>
-                  ${bands.length ? `
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-                      ${bands.map((band) => {
-                        const isSelected = selected?.bandId === band.id || (selected && Number(selected.points) === Number(band.points) && selected.label === band.label);
-                        const isSuggested = suggested?.bandId === band.id || (suggested && Number(suggested.points) === Number(band.points) && suggested.label === band.label);
-                        const bg = isSelected ? "#dff3e4" : isSuggested ? "#f4efe6" : "#fff";
-                        const border = isSelected ? "#4f8f68" : isSuggested ? "#c8b9a2" : "var(--line)";
-                        const color = isSelected ? "#1f5c38" : "var(--ink)";
-                        return `<button
-                          class="button-ghost"
-                          data-action="select-rubric-band"
-                          data-criterion-id="${criterion.id}"
-                          data-band-id="${escapeAttribute(band.id)}"
-                          style="padding:8px 10px;min-width:0;background:${bg};border-color:${border};color:${color};font-size:0.8rem;"
-                        >${escapeHtml(band.label)} (${band.points})</button>`;
-                      }).join("")}
+                ` : ""}
+                ${renderRubricMatrixTable(matrixRubric, { clickable: true, rowScoreMap: reviewSummary.rowScoreMap, suggestedRowScoreMap })}
+              `
+              : reviewSummary.rubric.map((criterion) => {
+                  const bands = getCriterionBands(criterion);
+                  const selected = reviewSummary.rowScoreMap.get(criterion.id);
+                  const suggested = suggestedRowScoreMap.get(criterion.id);
+                  return `
+                    <div style="padding:10px 0;border-bottom:1px solid var(--line);">
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                        <div style="flex:1;">
+                          <div style="font-weight:600;font-size:0.9rem;">${escapeHtml(criterion.name)}</div>
+                          <div style="font-size:0.82rem;color:var(--muted);line-height:1.5;">${escapeHtml(criterion.description)}</div>
+                        </div>
+                        <span style="font-size:0.85rem;color:var(--muted);flex-shrink:0;">/${criterion.points} pts</span>
+                      </div>
+                      ${bands.length ? `
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                          ${bands.map((band) => {
+                            const isSelected = selected?.bandId === band.id || (selected && Number(selected.points) === Number(band.points) && selected.label === band.label);
+                            const isSuggested = suggested?.bandId === band.id || (suggested && Number(suggested.points) === Number(band.points) && suggested.label === band.label);
+                            const bg = isSelected ? "#dff3e4" : isSuggested ? "#f4efe6" : "#fff";
+                            const border = isSelected ? "#4f8f68" : isSuggested ? "#c8b9a2" : "var(--line)";
+                            const color = isSelected ? "#1f5c38" : "var(--ink)";
+                            return `<button
+                              class="button-ghost"
+                              data-action="select-rubric-band"
+                              data-criterion-id="${criterion.id}"
+                              data-band-id="${escapeAttribute(band.id)}"
+                              style="padding:8px 10px;min-width:0;background:${bg};border-color:${border};color:${color};font-size:0.8rem;"
+                            >${escapeHtml(band.label)} (${band.points})</button>`;
+                          }).join("")}
+                        </div>
+                      ` : ""}
+                      ${selected ? `
+                        <p style="font-size:0.78rem;color:var(--sage);margin:8px 0 0;">Selected: ${escapeHtml(selected.label)} (${selected.points}/${selected.maxPoints})</p>
+                      ` : suggested ? `
+                        <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">AI suggestion: ${escapeHtml(suggested.label)} (${suggested.points}/${suggested.maxPoints})</p>
+                      ` : `
+                        <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Choose a band to score this criterion.</p>
+                      `}
                     </div>
-                  ` : ""}
-                  ${selected ? `
-                    <p style="font-size:0.78rem;color:var(--sage);margin:8px 0 0;">Selected: ${escapeHtml(selected.label)} (${selected.points}/${selected.maxPoints})</p>
-                  ` : suggested ? `
-                    <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">AI suggestion: ${escapeHtml(suggested.label)} (${suggested.points}/${suggested.maxPoints})</p>
-                  ` : `
-                    <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Choose a band to score this criterion.</p>
-                  `}
-                </div>
-              `;
-            }).join("")}
+                  `;
+                }).join("")
+            }
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
               <span style="font-size:0.82rem;color:var(--muted);">${reviewSummary.selectedCount}/${reviewSummary.rubric.length} criteria scored</span>
               <span style="font-size:0.95rem;font-weight:700;color:var(--ink);">Auto total: ${reviewSummary.totalScore}/${reviewSummary.maxScore}</span>
@@ -3022,13 +3170,17 @@ async function saveTeacherAssignment() {
     ideaRequestLimit: draft.ideaRequestLimit,
     feedbackRequestLimit: draft.feedbackRequestLimit,
     studentFocus: studentFocusArray,
-    rubric: draft.rubric.length ? draft.rubric : rubricForType(draft.assignmentType),
+    rubric: ui.teacherDraft.uploadedRubricData?.rows?.length
+      ? safeArray(ui.teacherDraft.uploadedRubricData.rows).map((item) => normalizeRubricRow(item))
+      : (draft.rubric.length ? draft.rubric : rubricForType(draft.assignmentType)),
     createdBy: "teacher-1",
     createdAt: new Date().toISOString(),
     status: "draft",
     deadline: ui.teacherDraft.deadline || "",
     chatTimeLimit: Number(ui.teacherDraft.chatTimeLimit || 0),
     uploadedRubricText: ui.teacherDraft.uploadedRubricText || "",
+    uploadedRubricName: ui.teacherDraft.uploadedRubricName || "",
+    uploadedRubricData: ui.teacherDraft.uploadedRubricData || null,
   };
 
   if (!currentClassId) {
@@ -3072,6 +3224,7 @@ async function saveTeacherAssignment() {
         studentFocus: data.assignment.studentFocus || data.assignment.student_focus,
         uploadedRubricText: data.assignment.uploadedRubricText || data.assignment.uploaded_rubric_text || ui.teacherDraft.uploadedRubricText,
         uploadedRubricName: ui.teacherDraft.uploadedRubricName,
+        uploadedRubricData: ui.teacherDraft.uploadedRubricData,
         classId: data.assignment.class_id || currentClassId,
       });
       state.assignments.unshift(savedAssignment);
@@ -4633,6 +4786,7 @@ function normalizeAssignment(assignment) {
     chatTimeLimit: Number(assignment?.chatTimeLimit ?? 0),
     uploadedRubricText: assignment?.uploadedRubricText || "",
     uploadedRubricName: assignment?.uploadedRubricName || "",
+    uploadedRubricData: assignment?.uploadedRubricData || getMatrixRubricData(assignment?.rubric),
   };
 }
 
