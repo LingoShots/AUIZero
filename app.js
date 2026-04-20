@@ -81,6 +81,10 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#96;");
+}
+
 let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -4061,10 +4065,6 @@ function averageSentenceLength(text) {
 function hasOpeningClaim(text) {
   const firstParagraph = splitParagraphs(text)[0] || text;
   return wordCount(firstParagraph) >= 12;
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replaceAll("`", "&#96;");
 }
 
 function safeArray(value) {
