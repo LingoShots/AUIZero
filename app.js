@@ -1755,7 +1755,20 @@ function renderTeacherReview(assignment, submissions) {
                   </div>
                 </div>
               `;
-              const m = computeProcessMetrics(assignment, submission);
+                            const events = Array.isArray(submission.writingEvents) ? submission.writingEvents : [];
+              const finalText = submission.finalText || submission.draftText || "";
+              const startedAt = submission.startedAt || submission.updatedAt || submission.submittedAt;
+              const endedAt = submission.submittedAt || submission.updatedAt || startedAt;
+              const totalMinutes = startedAt && endedAt
+                ? Math.max(1, Math.round((new Date(endedAt) - new Date(startedAt)) / 60000))
+                : 0;
+              const m = {
+                largePasteCount: events.filter(e => e && e.flagged).length,
+                finalWordCount: finalText.trim() ? finalText.trim().split(/\s+/).length : 0,
+                revisionCount: events.length,
+                totalMinutes,
+              };
+
               const isGraded = Boolean(submission.teacherReview?.savedAt);
               const score = submission.teacherReview?.finalScore;
               return `
