@@ -1380,11 +1380,7 @@ function renderInvitePanel() {
 }
 
 function renderTopbar() {
-  const studentOptions = getStudentUsers()
-    .map(
-      (user) => `<option value="${user.id}" ${ui.activeUserId === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>`
-    )
-    .join("");
+  const studentOptions = "";
 
   return `
     <header class="topbar">
