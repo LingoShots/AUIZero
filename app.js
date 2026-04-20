@@ -132,6 +132,26 @@ function createBlankTeacherDraft() {
   };
 }
 
+function getAssignmentRubricType(assignment) {
+  if (assignment?.rubricType) return assignment.rubricType;
+  return assignment?.uploadedRubricText ? "matrix" : "simple_band";
+}
+
+function createDefaultTeacherReview(review = {}) {
+  return {
+    status: review?.status || "ungraded",
+    rubricType: review?.rubricType || "simple_band",
+    rowScores: Array.isArray(review?.rowScores) ? review.rowScores : [],
+    suggestedRowScores: Array.isArray(review?.suggestedRowScores) ? review.suggestedRowScores : [],
+    suggestedGrade: review?.suggestedGrade || null,
+    finalScore: review?.finalScore ?? "",
+    finalNotes: review?.finalNotes || "",
+    annotations: Array.isArray(review?.annotations) ? review.annotations : [],
+    savedAt: review?.savedAt || null,
+    acceptedAt: review?.acceptedAt || null,
+  };
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -284,14 +304,18 @@ function mapServerSubmission(serverSubmission) {
     feedbackHistory: Array.isArray(serverSubmission?.feedback_history) ? serverSubmission.feedback_history : [],
     writingEvents: Array.isArray(serverSubmission?.writing_events) ? serverSubmission.writing_events : [],
     focusAnnotations: Array.isArray(serverSubmission?.focus_annotations) ? serverSubmission.focus_annotations : [],
-    teacherReview: {
-      suggestedGrade: serverSubmission?.teacher_review?.suggestedGrade || null,
-      finalScore: serverSubmission?.teacher_review?.finalScore ?? "",
-      finalNotes: serverSubmission?.teacher_review?.finalNotes || "",
-      annotations: Array.isArray(serverSubmission?.teacher_review?.annotations) ? serverSubmission.teacher_review.annotations : [],
-      savedAt: serverSubmission?.teacher_review?.savedAt || null,
-      acceptedAt: serverSubmission?.teacher_review?.acceptedAt || null,
-    },
+    teacherReview: createDefaultTeacherReview({
+      status: serverSubmission?.teacher_review?.status,
+      rubricType: serverSubmission?.teacher_review?.rubricType,
+      rowScores: serverSubmission?.teacher_review?.rowScores,
+      suggestedRowScores: serverSubmission?.teacher_review?.suggestedRowScores,
+      suggestedGrade: serverSubmission?.teacher_review?.suggestedGrade,
+      finalScore: serverSubmission?.teacher_review?.finalScore,
+      finalNotes: serverSubmission?.teacher_review?.finalNotes,
+      annotations: serverSubmission?.teacher_review?.annotations,
+      savedAt: serverSubmission?.teacher_review?.savedAt,
+      acceptedAt: serverSubmission?.teacher_review?.acceptedAt,
+    }),
     selfAssessment: serverSubmission?.self_assessment || {},
     chatHistory: Array.isArray(serverSubmission?.chat_history) ? serverSubmission.chat_history : [],
     chatStartedAt: serverSubmission?.chat_started_at || null,
@@ -3829,12 +3853,7 @@ function createEmptySubmission(assignmentId, studentId) {
     focusAnnotations: [],
     chatHistory: [],
     chatStartedAt: null,
-    teacherReview: {
-      suggestedGrade: null,
-      finalScore: "",
-      finalNotes: "",
-      annotations: [],
-    },
+    teacherReview: createDefaultTeacherReview(),
     status: "draft",
     startedAt: null,
     updatedAt: new Date().toISOString(),
@@ -3893,7 +3912,9 @@ function normalizeAssignment(assignment) {
     ideaRequestLimit: Number(assignment?.ideaRequestLimit ?? 3),
     feedbackRequestLimit: Number(assignment?.feedbackRequestLimit ?? 2),
     studentFocus: safeArray(assignment?.studentFocus).length ? assignment.studentFocus : focusForType(assignmentType, "the topic"),
+    rubricType: getAssignmentRubricType(assignment),
     rubric: safeArray(assignment?.rubric).length ? assignment.rubric.map(normalizeRubricRow) : rubricForType(assignmentType),
+    rubricMeta: assignment?.rubricMeta || { reminderRules: [] },
     createdBy: assignment?.createdBy || "teacher-1",
     createdAt: assignment?.createdAt || new Date().toISOString(),
     status: assignment?.status || "published",
@@ -3906,9 +3927,23 @@ function normalizeAssignment(assignment) {
 function normalizeRubricRow(item) {
   return {
     id: item?.id || uid("rubric"),
-    name: item?.name || "Criterion",
+    name: item?.name || item?.subcriterion || "Criterion",
     description: item?.description || "",
     points: Number(item?.points || 4),
+    section: item?.section || "",
+    subcriterion: item?.subcriterion || "",
+    bands: safeArray(item?.bands).map((band) => ({
+      id: band?.id || uid("band"),
+      label: band?.label || "",
+      points: Number(band?.points ?? 0),
+      description: band?.description || "",
+    })),
+    levels: safeArray(item?.levels).map((level) => ({
+      id: level?.id || uid("level"),
+      label: level?.label || "",
+      points: Number(level?.points ?? 0),
+      description: level?.description || "",
+    })),
   };
 }
 
@@ -3956,14 +3991,7 @@ function normalizeSubmission(submission) {
       timestamp: entry?.timestamp || new Date().toISOString(),
       label: entry?.label || "Writing focus",
     })),
-        teacherReview: {
-      suggestedGrade: submission?.teacherReview?.suggestedGrade || null,
-      finalScore: submission?.teacherReview?.finalScore ?? "",
-      finalNotes: submission?.teacherReview?.finalNotes || "",
-      annotations: safeArray(submission?.teacherReview?.annotations),
-      savedAt: submission?.teacherReview?.savedAt || null,
-      acceptedAt: submission?.teacherReview?.acceptedAt || null,
-    },
+    teacherReview: createDefaultTeacherReview(submission?.teacherReview),
     chatHistory: safeArray(submission?.chatHistory).map((msg) => ({
       role: msg?.role || "user",
       content: msg?.content || "",
