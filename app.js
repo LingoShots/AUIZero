@@ -1454,7 +1454,7 @@ function renderHero() {
 function renderTeacherWorkspace() {
   const assignments = state.assignments;
   const selectedAssignment = state.assignments.find(a => a.id === ui.selectedAssignmentId) || null;
-  const submissions = selectedAssignment ? getAssignmentSubmissions(selectedAssignment.id) : [];
+  const submissions = state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId);
   const selectedSubmission = state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null;
 
   return `
