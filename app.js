@@ -3211,15 +3211,25 @@ Start by asking the student what topic or idea they are thinking about. If they 
 function renderAnnotatedText(submission) {
   const text = submission?.finalText || submission?.draftText || "No text submitted yet.";
   const annotations = submission?.teacherReview?.annotations || [];
-  if (!annotations.length) return escapeHtml(text);
+  const flaggedPastes = (submission?.writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
 
+  // Build combined highlight list — teacher annotations (yellow) and paste flags (violet)
   const highlights = [];
   for (const ann of annotations) {
     const idx = text.indexOf(ann.selectedText);
     if (idx !== -1) {
-      highlights.push({ start: idx, end: idx + ann.selectedText.length, code: ann.code });
+      highlights.push({ start: idx, end: idx + ann.selectedText.length, code: ann.code, type: "annotation" });
     }
   }
+  for (const paste of flaggedPastes) {
+    const idx = text.indexOf(paste.insertedText);
+    if (idx !== -1) {
+      highlights.push({ start: idx, end: idx + paste.insertedText.length, code: "PASTE", type: "paste" });
+    }
+  }
+
+  if (!highlights.length) return escapeHtml(text);
+
   highlights.sort((a, b) => a.start - b.start);
 
   let result = "";
@@ -3227,7 +3237,11 @@ function renderAnnotatedText(submission) {
   for (const h of highlights) {
     if (h.start < cursor) continue;
     result += escapeHtml(text.slice(cursor, h.start));
-    result += `<mark style="background:#fff176;border-radius:3px;padding:1px 2px;" title="${escapeHtml(h.code)}">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;">${escapeHtml(h.code)}</sup></mark>`;
+    if (h.type === "paste") {
+      result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
+    } else {
+      result += `<mark style="background:#fff176;border-radius:3px;padding:1px 2px;" title="${escapeHtml(h.code)}">${escapeHtml(text.slice(h.start, h.end))}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;">${escapeHtml(h.code)}</sup></mark>`;
+    }
     cursor = h.end;
   }
   result += escapeHtml(text.slice(cursor));
