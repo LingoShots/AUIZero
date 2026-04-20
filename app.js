@@ -1439,7 +1439,7 @@ function renderTeacherWorkspace() {
   const assignments = state.assignments;
   const selectedAssignment = state.assignments.find(a => a.id === ui.selectedAssignmentId) || null;
   const submissions = selectedAssignment ? getAssignmentSubmissions(selectedAssignment.id) : [];
-  const selectedSubmission = getSelectedReviewSubmission();
+  const selectedSubmission = state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null;
 
   return `
     <section class="teacher-grid">
