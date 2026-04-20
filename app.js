@@ -1822,7 +1822,6 @@ function renderTeacherGrading(assignment, submission) {
     totalMinutes,
   };
 
-  const playback = getPlaybackState(submission);
   const reviewScore = submission.teacherReview?.finalScore ?? "";
   const reviewNotes = submission.teacherReview?.finalNotes ?? "";
   const studentName = submission._studentName || getUserById(submission.studentId)?.name || "Student";
