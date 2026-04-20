@@ -1,4 +1,5 @@
 const STORAGE_KEY = "AUIZero-v1";
+const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
 const LARGE_PASTE_LIMIT = 220;
 
 // App state — now server-backed
@@ -50,6 +51,78 @@ showInvitePanel: false,
 };
 
 let state = { assignments: [], submissions: [], users: [] };
+
+function normalizeRubricLibraryEntry(entry = {}) {
+  const text = String(entry?.text || "").trim();
+  if (!text) return null;
+  return {
+    id: entry?.id || uid("saved-rubric"),
+    name: String(entry?.name || "Saved rubric").trim() || "Saved rubric",
+    text,
+    savedAt: entry?.savedAt || new Date().toISOString(),
+    source: entry?.source || "upload",
+  };
+}
+
+function getSavedRubricLibrary() {
+  const fromStorage = (() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(RUBRIC_LIBRARY_KEY) || "[]");
+      return safeArray(stored).map(normalizeRubricLibraryEntry).filter(Boolean);
+    } catch (error) {
+      return [];
+    }
+  })();
+
+  const fromAssignments = safeArray(state.assignments)
+    .filter((assignment) => assignment?.uploadedRubricText)
+    .map((assignment) => normalizeRubricLibraryEntry({
+      id: `assignment-rubric-${assignment.id}`,
+      name: assignment.uploadedRubricName || `${assignment.title || "Assignment"} rubric`,
+      text: assignment.uploadedRubricText,
+      savedAt: assignment.createdAt,
+      source: "assignment",
+    }))
+    .filter(Boolean);
+
+  const deduped = new Map();
+  [...fromAssignments, ...fromStorage].forEach((entry) => {
+    const key = entry.text;
+    if (!deduped.has(key)) {
+      deduped.set(key, entry);
+    }
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+}
+
+function saveRubricToLibrary(name, text) {
+  const normalized = normalizeRubricLibraryEntry({ name, text, source: "upload" });
+  if (!normalized) return;
+
+  const existing = getSavedRubricLibrary().filter((entry) => entry.source === "upload");
+  const withoutDuplicate = existing.filter((entry) => entry.text !== normalized.text);
+  const next = [normalized, ...withoutDuplicate].slice(0, 25);
+  window.localStorage.setItem(RUBRIC_LIBRARY_KEY, JSON.stringify(next));
+}
+
+function renderUploadedRubricPreview(title = "Uploaded rubric preview", rubricText = "", rubricName = "") {
+  const trimmed = String(rubricText || "").trim();
+  if (!trimmed) return "";
+
+  return `
+    <div style="background:#fffdf9;border:1px solid var(--line);border-radius:14px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+        <div>
+          <p class="mini-label" style="margin-bottom:4px;">${escapeHtml(title)}</p>
+          <p style="margin:0;font-size:0.88rem;color:var(--muted);">${escapeHtml(rubricName || "Uploaded rubric")}</p>
+        </div>
+        <span class="pill">${trimmed.split(/\n+/).filter(Boolean).length} lines</span>
+      </div>
+      <pre style="margin:0;max-height:320px;overflow:auto;background:#faf7f0;border:1px solid var(--line);border-radius:12px;padding:14px;font-size:0.84rem;line-height:1.55;white-space:pre-wrap;">${escapeHtml(trimmed)}</pre>
+    </div>
+  `;
+}
 
 function getDeadlineDatePart(value) {
   if (!value || !String(value).includes("T")) return "";
@@ -453,6 +526,7 @@ async function bootApp(profile) {
         deadline: a.deadline || '',
         status: a.status || 'draft',
         uploadedRubricText: a.uploaded_rubric_text || '',
+        uploadedRubricName: a.uploaded_rubric_name || '',
         createdAt: a.created_at || new Date().toISOString(),
         classId: a.class_id || currentClassId,
         ideaRequestLimit: 3,
@@ -497,6 +571,7 @@ async function loadStudentAssignmentsForCurrentClass() {
       deadline: a.deadline || '',
       status: a.status || 'published',
       uploadedRubricText: a.uploaded_rubric_text || '',
+      uploadedRubricName: a.uploaded_rubric_name || '',
       createdAt: a.created_at || new Date().toISOString(),
       classId: a.class_id || currentClassId,
       ideaRequestLimit: 3,
@@ -629,12 +704,26 @@ function scheduleAutoSave() {
 
 function buildFormatPrompt() {
   const d = ui.teacherDraft;
+  const inferredType = detectAssignmentType(d.brief || "");
   const deadlineLine = d.deadline
     ? `- Deadline: ${new Date(d.deadline).toLocaleDateString(undefined, {weekday:"long",day:"numeric",month:"long",year:"numeric"})}. Do not mention this in the student prompt — it is shown separately.`
     : "";
   const rubricLine = d.uploadedRubricText
     ? `\nTEACHER RUBRIC (use this as the basis for the student rubric — simplify language to CEFR ${d.languageLevel}, preserve the criteria structure and point values where possible, adjust points to total exactly ${d.totalPoints}):\n${d.uploadedRubricText.slice(0, 3000)}`
     : "- No rubric uploaded. Create 4 appropriate rubric criteria for the assignment type.";
+  const rubricGuidance = d.uploadedRubricText
+    ? ""
+    : ({
+        argument: "Prioritise a clear position, relevant support, logical organisation, language control, and mechanics.",
+        narrative: "Prioritise story development, sequencing, meaningful detail, language control, and mechanics.",
+        process: "Prioritise complete steps, clear sequencing, reader clarity, language control, and mechanics.",
+        definition: "Prioritise concept accuracy, explanation, clarifying detail, language control, and mechanics.",
+        compare: "Prioritise balanced comparison, meaningful similarities or differences, organisation, language control, and mechanics.",
+        informational: "Prioritise content accuracy, supporting detail, organisation, language control, and mechanics.",
+        response: "Prioritise answering the task, support, organisation, language control, and mechanics.",
+        other: "Tailor the rubric to the specific writing task instead of using generic criterion names.",
+      }[inferredType] || "Tailor the rubric to the specific writing task instead of using generic criterion names.");
+  const rubricGuidanceLine = d.uploadedRubricText ? "" : `- ${rubricGuidance}`;
 
   return `Create a student-ready writing assignment based on these teacher notes: "${d.brief}".
 
@@ -643,17 +732,21 @@ Assignment settings:
 - Total assignment points: ${d.totalPoints}. Distribute points evenly across criteria where possible (e.g. for 4 criteria and 20 points, use 5/5/5/5). Only use uneven distribution if the uploaded rubric specifies different weights.
 - Feedback checks allowed: ${d.feedbackRequestLimit}. Mention this in the student prompt if relevant.
 - Chat time limit: ${d.chatTimeLimit === 0 ? "unlimited" : d.chatTimeLimit + " minutes"}.
+- The teacher brief most likely fits this assignment type: ${inferredType}. Use that unless the brief strongly points elsewhere.
 ${deadlineLine}
 ${rubricLine}
 
 Rules:
 - Keep the student prompt short and sweet: aim for 3 short paragraphs or fewer.
 - Choose the assignmentType that best matches the teacher brief. Use one of: argument, narrative, informational, process, definition, compare, response, other.
+- If no rubric is uploaded, make the rubric specific to the chosen writing type instead of generic.
+- Keep exactly 4 rubric criteria when no rubric is uploaded.
+${rubricGuidanceLine}
 - Keep rubric criterion names short (2-4 words).
 - Rubric descriptions must be one clear sentence a student at CEFR ${d.languageLevel} can understand.
 - The student prompt should be encouraging and clear, not academic in tone.
 
-Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, process, definition, compare, response, other), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of objects each with "name", "description", "points").`;
+Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, process, definition, compare, response, other), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of exactly 4 objects each with "name", "description", "points").`;
 }
 
 async function handleClick(event) {
@@ -728,6 +821,22 @@ if (action === "generate-teacher-assist") {
       ui.notice = "Error: Could not reach the AI. Check console.";
       render();
     });
+  return;
+}
+
+  if (action === "apply-saved-rubric") {
+    const select = document.getElementById("saved-rubric-select");
+    const savedRubric = getSavedRubricLibrary().find((entry) => entry.id === select?.value);
+    if (!savedRubric) {
+      ui.notice = "Choose a saved rubric first.";
+      render();
+      return;
+    }
+    ui.teacherDraft.uploadedRubricText = savedRubric.text;
+    ui.teacherDraft.uploadedRubricName = savedRubric.name;
+    ui.teacherAssist = null;
+    ui.notice = `Loaded saved rubric "${savedRubric.name}". Click Format With AI to regenerate the assignment with it.`;
+    render();
     return;
   }
 
@@ -1100,7 +1209,7 @@ if (action === "back-to-assignments") {
     if (!submission || !assignment) return;
 
     const copied = await copyLmsGradeToClipboard(assignment, submission);
-    ui.notice = copied ? "LMS-ready grade text copied to clipboard." : "Could not copy grade text. Please try again.";
+    ui.notice = copied ? "Grade copied to clipboard." : "Could not copy grade text. Please try again.";
     render();
     return;
   }
@@ -1788,6 +1897,7 @@ window.handleRubricFile = async (file) => {
 window.clearUploadedRubric = () => {
   ui.teacherDraft.uploadedRubricText = '';
   ui.teacherDraft.uploadedRubricName = '';
+  ui.teacherAssist = null;
   render();
 };
 
@@ -1808,7 +1918,9 @@ async function uploadRubricFile(file) {
     } else {
       ui.teacherDraft.uploadedRubricText = data.text;
       ui.teacherDraft.uploadedRubricName = file.name;
-      ui.notice = `Rubric "${file.name}" loaded — the AI will use it when formatting.`;
+      ui.teacherAssist = null;
+      saveRubricToLibrary(file.name, data.text);
+      ui.notice = `Rubric "${file.name}" loaded and saved for reuse. Click Format With AI to rebuild the assignment with it.`;
     }
   } catch (e) {
     ui.notice = 'Could not read the rubric file. Try a different format.';
@@ -1958,6 +2070,7 @@ function renderTeacherWorkspace() {
   const selectedSubmission = selectedAssignment && ui.teacherView === "grading"
     ? getSelectedReviewSubmission()
     : (state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null);
+  const savedRubrics = getSavedRubricLibrary();
 
   return `
     <section class="teacher-grid">
@@ -1991,6 +2104,23 @@ function renderTeacherWorkspace() {
               }
             </div>
             <input type="file" id="rubric-file-input" accept=".pdf,.doc,.docx" style="display:none;" onchange="handleRubricFile(this.files[0]);" />
+            ${savedRubrics.length ? `
+              <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:10px;">
+                <div style="flex:1;min-width:220px;">
+                  <label for="saved-rubric-select" style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px;">Use a previous rubric</label>
+                  <select id="saved-rubric-select">
+                    <option value="">Select a saved rubric</option>
+                    ${savedRubrics.map((entry) => `<option value="${entry.id}">${escapeHtml(entry.name)}</option>`).join("")}
+                  </select>
+                </div>
+                <button class="button-ghost" data-action="apply-saved-rubric" style="min-height:40px;">Use saved rubric</button>
+              </div>
+            ` : ""}
+            ${ui.teacherDraft.uploadedRubricText ? `
+              <div style="margin-top:12px;">
+                ${renderUploadedRubricPreview("Uploaded rubric", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName)}
+              </div>
+            ` : ""}
           </div>
           <div class="field-grid compact-grid">
             <div class="field">
@@ -2071,22 +2201,30 @@ function renderTeacherWorkspace() {
                     <p class="mini-label">Rubric</p>
                     <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts total</span>
                   </div>
-                  <div class="review-stack">
-                    ${ui.teacherAssist.rubric.map((item) => `
-                      <div class="rubric-edit-row">
-                        <div class="rubric-edit-fields">
-                          <input data-rubric-id="${item.id}" data-rubric-field="name" value="${escapeAttribute(item.name)}" placeholder="Criterion name" style="font-weight:700;" />
-                          <input data-rubric-id="${item.id}" data-rubric-field="description" value="${escapeAttribute(item.description)}" placeholder="Description" />
-                        </div>
-                        <div class="rubric-edit-right">
-                          <input type="number" data-rubric-id="${item.id}" data-rubric-field="points" value="${item.points}" min="1" style="width:60px;text-align:center;" />
-                          <span class="subtle" style="font-size:0.82rem;">pts</span>
-                          <button class="button-ghost" data-action="remove-rubric-row" data-rubric-id="${item.id}" style="color:var(--danger);border-color:var(--danger);padding:0 10px;min-height:36px;">✕</button>
-                        </div>
+                  ${ui.teacherDraft.uploadedRubricText
+                    ? `
+                      <p class="subtle" style="font-size:0.84rem;margin:0 0 10px;">Keeping the uploaded rubric visible here so you can confirm the exact version before saving.</p>
+                      ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName)}
+                    `
+                    : `
+                      <div class="review-stack">
+                        ${ui.teacherAssist.rubric.map((item) => `
+                          <div class="rubric-edit-row">
+                            <div class="rubric-edit-fields">
+                              <input data-rubric-id="${item.id}" data-rubric-field="name" value="${escapeAttribute(item.name)}" placeholder="Criterion name" style="font-weight:700;" />
+                              <input data-rubric-id="${item.id}" data-rubric-field="description" value="${escapeAttribute(item.description)}" placeholder="Description" />
+                            </div>
+                            <div class="rubric-edit-right">
+                              <input type="number" data-rubric-id="${item.id}" data-rubric-field="points" value="${item.points}" min="1" style="width:60px;text-align:center;" />
+                              <span class="subtle" style="font-size:0.82rem;">pts</span>
+                              <button class="button-ghost" data-action="remove-rubric-row" data-rubric-id="${item.id}" style="color:var(--danger);border-color:var(--danger);padding:0 10px;min-height:36px;">✕</button>
+                            </div>
+                          </div>
+                        `).join("")}
                       </div>
-                    `).join("")}
-                  </div>
-                  <button class="button-ghost" data-action="add-rubric-row" style="margin-top:10px;">+ Add criterion</button>
+                      <button class="button-ghost" data-action="add-rubric-row" style="margin-top:10px;">+ Add criterion</button>
+                    `
+                  }
                 </div>
               </div>
             `
@@ -2299,9 +2437,7 @@ function renderTeacherGrading(assignment, submission) {
         ${roster.length ? `<span style="font-size:0.82rem;color:var(--muted);">${rosterIndex + 1}/${roster.length}</span>` : ""}
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
           <button class="button-ghost" data-action="next-review-student" ${!nextStudentId ? "disabled" : ""} style="font-size:0.85rem;">Next student →</button>
-          <button class="button-ghost" data-action="copy-lms-grade" style="font-size:0.85rem;">Copy for LMS</button>
           <button class="button-ghost" data-action="download-work" style="font-size:0.85rem;">⬇ Grade sheet</button>
-          <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
         </div>
       </div>
 
@@ -2476,7 +2612,11 @@ function renderTeacherGrading(assignment, submission) {
           ${submission.teacherReview?.savedAt ? `
             <p style="font-size:0.8rem;color:var(--sage);margin-bottom:8px;">✓ Last saved ${escapeHtml(formatDateTime(submission.teacherReview.savedAt))}</p>
           ` : ""}
-          <button class="button" data-action="save-teacher-review">Save Review</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
+            <button class="button-ghost" data-action="copy-lms-grade">Copy Grade</button>
+            <button class="button" data-action="save-teacher-review">Save Review</button>
+          </div>
 
         </div>
       </div>
@@ -2921,8 +3061,21 @@ async function saveTeacherAssignment() {
     if (data.error) {
       ui.notice = "Could not save assignment: " + data.error;
     } else {
-      state.assignments.unshift(data.assignment);
-      ui.selectedAssignmentId = data.assignment.id;
+      const savedAssignment = normalizeAssignment({
+        ...data.assignment,
+        assignmentType: data.assignment.assignmentType || data.assignment.assignment_type,
+        languageLevel: data.assignment.languageLevel || data.assignment.language_level,
+        wordCountMin: data.assignment.wordCountMin || data.assignment.word_count_min,
+        wordCountMax: data.assignment.wordCountMax || data.assignment.word_count_max,
+        feedbackRequestLimit: data.assignment.feedbackRequestLimit || data.assignment.feedback_request_limit,
+        chatTimeLimit: data.assignment.chatTimeLimit || data.assignment.chat_time_limit,
+        studentFocus: data.assignment.studentFocus || data.assignment.student_focus,
+        uploadedRubricText: data.assignment.uploadedRubricText || data.assignment.uploaded_rubric_text || ui.teacherDraft.uploadedRubricText,
+        uploadedRubricName: ui.teacherDraft.uploadedRubricName,
+        classId: data.assignment.class_id || currentClassId,
+      });
+      state.assignments.unshift(savedAssignment);
+      ui.selectedAssignmentId = savedAssignment.id;
       ui.selectedReviewSubmissionId = null;
       ui.teacherDraft = createBlankTeacherDraft();
       ui.teacherAssist = null;
@@ -3512,59 +3665,58 @@ function detectAssignmentType(text) {
 }
 
 function rubricForType(type) {
-  const taskLabels = {
-    argument: { name: "Task Response", description: "Presents a clear opinion and develops it with relevant support." },
-    narrative: { name: "Content & Development", description: "Builds a clear story or moment with meaningful detail." },
-    process: { name: "Task Response", description: "Explains the process completely and in a way the reader can follow." },
-    definition: { name: "Content Accuracy", description: "Explains the concept clearly and accurately for the reader." },
-    compare: { name: "Comparison & Insight", description: "Covers both subjects and highlights meaningful similarities or differences." },
-    informational: { name: "Content Accuracy", description: "Explains the topic clearly with relevant supporting detail." },
-    response: { name: "Task Response", description: "Answers the prompt clearly and stays focused on the main point." },
-    other: { name: "Task Response", description: "Addresses the writing task clearly and appropriately." },
+  const rubricSets = {
+    argument: [
+      createSimpleRubricCriterion("Claim & Support", "States a clear opinion and supports it with relevant reasons or examples.", 4),
+      createSimpleRubricCriterion("Organization", "Organises ideas logically so the opinion is easy to follow from start to finish.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to communicate the argument.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    narrative: [
+      createSimpleRubricCriterion("Story Development", "Builds a clear event or moment with meaningful detail.", 4),
+      createSimpleRubricCriterion("Sequencing", "Orders events clearly so the reader can follow what happens.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to tell the story.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    process: [
+      createSimpleRubricCriterion("Task Completion", "Explains the full process clearly so the reader can complete it.", 4),
+      createSimpleRubricCriterion("Step Sequence", "Presents the steps in a logical order with clear connections.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to explain the process.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    definition: [
+      createSimpleRubricCriterion("Concept Accuracy", "Explains the concept clearly and accurately for the reader.", 4),
+      createSimpleRubricCriterion("Development", "Uses explanation, examples, or clarification to make the meaning clear.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to explain the meaning.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    compare: [
+      createSimpleRubricCriterion("Comparison", "Covers both subjects and highlights meaningful similarities or differences.", 4),
+      createSimpleRubricCriterion("Organization", "Groups ideas clearly so the comparison is easy to follow.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to compare the subjects.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    informational: [
+      createSimpleRubricCriterion("Content Accuracy", "Explains the topic clearly with relevant supporting detail.", 4),
+      createSimpleRubricCriterion("Organization", "Organises information clearly so the explanation is easy to follow.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to explain the topic.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    response: [
+      createSimpleRubricCriterion("Task Response", "Answers the prompt clearly and stays focused on the main point.", 4),
+      createSimpleRubricCriterion("Organization", "Presents ideas in a logical order that is easy for the reader to follow.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to communicate ideas.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
+    other: [
+      createSimpleRubricCriterion("Task Response", "Addresses the writing task clearly and appropriately.", 4),
+      createSimpleRubricCriterion("Organization", "Presents ideas in a logical order that is easy for the reader to follow.", 4),
+      createSimpleRubricCriterion("Grammar & Vocabulary", "Uses grammar and word choice clearly enough to communicate ideas.", 4),
+      createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
+    ],
   };
-  const taskCriterion = taskLabels[type] || taskLabels.other;
 
-  const buildRubric = (specificRows = []) => [
-    createSimpleRubricCriterion(taskCriterion.name, taskCriterion.description, 4),
-    ...specificRows,
-    createSimpleRubricCriterion("Grammar & Sentence Control", "Uses grammar and sentence structure with enough control for clear meaning.", 4),
-    createSimpleRubricCriterion("Vocabulary & Word Choice", "Uses words that fit the task and communicate ideas clearly.", 4),
-    createSimpleRubricCriterion("Mechanics", "Uses punctuation, spelling, and formatting clearly enough for the reader to follow.", 4),
-  ];
-
-  if (type === "argument") {
-    return buildRubric([
-      createSimpleRubricCriterion("Organization & Coherence", "Organises ideas logically so the position is easy to follow from start to finish.", 4),
-    ]);
-  }
-  if (type === "narrative") {
-    return buildRubric([
-      createSimpleRubricCriterion("Organization & Coherence", "Sequences the story clearly so the reader can follow the event or experience.", 4),
-    ]);
-  }
-  if (type === "process") {
-    return buildRubric([
-      createSimpleRubricCriterion("Organization & Coherence", "Presents the steps in a logical order with clear connections between them.", 4),
-    ]);
-  }
-  if (type === "definition") {
-    return buildRubric([
-      createSimpleRubricCriterion("Organization & Coherence", "Builds the explanation in a logical order that helps the reader understand the meaning.", 4),
-    ]);
-  }
-  if (type === "compare") {
-    return buildRubric([
-      createSimpleRubricCriterion("Organization & Coherence", "Groups similarities and differences clearly so the comparison is easy to follow.", 4),
-    ]);
-  }
-  if (type === "informational") {
-    return buildRubric([
-      createSimpleRubricCriterion("Organization & Coherence", "Organises information in a clear way so the reader can follow the explanation.", 4),
-    ]);
-  }
-  return buildRubric([
-    createSimpleRubricCriterion("Organization & Coherence", "Presents ideas in a logical order that is easy for the reader to follow.", 4),
-  ]);
+  return rubricSets[type] || rubricSets.other;
 }
 
 function studentPromptForType(type, topic, languageLevel) {
@@ -4480,6 +4632,7 @@ function normalizeAssignment(assignment) {
     deadline: assignment?.deadline || "",
     chatTimeLimit: Number(assignment?.chatTimeLimit ?? 0),
     uploadedRubricText: assignment?.uploadedRubricText || "",
+    uploadedRubricName: assignment?.uploadedRubricName || "",
   };
 }
 
