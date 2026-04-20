@@ -3338,15 +3338,23 @@ function renderAnnotatedText(submission) {
     }
   }
 
-  for (const paste of flaggedPastes) {
+    for (const paste of flaggedPastes) {
     const idx = text.indexOf(paste.insertedText);
     if (idx !== -1) {
-      highlights.push({
-        start: idx,
-        end: idx + paste.insertedText.length,
-        code: "PASTE",
-        type: "paste",
-      });
+      const pasteStart = idx;
+      const pasteEnd = idx + paste.insertedText.length;
+      const hasAnnotationOnPaste = highlights.some(
+        (h) => h.type === "annotation" && h.start < pasteEnd && h.end > pasteStart
+      );
+
+      if (!hasAnnotationOnPaste) {
+        highlights.push({
+          start: pasteStart,
+          end: pasteEnd,
+          code: "PASTE",
+          type: "paste",
+        });
+      }
     }
   }
 
