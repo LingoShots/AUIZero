@@ -716,6 +716,14 @@ if (action === "back-to-assignments") {
 
     ui.notice = subs.length ? "" : "No submissions yet for this assignment.";
     render();
+
+    requestAnimationFrame(() => {
+      const reviewSection = document.getElementById("teacher-review-section");
+      if (reviewSection) {
+        reviewSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+
   });
 
   return;
@@ -1714,7 +1722,7 @@ function renderTeacherReview(assignment, submissions) {
   ).length;
 
   return `
-    <section class="panel review-shell">
+        <section id="teacher-review-section" class="panel review-shell">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
         <button class="button-ghost" data-action="back-to-assignments" style="font-size:0.85rem;">← Assignments</button>
         <span style="color:var(--muted);font-size:0.85rem;">/</span>
@@ -1800,7 +1808,20 @@ function renderTeacherReview(assignment, submissions) {
 
 function renderTeacherGrading(assignment, submission) {
   if (!submission) return `<div class="empty-state"><p>No submission selected.</p></div>`;
-  const metrics = computeProcessMetrics(assignment, submission);
+  const events = Array.isArray(submission.writingEvents) ? submission.writingEvents : [];
+  const finalText = submission.finalText || submission.draftText || "";
+  const startedAt = submission.startedAt || submission.updatedAt || submission.submittedAt;
+  const endedAt = submission.submittedAt || submission.updatedAt || startedAt;
+  const totalMinutes = startedAt && endedAt
+    ? Math.max(1, Math.round((new Date(endedAt) - new Date(startedAt)) / 60000))
+    : 0;
+  const metrics = {
+    largePasteCount: events.filter(e => e && e.flagged).length,
+    finalWordCount: finalText.trim() ? finalText.trim().split(/\s+/).length : 0,
+    revisionCount: events.length,
+    totalMinutes,
+  };
+
   const playback = getPlaybackState(submission);
   const reviewScore = submission.teacherReview?.finalScore ?? "";
   const reviewNotes = submission.teacherReview?.finalNotes ?? "";
