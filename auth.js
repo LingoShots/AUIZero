@@ -120,10 +120,11 @@ async function getInviteInfo(classId) {
   }
 
   async function requestPasswordReset(email) {
+    const redirectTo = `${window.location.origin}/?reset=1`;
     const data = await fetch('/api/auth/forgot-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, redirectTo })
     }).then(r => r.json());
     if (data.error) throw new Error(data.error);
     return true;

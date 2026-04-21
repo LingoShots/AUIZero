@@ -1186,7 +1186,6 @@ async function loadTeacherClassContext(classId) {
     classId: a.class_id || currentClassId,
     ideaRequestLimit: 3,
   }));
-  await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
 }
 
 async function loadStudentAssignmentsForCurrentClass() {
@@ -1286,6 +1285,25 @@ async function loadTeacherSubmissionsForAssignments(assignmentIds) {
   } catch (error) {
     console.error("Could not load teacher submissions:", error.message, error);
   }
+}
+
+async function loadReviewDataForAssignment(assignmentId) {
+  if (!assignmentId || !currentClassId) return [];
+
+  const [membersData, data] = await Promise.all([
+    Auth.apiFetch(`/api/classes/${currentClassId}/members`),
+    Auth.apiFetch(`/api/assignments/${assignmentId}/submissions`)
+  ]);
+
+  currentClassMembers = membersData.members || [];
+  const subs = data.submissions || [];
+
+  state.submissions = state.submissions.filter((s) => s.assignmentId !== assignmentId);
+  subs.forEach((submission) => {
+    state.submissions.push(mapServerSubmission(submission));
+  });
+
+  return subs;
 }
 
 let autoSaveTimer = null;
@@ -1872,7 +1890,7 @@ if (action === "back-to-assignments") {
     return;
   }
   
- if (action === "select-assignment") {
+if (action === "select-assignment") {
   stopPlayback();
   ui.selectedAssignmentId = target.dataset.assignmentId;
   ui.selectedReviewSubmissionId = null;
@@ -1881,19 +1899,7 @@ if (action === "back-to-assignments") {
   ui.notice = "Loading submissions...";
   render();
 
-  Auth.apiFetch(`/api/classes/${currentClassId}/members`).then(membersData => {
-  currentClassMembers = membersData.members || [];
-
-  return Auth.apiFetch(`/api/assignments/${target.dataset.assignmentId}/submissions`);
-}).then(data => {
-    const subs = data.submissions || [];
-
-    // Remove old submissions for this assignment and replace with fresh server data
-    state.submissions = state.submissions.filter(s => s.assignmentId !== target.dataset.assignmentId);
-
-    subs.forEach(s => {
-      state.submissions.push(mapServerSubmission(s));
-    });
+  loadReviewDataForAssignment(target.dataset.assignmentId).then(subs => {
 
     const roster = getReviewRoster(ui.selectedAssignmentId);
     ui.selectedReviewStudentId = roster[0]?.id || null;
@@ -2536,6 +2542,12 @@ function render() {
     if (assignment?.chatTimeLimit > 0 && submission?.chatStartedAt) {
       startChatTimer();
     }
+    window.requestAnimationFrame(() => {
+      const win = document.getElementById("chatbot-window");
+      if (win) {
+        win.scrollTop = win.scrollHeight;
+      }
+    });
   }
 }
 
@@ -3017,6 +3029,19 @@ function renderTeacherWorkspace() {
   const manualSaveReady = Boolean(
     ui.teacherAssist || ((ui.teacherDraft.title || "").trim() && (ui.teacherDraft.prompt || "").trim())
   );
+  const sharedSettingsSummary = `
+    <div style="display:grid;gap:8px;margin:10px 0 0;">
+      <div class="pill-row" style="flex-wrap:wrap;">
+        <span class="pill">Rubric: ${escapeHtml(ui.teacherDraft.uploadedRubricName || (ui.selectedSavedRubricId ? "saved rubric selected" : "none"))}</span>
+        <span class="pill">Feedback checks: ${ui.teacherDraft.feedbackRequestLimit}</span>
+        <span class="pill">Total points: ${ui.teacherDraft.totalPoints}</span>
+        <span class="pill">Chat: ${ui.teacherDraft.disableChatbot ? "Disabled" : `${getVisibleChatTimeLimit(ui.teacherDraft)} min`}</span>
+        <span class="pill">Deadline: ${ui.teacherDraft.deadline ? escapeHtml(new Date(ui.teacherDraft.deadline).toLocaleString()) : "None"}</span>
+        <span class="pill">Level: ${escapeHtml(ui.teacherDraft.languageLevel)}</span>
+      </div>
+      <p class="subtle" style="font-size:0.8rem;">These shared settings live above and apply to both the manual and AI setup paths.</p>
+    </div>
+  `;
 
   return `
     <section class="teacher-grid">
@@ -3211,6 +3236,7 @@ function renderTeacherWorkspace() {
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
                   <div style="margin-top:14px;">
+                    ${sharedSettingsSummary}
                     <div class="field" style="margin-bottom:10px;">
                       <label for="teacher-title">Assignment title</label>
                       <input id="teacher-title" data-teacher-field="title" value="${escapeAttribute(ui.teacherDraft.title)}" placeholder="Assignment title" />
@@ -3800,6 +3826,7 @@ function renderStudentIdeasStep(assignment, submission) {
   const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
   const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
   const hasEnoughChat = chatDisabled || submission.chatSkippedAt || chatHistory.length >= 2;
+  const chatCount = chatHistory.filter((msg) => msg.role === "user").length;
 
   return `
     <div class="step-card wizard-card">
@@ -3851,7 +3878,7 @@ function renderStudentIdeasStep(assignment, submission) {
       `}
       <div class="wizard-nav">
         ${chatDisabled ? `<span></span>` : `<button class="button-ghost" data-action="skip-chat-to-draft">Skip chat for now</button>`}
-        <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>Next: Write Draft</button>
+        <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>${chatDisabled || submission.chatSkippedAt || chatCount >= 2 ? "Next: Write Draft" : "Keep chatting a bit more"}</button>
       </div>
     </div>
   `;
@@ -3902,6 +3929,7 @@ function renderStudentDraftStep(assignment, submission) {
       </div>
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="1">Back</button>
+        <button class="button-secondary" data-action="request-feedback" ${submission.feedbackHistory.length >= assignment.feedbackRequestLimit ? "disabled" : ""}>Get feedback (${submission.feedbackHistory.length}/${assignment.feedbackRequestLimit})</button>
         <button class="button" data-action="student-next-step" data-step="3">Next: Finish</button>
       </div>
     </div>
@@ -3910,6 +3938,7 @@ function renderStudentDraftStep(assignment, submission) {
 
 function renderStudentFinalStep(assignment, submission) {
   const selfAssessment = submission.selfAssessment || {};
+  const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -3920,7 +3949,7 @@ function renderStudentFinalStep(assignment, submission) {
         </div>
         ${assignment.deadline && new Date(assignment.deadline) < new Date() && submission.status !== "submitted"
           ? `<div style="font-size:0.82rem;color:var(--danger);font-weight:600;text-align:right;">Deadline passed</div>`
-          : `<button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit Final</button>`
+          : ``
         }
       </div>
       ${submission.status === "submitted" ? `
@@ -3971,6 +4000,15 @@ function renderStudentFinalStep(assignment, submission) {
       <div class="teacher-ready-card">
         <p class="mini-label">Self-assessment — rate yourself against the rubric</p>
         <p class="subtle" style="margin:4px 0 14px;">Be honest. Your teacher will see your ratings alongside their own assessment.</p>
+        ${rubricSchema ? `
+          <div style="margin-bottom:14px;">
+            ${renderRubricSchemaLayout(rubricSchema, {
+              clickable: false,
+              compact: true,
+              previewMode: true,
+            })}
+          </div>
+        ` : ""}
         <div class="review-stack">
           ${assignment.rubric.map((item) => {
             const key = "sa_" + item.id;
@@ -4003,6 +4041,7 @@ function renderStudentFinalStep(assignment, submission) {
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="2">Back</button>
         <span></span>
+        <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit assignment</button>
       </div>
     </div>
   `;
@@ -4970,6 +5009,7 @@ function generateFeedback(assignment, submission) {
   const paragraphs = splitParagraphs(text);
   const sentences = splitSentences(text);
   const singleParagraphTask = assignmentUsesSingleParagraph(assignment);
+  const finalSentence = sentences[sentences.length - 1] || "";
 
   if (!text) {
     return [
@@ -5008,11 +5048,15 @@ function generateFeedback(assignment, submission) {
 
   // Secondary checks — always available but only used when primary ones are exhausted or repeated
   const secondaryPool = [
-    "Read your writing out loud. Where does it sound confusing or too quick?",
+    singleParagraphTask
+      ? "Underline your topic sentence. Does every other sentence clearly support that one idea?"
+      : "Read each paragraph and ask: does every sentence clearly support that paragraph’s job?",
     singleParagraphTask ? "Read each sentence and ask: does it clearly support your one main idea?" : "Check that each paragraph has one main job.",
     "Does your opening sentence tell the reader exactly what you are writing about?",
     "Is there one place where you could add a specific detail to make your point clearer?",
-    "Look at your final sentence. Does it leave the reader with a clear idea of what you meant?",
+    !/\b(in conclusion|to conclude|overall|finally|to sum up)\b/i.test(finalSentence) || wordCount(finalSentence) < 8
+      ? "Look at your final sentence. Does it clearly restate your main idea in your own words?"
+      : "Check whether your final sentence is smooth and accurate, not just a rushed list of ideas.",
     "Are there any words you have used more than twice in a row? Try swapping one for a different word.",
   ];
 
@@ -5061,6 +5105,8 @@ RULES:
 7. Never repeat the same question twice in a conversation.
 8. After two or three useful student replies, briefly check whether they already have enough ideas to begin drafting. Ask a choice-style question such as: "Do you feel ready to draft now, or do you want one more planning question?"
 9. If the student seems ready, help them name their next drafting step instead of continuing the chat forever.
+10. Do not accept vague ideas too quickly. If the student gives something broad like "ask the teacher" or "do research", ask a follow-up such as "What exactly would you ask?" or "Why would that help?" before moving on.
+11. Before you move from one main idea or step to the next, ask whether the student feels satisfied with the current one or wants to develop it a little more.
 
 Assignment title: "${assignment.title}"
 Task: "${assignment.prompt}"
