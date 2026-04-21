@@ -3930,7 +3930,7 @@ function renderStudentIdeasStep(assignment, submission) {
             ` : ""}
           </div>
         `}
-        <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>${chatDisabled || submission.chatSkippedAt || chatCount >= 2 ? "Next: Write Draft" : "Keep chatting a bit more"}</button>
+        <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>Next: Write Draft</button>
       </div>
     </div>
   `;
