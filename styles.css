@@ -1,16 +1,16 @@
 :root {
-  --bg: #eff4fb;
+  --bg: #f5f8ff;
   --surface: rgba(255, 255, 255, 0.92);
-  --surface-soft: #f6f9fd;
-  --line: #d9e3f0;
-  --ink: #162033;
-  --muted: #607089;
-  --accent: #3f6df6;
-  --accent-deep: #2748c6;
-  --accent-soft: #dfe8ff;
+  --surface-soft: #f8fbff;
+  --line: #dbe5f5;
+  --ink: #1a2740;
+  --muted: #687a98;
+  --accent: #5f8fff;
+  --accent-deep: #456ddb;
+  --accent-soft: #e8f0ff;
   --sage: #34a587;
   --danger: #cc4f68;
-  --shadow: 0 16px 40px rgba(21, 39, 74, 0.09);
+  --shadow: 0 16px 40px rgba(32, 54, 98, 0.08);
   --radius-xl: 24px;
   --radius-lg: 18px;
   --radius-md: 14px;
@@ -26,9 +26,9 @@ body {
   margin: 0;
   min-height: 100%;
   background:
-    radial-gradient(circle at top right, rgba(63, 109, 246, 0.12), transparent 24%),
+    radial-gradient(circle at top right, rgba(95, 143, 255, 0.10), transparent 24%),
     radial-gradient(circle at top left, rgba(52, 165, 135, 0.08), transparent 26%),
-    linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+    linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%);
   color: var(--ink);
   font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
 }
@@ -38,8 +38,8 @@ body::before {
   position: fixed;
   inset: 0;
   background-image:
-    linear-gradient(rgba(72, 101, 152, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(72, 101, 152, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(91, 122, 182, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(91, 122, 182, 0.03) 1px, transparent 1px);
   background-size: 36px 36px;
   pointer-events: none;
 }
@@ -191,12 +191,12 @@ button {
 .button {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: white;
-  box-shadow: 0 10px 24px rgba(63, 109, 246, 0.24);
+  box-shadow: 0 10px 24px rgba(95, 143, 255, 0.22);
 }
 
 .button-secondary {
-  background: #e9f0ff;
-  color: #2950c9;
+  background: #edf3ff;
+  color: #3d62c9;
 }
 
 .button-ghost {
@@ -692,15 +692,14 @@ button {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 14px;
-  border: 1px solid #ead6a8;
-  background: #fff7e3;
+  border: 1px solid #d7e5ff;
+  background: #f4f8ff;
   font-size: 0.84rem;
-  color: #7e5d16;
+  color: #4b679f;
 }
 
 .rubric-level-legend {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
 }
 
@@ -711,14 +710,15 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 26px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(48, 38, 24, 0.06);
-  font-size: 0.75rem;
-  line-height: 1.2;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(78, 103, 156, 0.10);
+  font-size: 0.76rem;
+  line-height: 1.25;
   font-weight: 700;
   text-align: center;
+  white-space: nowrap;
 }
 
 .rubric-level-legend-chip {
@@ -734,7 +734,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px;
-  background: linear-gradient(180deg, #fcfbf8 0%, #fff 100%);
+  background: linear-gradient(180deg, #fcfdff 0%, #fff 100%);
 }
 
 .rubric-criterion-header {
@@ -747,7 +747,7 @@ button {
 
 .rubric-level-badge {
   width: 100%;
-  min-height: 34px;
+  min-height: 40px;
   border-radius: 14px;
   justify-content: center;
 }
