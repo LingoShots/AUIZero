@@ -39,6 +39,9 @@ RULES:
 - If a score range appears, use the higher score for that level and keep minScore accurate.
 - Put deduction rules or special instructions into notes.
 - Preserve meaningful wording from the source so the rubric still feels like the original document.
+- Text such as "may be missing", "unclear", "ineffective", or "irrelevant" is valid descriptor content, not an empty field. Preserve it.
+- If several subparts share one score range or one merged score cell, keep them inside a single criterion instead of splitting them into separate scored criteria.
+- For paragraph rubrics, descriptors about topic sentence, supporting sentences/details, transitions, and concluding sentence often belong to one shared criterion. Combine those subparts into each level description when they share the same point range.
 - If a field is missing, use an empty string or a sensible default.
 `.trim();
 
@@ -50,8 +53,106 @@ function slugifyRubricId(text, fallback = 'criterion') {
   return cleaned || fallback;
 }
 
+const SHARED_CRITERION_PART_RE = /\b(topic sentence|supporting (?:sentence|sentences|idea|ideas|detail|details)|concluding sentence|transitions?|unity|coherence)\b/i;
+
+function rubricScoreSignature(criterion = {}) {
+  return (Array.isArray(criterion?.levels) ? criterion.levels : [])
+    .map((level) => Number(level?.score ?? 0))
+    .join('|');
+}
+
+function criterionLooksLikeSharedPart(criterion = {}) {
+  const haystack = [
+    criterion?.name,
+    ...(Array.isArray(criterion?.levels) ? criterion.levels.map((level) => level?.description) : []),
+  ].join(' ');
+  return SHARED_CRITERION_PART_RE.test(String(haystack || ''));
+}
+
+function findMatchingLevel(criterion = {}, targetLevel = {}, fallbackIndex = 0) {
+  const levels = Array.isArray(criterion?.levels) ? criterion.levels : [];
+  const exactScore = levels.find((level) => Number(level?.score ?? 0) === Number(targetLevel?.score ?? 0));
+  return exactScore || levels[fallbackIndex] || null;
+}
+
+function deriveMergedCriterionName(group = []) {
+  const names = group.map((criterion) => String(criterion?.name || '').trim()).filter(Boolean);
+  const joined = names.join(' ').toLowerCase();
+  if (
+    /topic sentence/.test(joined) &&
+    /supporting (sentence|sentences|idea|ideas|detail|details)/.test(joined) &&
+    /concluding sentence/.test(joined)
+  ) {
+    return 'Organization, unity and coherence';
+  }
+  return names.join(' / ') || 'Combined criterion';
+}
+
+function mergeCriterionGroup(group = []) {
+  if (!group.length) return null;
+  if (group.length === 1) return group[0];
+
+  const template = group[0];
+  const name = deriveMergedCriterionName(group);
+  return {
+    id: slugifyRubricId(name, template.id || 'criterion'),
+    name,
+    minScore: template.minScore,
+    maxScore: template.maxScore,
+    levels: template.levels.map((level, levelIndex) => {
+      const description = group
+        .map((criterion) => {
+          const matchedLevel = findMatchingLevel(criterion, level, levelIndex);
+          const descriptor = String(matchedLevel?.description || '').trim();
+          if (!descriptor) return '';
+          const partName = String(criterion?.name || '').trim();
+          return partName ? `${partName}: ${descriptor}` : descriptor;
+        })
+        .filter(Boolean)
+        .join('\n');
+
+      return {
+        ...level,
+        description: description || level.description,
+      };
+    }),
+  };
+}
+
+function coalesceSharedCriteria(criteria = [], totalPoints = 0) {
+  const merged = [];
+  for (let index = 0; index < criteria.length; index += 1) {
+    const current = criteria[index];
+    const signature = rubricScoreSignature(current);
+    const group = [current];
+
+    while (index + 1 < criteria.length) {
+      const next = criteria[index + 1];
+      const totalWouldOverflow = totalPoints > 0 && merged
+        .concat(group)
+        .concat(next)
+        .reduce((sum, criterion) => sum + Number(criterion?.maxScore || 0), 0) > totalPoints;
+      if (
+        signature &&
+        signature === rubricScoreSignature(next) &&
+        criterionLooksLikeSharedPart(current) &&
+        criterionLooksLikeSharedPart(next) &&
+        (totalWouldOverflow || criterionLooksLikeSharedPart(next))
+      ) {
+        group.push(next);
+        index += 1;
+        continue;
+      }
+      break;
+    }
+
+    merged.push(mergeCriterionGroup(group));
+  }
+  return merged.filter(Boolean);
+}
+
 function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
-  const criteria = Array.isArray(schema?.criteria)
+  const rawCriteria = Array.isArray(schema?.criteria)
     ? schema.criteria
         .map((criterion, criterionIndex) => {
           const rawLevels = Array.isArray(criterion?.levels) ? criterion.levels : [];
@@ -87,7 +188,9 @@ function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
         .filter(Boolean)
     : [];
 
-  const totalPoints = Number(schema?.totalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
+  const requestedTotalPoints = Number(schema?.totalPoints || 0);
+  const criteria = coalesceSharedCriteria(rawCriteria, requestedTotalPoints);
+  const totalPoints = Number(requestedTotalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
 
   return {
     title: String(schema?.title || fileName || 'Uploaded rubric').trim(),

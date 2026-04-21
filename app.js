@@ -30,6 +30,7 @@ showInvitePanel: false,
   teacherView: "assignments",
   teacherDraft: null,
   teacherAssist: null,
+  selectedSavedRubricId: "",
   selectedAssignmentId: null,
   selectedStudentAssignmentId: null,
   selectedReviewSubmissionId: null,
@@ -64,8 +65,107 @@ function cleanRubricLevelLabel(label = "") {
   return String(label || "").replace(/\s+[–-]\s+\d+(?:\.\d+)?$/, "").trim();
 }
 
+const SHARED_RUBRIC_PART_RE = /\b(topic sentence|supporting (?:sentence|sentences|idea|ideas|detail|details)|concluding sentence|transitions?|unity|coherence)\b/i;
+
+function rubricScoreSignature(criterion = {}) {
+  return safeArray(criterion?.levels)
+    .map((level) => Number(level?.score ?? level?.points ?? 0))
+    .join("|");
+}
+
+function criterionLooksLikeSharedPart(criterion = {}) {
+  const haystack = [
+    criterion?.name,
+    ...safeArray(criterion?.levels).map((level) => level?.description),
+  ].join(" ");
+  return SHARED_RUBRIC_PART_RE.test(String(haystack || ""));
+}
+
+function findMatchingCriterionLevel(criterion = {}, targetLevel = {}, fallbackIndex = 0) {
+  const levels = safeArray(criterion?.levels);
+  return levels.find((level) => Number(level?.score ?? level?.points ?? 0) === Number(targetLevel?.score ?? targetLevel?.points ?? 0))
+    || levels[fallbackIndex]
+    || null;
+}
+
+function deriveMergedCriterionName(group = []) {
+  const names = group.map((criterion) => String(criterion?.name || "").trim()).filter(Boolean);
+  const joined = names.join(" ").toLowerCase();
+  if (
+    /topic sentence/.test(joined) &&
+    /supporting (sentence|sentences|idea|ideas|detail|details)/.test(joined) &&
+    /concluding sentence/.test(joined)
+  ) {
+    return "Organization, unity and coherence";
+  }
+  return names.join(" / ") || "Combined criterion";
+}
+
+function mergeSharedRubricCriterionGroup(group = []) {
+  if (!group.length) return null;
+  if (group.length === 1) return group[0];
+
+  const template = group[0];
+  const name = deriveMergedCriterionName(group);
+  return {
+    id: slugifyRubricId(name, template.id || "criterion"),
+    name,
+    minScore: template.minScore,
+    maxScore: template.maxScore,
+    levels: safeArray(template.levels).map((level, levelIndex) => {
+      const description = group
+        .map((criterion) => {
+          const matchedLevel = findMatchingCriterionLevel(criterion, level, levelIndex);
+          const descriptor = String(matchedLevel?.description || "").trim();
+          if (!descriptor) return "";
+          const partName = String(criterion?.name || "").trim();
+          return partName ? `${partName}: ${descriptor}` : descriptor;
+        })
+        .filter(Boolean)
+        .join("\n");
+
+      return {
+        ...level,
+        description: description || level.description,
+      };
+    }),
+  };
+}
+
+function coalesceSharedRubricCriteria(criteria = [], totalPoints = 0) {
+  const merged = [];
+  for (let index = 0; index < criteria.length; index += 1) {
+    const current = criteria[index];
+    const signature = rubricScoreSignature(current);
+    const group = [current];
+
+    while (index + 1 < criteria.length) {
+      const next = criteria[index + 1];
+      const totalWouldOverflow = totalPoints > 0 && merged
+        .concat(group)
+        .concat(next)
+        .reduce((sum, criterion) => sum + Number(criterion?.maxScore || 0), 0) > totalPoints;
+      if (
+        signature &&
+        signature === rubricScoreSignature(next) &&
+        criterionLooksLikeSharedPart(current) &&
+        criterionLooksLikeSharedPart(next) &&
+        (totalWouldOverflow || criterionLooksLikeSharedPart(next))
+      ) {
+        group.push(next);
+        index += 1;
+        continue;
+      }
+      break;
+    }
+
+    merged.push(mergeSharedRubricCriterionGroup(group));
+  }
+  return merged.filter(Boolean);
+}
+
 function normalizeRubricSchema(schema = {}, fallbackName = "Uploaded rubric") {
-  const criteria = safeArray(schema?.criteria)
+  const rawCriteria = safeArray(schema?.criteria)
     .map((criterion, criterionIndex) => {
       const rawLevels = safeArray(criterion?.levels);
       const levels = rawLevels
@@ -99,7 +199,9 @@ function normalizeRubricSchema(schema = {}, fallbackName = "Uploaded rubric") {
     })
     .filter(Boolean);
 
-  const totalPoints = Number(schema?.totalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
+  const requestedTotalPoints = Number(schema?.totalPoints || 0);
+  const criteria = coalesceSharedRubricCriteria(rawCriteria, requestedTotalPoints);
+  const totalPoints = Number(requestedTotalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
 
   return {
     title: String(schema?.title || fallbackName || "Uploaded rubric").trim(),
@@ -341,6 +443,18 @@ function saveRubricToLibrary(name, text, data = null, schema = null) {
   window.localStorage.setItem(RUBRIC_LIBRARY_KEY, JSON.stringify(next));
 }
 
+function removeSavedRubricFromLibrary(rubricId) {
+  try {
+    const stored = safeArray(JSON.parse(window.localStorage.getItem(RUBRIC_LIBRARY_KEY) || "[]"))
+      .map(normalizeRubricLibraryEntry)
+      .filter(Boolean);
+    const next = stored.filter((entry) => entry.id !== rubricId);
+    window.localStorage.setItem(RUBRIC_LIBRARY_KEY, JSON.stringify(next));
+  } catch (error) {
+    window.localStorage.setItem(RUBRIC_LIBRARY_KEY, "[]");
+  }
+}
+
 function applySavedRubricSelection(rubricId) {
   const savedRubric = getSavedRubricLibrary().find((entry) => entry.id === rubricId);
   if (!savedRubric) {
@@ -355,6 +469,7 @@ function applySavedRubricSelection(rubricId) {
     || serializeRubricSchemaForPrompt(savedRubric.schema, savedRubric.name)
     || serializeRubricDataForPrompt(savedRubric.data);
   ui.teacherDraft.uploadedRubricName = savedRubric.name;
+  ui.selectedSavedRubricId = savedRubric.id;
   ui.teacherAssist = null;
   ui.notice = `Loaded saved rubric "${savedRubric.name}". You can save manually or use Format With AI.`;
   render();
@@ -433,7 +548,9 @@ function levelTheme(label = "") {
 }
 
 function renderRichTextHtml(text = "") {
-  return escapeHtml(String(text || "")).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  return escapeHtml(String(text || ""))
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n+/g, "<br>");
 }
 
 function renderRubricSchemaLayout(schemaInput, options = {}) {
@@ -442,6 +559,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
 
   const clickable = Boolean(options.clickable);
   const compact = Boolean(options.compact);
+  const previewMode = Boolean(options.previewMode);
   const rowScoreMap = options.rowScoreMap || new Map();
   const suggestedRowScoreMap = options.suggestedRowScoreMap || new Map();
   const currentScore = typeof options.currentScore === "number"
@@ -451,7 +569,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
   const gradedCount = Array.from(rowScoreMap.values()).length;
 
   return `
-    <div class="rubric-schema-shell ${compact ? "rubric-schema-shell-compact" : ""}">
+    <div class="rubric-schema-shell ${compact ? "rubric-schema-shell-compact" : ""} ${previewMode ? "rubric-schema-shell-preview" : ""}">
       <div class="rubric-schema-header">
         <div>
           ${options.kicker ? `<p class="mini-label" style="margin-bottom:4px;">${escapeHtml(options.kicker)}</p>` : ""}
@@ -493,7 +611,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
           const suggested = suggestedRowScoreMap.get(criterion.id);
           const statusTheme = selected ? levelTheme(selected.label) : null;
           return `
-            <section class="rubric-criterion-card">
+            <section class="rubric-criterion-card ${previewMode ? "rubric-criterion-card-preview" : ""}">
               <div class="rubric-criterion-header">
                 <div>
                   <div class="rubric-criterion-name">${escapeHtml(criterion.name)}</div>
@@ -505,7 +623,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
                   <span class="rubric-selection-pill" style="background:#f4efe6;color:#7a664d;">Suggested · ${escapeHtml(suggested.label)} · ${suggested.points} pts</span>
                 ` : ""}
               </div>
-              <div class="rubric-level-grid rubric-level-grid-${Math.min(Math.max(criterion.levels.length, 1), 5)}">
+              <div class="rubric-level-grid ${previewMode ? "rubric-level-grid-preview" : `rubric-level-grid-${Math.min(Math.max(criterion.levels.length, 1), 5)}`}">
                 ${criterion.levels.map((level) => {
                   const theme = levelTheme(level.label);
                   const isSelected = selected?.bandId === level.id || (selected && Number(selected.points) === Number(level.score ?? level.points) && selected.label === level.label);
@@ -536,12 +654,13 @@ function renderUploadedRubricPreview(title = "Uploaded rubric preview", rubricTe
   if (!trimmed && !schema) return "";
 
   return `
-    <div style="background:#fffdf9;border:1px solid var(--line);border-radius:14px;padding:16px;">
+    <div style="background:#fffdf9;border:1px solid var(--line);border-radius:14px;padding:${schema ? "12px" : "16px"};">
       ${schema
         ? renderRubricSchemaLayout(schema, {
             kicker: title,
             rubricName: rubricName || schema.title || "Uploaded rubric",
             compact: true,
+            previewMode: true,
           })
         : `
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
@@ -1511,9 +1630,21 @@ if (action === "sign-out") {
     return;
   }
 
-  if (action === "use-generated-assignment" && ui.teacherAssist) {
+ if (action === "use-generated-assignment" && ui.teacherAssist) {
     applyTeacherAssistToDraft();
     ui.notice = "Generated assignment details copied into the draft.";
+    render();
+    return;
+  }
+
+  if (action === "remove-saved-rubric") {
+    const rubricId = target.dataset.rubricId || ui.selectedSavedRubricId;
+    if (!rubricId) return;
+    removeSavedRubricFromLibrary(rubricId);
+    if (ui.selectedSavedRubricId === rubricId) {
+      ui.selectedSavedRubricId = "";
+    }
+    ui.notice = "Saved rubric removed from your reusable library.";
     render();
     return;
   }
@@ -2033,7 +2164,11 @@ if (target.id === "class-select") {
   }
 
   if (target.id === "saved-rubric-select") {
-    if (!target.value) return;
+    if (!target.value) {
+      ui.selectedSavedRubricId = "";
+      render();
+      return;
+    }
     applySavedRubricSelection(target.value);
     return;
   }
@@ -2356,6 +2491,7 @@ window.clearUploadedRubric = () => {
   ui.teacherDraft.uploadedRubricName = '';
   ui.teacherDraft.uploadedRubricData = null;
   ui.teacherDraft.uploadedRubricSchema = null;
+  ui.selectedSavedRubricId = "";
   ui.teacherAssist = null;
   render();
 };
@@ -2379,6 +2515,7 @@ async function uploadRubricFile(file) {
       ui.teacherDraft.uploadedRubricName = file.name;
       ui.teacherDraft.uploadedRubricData = data.rubricData || null;
       ui.teacherDraft.uploadedRubricSchema = data.schema ? normalizeRubricSchema(data.schema, file.name) : null;
+      ui.selectedSavedRubricId = "";
       ui.teacherAssist = null;
       saveRubricToLibrary(file.name, data.text, data.rubricData || null, data.schema || null);
       ui.notice = `Rubric "${file.name}" loaded and saved for reuse. Click Format With AI to rebuild the assignment with it.`;
@@ -2532,6 +2669,7 @@ function renderTeacherWorkspace() {
     ? getSelectedReviewSubmission()
     : (state.submissions.find(s => s.id === ui.selectedReviewSubmissionId) || null);
   const savedRubrics = getSavedRubricLibrary();
+  const selectedSavedRubric = savedRubrics.find((entry) => entry.id === ui.selectedSavedRubricId) || null;
   const manualSaveReady = Boolean(
     ui.teacherAssist || ((ui.teacherDraft.title || "").trim() && (ui.teacherDraft.prompt || "").trim())
   );
@@ -2571,10 +2709,20 @@ function renderTeacherWorkspace() {
             ${savedRubrics.length ? `
               <div style="margin-top:10px;">
                 <label for="saved-rubric-select" style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px;">Use a previous rubric</label>
-                <select id="saved-rubric-select">
-                  <option value="">Select a saved rubric</option>
-                  ${savedRubrics.map((entry) => `<option value="${entry.id}">${escapeHtml(entry.name)}</option>`).join("")}
-                </select>
+                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                  <select id="saved-rubric-select" style="flex:1;min-width:240px;">
+                    <option value="">Select a saved rubric</option>
+                    ${savedRubrics.map((entry) => `<option value="${entry.id}" ${ui.selectedSavedRubricId === entry.id ? "selected" : ""}>${escapeHtml(entry.name)}</option>`).join("")}
+                  </select>
+                  ${selectedSavedRubric?.source === "upload"
+                    ? `<button class="button-ghost" data-action="remove-saved-rubric" data-rubric-id="${selectedSavedRubric.id}" style="min-height:42px;">Remove saved rubric</button>`
+                    : ""
+                  }
+                </div>
+                ${selectedSavedRubric && selectedSavedRubric.source !== "upload"
+                  ? `<p class="subtle" style="font-size:0.78rem;margin-top:6px;">This rubric is attached to an existing assignment, so it stays in the list.</p>`
+                  : ""
+                }
               </div>
             ` : ""}
             ${!ui.teacherAssist && (ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length) ? `

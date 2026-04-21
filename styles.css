@@ -629,6 +629,10 @@ button {
   gap: 12px;
 }
 
+.rubric-schema-shell-preview {
+  gap: 10px;
+}
+
 .rubric-schema-header {
   display: flex;
   justify-content: space-between;
@@ -703,11 +707,14 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 0.78rem;
+  border: 1px solid rgba(48, 38, 24, 0.06);
+  font-size: 0.75rem;
+  line-height: 1.2;
   font-weight: 700;
+  text-align: center;
 }
 
 .rubric-schema-criteria {
@@ -717,8 +724,8 @@ button {
 
 .rubric-criterion-card {
   border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 14px;
+  border-radius: 16px;
+  padding: 12px;
   background: linear-gradient(180deg, #fcfbf8 0%, #fff 100%);
 }
 
@@ -744,7 +751,7 @@ button {
 
 .rubric-level-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .rubric-level-grid-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
@@ -752,15 +759,16 @@ button {
 .rubric-level-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .rubric-level-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .rubric-level-grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.rubric-level-grid-preview { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); }
 
 .rubric-level-cell {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: 148px;
-  padding: 14px;
+  min-height: 124px;
+  padding: 12px;
   border: 1px solid #e7ddd0;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #fff;
   text-align: left;
   color: var(--ink);
@@ -796,16 +804,51 @@ button.rubric-level-cell:hover {
 }
 
 .rubric-schema-shell-compact .rubric-criterion-card {
-  padding: 12px;
+  padding: 10px;
 }
 
 .rubric-schema-shell-compact .rubric-level-cell {
-  min-height: 118px;
-  padding: 12px;
+  min-height: 92px;
+  padding: 10px;
 }
 
 .rubric-schema-shell-compact .rubric-level-text {
+  font-size: 0.78rem;
+}
+
+.rubric-schema-shell-preview .rubric-schema-header {
+  align-items: center;
+}
+
+.rubric-schema-shell-preview .rubric-schema-summary {
+  text-align: left;
+}
+
+.rubric-schema-shell-preview .rubric-schema-score strong {
+  font-size: 1.2rem;
+}
+
+.rubric-schema-shell-preview .rubric-note-strip {
+  padding: 8px 10px;
+  border-radius: 12px;
   font-size: 0.8rem;
+}
+
+.rubric-schema-shell-preview .rubric-criterion-card {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.rubric-schema-shell-preview .rubric-level-cell {
+  min-height: 0;
+  padding: 10px;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.rubric-schema-shell-preview .rubric-level-text {
+  font-size: 0.79rem;
+  line-height: 1.45;
 }
 
 .review-edit {
