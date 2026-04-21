@@ -620,6 +620,194 @@ button {
   background: #fff;
 }
 
+.rubric-schema-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.rubric-schema-shell-compact {
+  gap: 12px;
+}
+
+.rubric-schema-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.rubric-schema-title {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.rubric-schema-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.rubric-schema-summary {
+  text-align: right;
+}
+
+.rubric-schema-score {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+}
+
+.rubric-schema-score strong {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.rubric-schema-score span {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.rubric-schema-meta {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rubric-note-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid #ead6a8;
+  background: #fff7e3;
+  font-size: 0.84rem;
+  color: #7e5d16;
+}
+
+.rubric-level-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rubric-level-legend-chip,
+.rubric-level-badge,
+.rubric-selection-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.rubric-schema-criteria {
+  display: grid;
+  gap: 14px;
+}
+
+.rubric-criterion-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  background: linear-gradient(180deg, #fcfbf8 0%, #fff 100%);
+}
+
+.rubric-criterion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.rubric-criterion-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}
+
+.rubric-criterion-range {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rubric-level-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.rubric-level-grid-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+.rubric-level-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rubric-level-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rubric-level-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rubric-level-grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+.rubric-level-cell {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  min-height: 148px;
+  padding: 14px;
+  border: 1px solid #e7ddd0;
+  border-radius: 16px;
+  background: #fff;
+  text-align: left;
+  color: var(--ink);
+  box-shadow: 0 6px 16px rgba(62, 41, 26, 0.04);
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+button.rubric-level-cell:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(62, 41, 26, 0.08);
+}
+
+.rubric-level-text {
+  display: block;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: #394239;
+}
+
+.rubric-level-text strong {
+  color: #202720;
+}
+
+.rubric-schema-attribution {
+  margin: 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.rubric-schema-shell-compact .rubric-schema-title {
+  font-size: 1rem;
+}
+
+.rubric-schema-shell-compact .rubric-criterion-card {
+  padding: 12px;
+}
+
+.rubric-schema-shell-compact .rubric-level-cell {
+  min-height: 118px;
+  padding: 12px;
+}
+
+.rubric-schema-shell-compact .rubric-level-text {
+  font-size: 0.8rem;
+}
+
 .review-edit {
   display: grid;
   gap: 12px;
@@ -732,6 +920,11 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .rubric-level-grid-4,
+  .rubric-level-grid-5 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .compact-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -782,7 +975,9 @@ button {
   .section-header,
   .review-header,
   .step-head,
-  .card-top {
+  .card-top,
+  .rubric-schema-header,
+  .rubric-criterion-header {
     flex-direction: column;
   }
 
@@ -807,6 +1002,14 @@ button {
   }
 
   .compare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rubric-level-grid,
+  .rubric-level-grid-2,
+  .rubric-level-grid-3,
+  .rubric-level-grid-4,
+  .rubric-level-grid-5 {
     grid-template-columns: 1fr;
   }
 
