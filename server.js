@@ -240,9 +240,13 @@ app.post('/api/auth/signout', async (req, res) => {
 
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body || {};
+    const { email, redirectTo: requestedRedirect } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
-    const redirectTo = `${getRequestBaseUrl(req)}/?reset=1`;
+    const redirectFromClient = String(requestedRedirect || '').trim();
+    const safeClientRedirect = /^https?:\/\//i.test(redirectFromClient) && !/localhost(?::\d+)?/i.test(redirectFromClient)
+      ? redirectFromClient.replace(/\/+$/, '')
+      : '';
+    const redirectTo = `${safeClientRedirect || getRequestBaseUrl(req)}/?reset=1`;
     const { error } = await supabase.auth.resetPasswordForEmail(String(email).trim(), {
       redirectTo,
     });
