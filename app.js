@@ -27,6 +27,7 @@ const ui = {
   showClassModal: false,
   classModalName: "",
   classModalError: "",
+  showDraftFeedbackPrompt: false,
   showTutorialModal: false,
   showFullRubric: false,
   inviteText: "",
@@ -1774,6 +1775,20 @@ if (action === "sign-out") {
     return;
   }
 
+  if (action === "continue-without-feedback") {
+    ui.showDraftFeedbackPrompt = false;
+    ui.studentStep = 3;
+    ui.notice = "";
+    render();
+    return;
+  }
+
+  if (action === "prompt-request-feedback") {
+    ui.showDraftFeedbackPrompt = false;
+    handleFeedbackRequest();
+    return;
+  }
+
   if (["jump-brief", "jump-settings", "jump-output", "jump-review"].includes(action)) {
     ui.showTutorialModal = false;
     render();
@@ -1932,6 +1947,18 @@ if (action === "select-assignment") {
       const submission = getStudentSubmission();
       if (notes && submission) {
         submission.outline.partOne = notes.value.trim();
+      }
+    }
+    if (nextStep === 3) {
+      const assignment = getStudentAssignment();
+      const submission = getStudentSubmission();
+      const shouldPromptForFeedback = assignment && submission
+        ? Number(submission.feedbackHistory.length || 0) === 0 && Number(assignment.feedbackRequestLimit || 0) > 0
+        : false;
+      if (shouldPromptForFeedback && submission?.draftText?.trim()) {
+        ui.showDraftFeedbackPrompt = true;
+        render();
+        return;
       }
     }
     if (canAdvanceToStep(nextStep)) {
@@ -2533,7 +2560,7 @@ function render() {
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderTutorialModal();
+  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderTutorialModal() + renderDraftFeedbackModal();
 
   // Start chat timer if student is on step 1 and there's a time limit
   if (ui.role === "student" && ui.studentStep === 1) {
@@ -2962,6 +2989,27 @@ function renderTutorialModal() {
               </div>
             </div>
           `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDraftFeedbackModal() {
+  if (!ui.showDraftFeedbackPrompt) return "";
+  const assignment = getStudentAssignment();
+  const submission = getStudentSubmission();
+  const used = Number(submission?.feedbackHistory?.length || 0);
+  const limit = Number(assignment?.feedbackRequestLimit || 0);
+  return `
+    <div style="position:fixed;inset:0;background:rgba(10,18,33,0.38);z-index:1000;display:grid;place-items:center;padding:20px;">
+      <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:520px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
+        <p class="mini-label" style="margin-bottom:6px;">Before you finish</p>
+        <h3 style="margin:0 0 8px;">Do you want AI draft feedback first?</h3>
+        <p class="subtle" style="margin:0 0 16px;">You still have ${Math.max(0, limit - used)} of ${limit} draft feedback check${limit === 1 ? "" : "s"} available. AI feedback can point out places to improve before you move to the final step.</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+          <button class="button-ghost" data-action="continue-without-feedback">No, continue</button>
+          <button class="button-secondary" data-action="prompt-request-feedback">Yes, get AI feedback</button>
         </div>
       </div>
     </div>
@@ -3836,11 +3884,6 @@ function renderStudentIdeasStep(assignment, submission) {
           <h3>Explore your ideas</h3>
           <p class="subtle">${chatDisabled ? "Your teacher has turned off the chatbot for this assignment. You can move straight to drafting when you are ready." : "Chat with your writing coach. Answer the questions to develop your thinking before you write."}</p>
         </div>
-        ${timeLimit > 0 && minsRemaining !== null ? `
-          <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
-            ${timeExpired ? "⏱ Time's up" : `⏱ ${minsRemaining}:${String(secsRemaining).padStart(2,'0')} left`}
-          </div>
-        ` : ""}
       </div>
       <div class="teacher-ready-card" style="margin-bottom:14px;">
         <p class="mini-label">Your focus for this piece</p>
@@ -3877,7 +3920,16 @@ function renderStudentIdeasStep(assignment, submission) {
         ` : `<div class="notice" style="margin-top:12px;">Your chat session has ended. Click Next to continue to your draft.</div>`}
       `}
       <div class="wizard-nav">
-        ${chatDisabled ? `<span></span>` : `<button class="button-ghost" data-action="skip-chat-to-draft">Skip chat for now</button>`}
+        ${chatDisabled ? `<span></span>` : `
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button class="button-ghost" data-action="skip-chat-to-draft">Skip chat for now</button>
+            ${timeLimit > 0 && minsRemaining !== null ? `
+              <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
+                ${timeExpired ? "⏱ Time's up" : `⏱ ${minsRemaining}:${String(secsRemaining).padStart(2,'0')} left`}
+              </div>
+            ` : ""}
+          </div>
+        `}
         <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>${chatDisabled || submission.chatSkippedAt || chatCount >= 2 ? "Next: Write Draft" : "Keep chatting a bit more"}</button>
       </div>
     </div>
@@ -3885,6 +3937,9 @@ function renderStudentIdeasStep(assignment, submission) {
 }
 
 function renderStudentDraftStep(assignment, submission) {
+  const feedbackUsed = Number(submission.feedbackHistory.length || 0);
+  const feedbackLimit = Number(assignment.feedbackRequestLimit || 0);
+  const feedbackDisabled = feedbackUsed >= feedbackLimit;
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -3899,7 +3954,7 @@ function renderStudentDraftStep(assignment, submission) {
           <button class="button-ghost" data-action="save-draft">Save Draft</button>
         </div>
         <div class="field inline-end">
-          <button class="button-secondary" data-action="request-feedback" ${submission.feedbackHistory.length >= assignment.feedbackRequestLimit ? "disabled" : ""}>Check My Draft</button>
+          <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
         </div>
       </div>
       <textarea id="draft-editor" class="draft-editor" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
@@ -3924,12 +3979,12 @@ function renderStudentDraftStep(assignment, submission) {
                       </div>` : ""}
                   </div>`;
               }).join("")
-            : `<div class="empty-state compact-empty"><h3>No draft check yet</h3><p>When you click "Check My Draft," you will get short questions and reminders, not rewritten text.</p></div>`
+            : `<div class="empty-state compact-empty"><h3>No AI draft feedback yet</h3><p>When you click "Get AI feedback," you will get short questions and reminders, not rewritten text.</p></div>`
         }
       </div>
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="1">Back</button>
-        <button class="button-secondary" data-action="request-feedback" ${submission.feedbackHistory.length >= assignment.feedbackRequestLimit ? "disabled" : ""}>Get feedback (${submission.feedbackHistory.length}/${assignment.feedbackRequestLimit})</button>
+        <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
         <button class="button" data-action="student-next-step" data-step="3">Next: Finish</button>
       </div>
     </div>
@@ -3939,6 +3994,31 @@ function renderStudentDraftStep(assignment, submission) {
 function renderStudentFinalStep(assignment, submission) {
   const selfAssessment = submission.selfAssessment || {};
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
+  const simpleRubricPreview = !rubricSchema && safeArray(assignment.rubric).length ? `
+    <div style="display:grid;gap:10px;">
+      ${assignment.rubric.map((item) => `
+        <div style="border:1px solid var(--line);border-radius:14px;padding:12px;background:#fbfdff;">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+            <div>
+              <strong style="display:block;margin-bottom:4px;">${escapeHtml(item.name)}</strong>
+              <p class="rubric-description">${escapeHtml(item.description)}</p>
+            </div>
+            <span class="pill">${item.points} pts</span>
+          </div>
+          ${safeArray(getCriterionBands(item)).length ? `
+            <div style="display:grid;gap:8px;margin-top:10px;">
+              ${getCriterionBands(item).map((band) => `
+                <div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;">
+                  <strong style="display:block;margin-bottom:4px;">${escapeHtml(cleanRubricLevelLabel(band.label || `${band.points}`))} · ${band.points} pts</strong>
+                  <p class="subtle">${escapeHtml(band.description || "No descriptor provided.")}</p>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+        </div>
+      `).join("")}
+    </div>
+  ` : "";
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -4000,6 +4080,7 @@ function renderStudentFinalStep(assignment, submission) {
       <div class="teacher-ready-card">
         <p class="mini-label">Self-assessment — rate yourself against the rubric</p>
         <p class="subtle" style="margin:4px 0 14px;">Be honest. Your teacher will see your ratings alongside their own assessment.</p>
+        <p class="mini-label" style="margin-bottom:8px;">Full rubric reference</p>
         ${rubricSchema ? `
           <div style="margin-bottom:14px;">
             ${renderRubricSchemaLayout(rubricSchema, {
@@ -4008,7 +4089,7 @@ function renderStudentFinalStep(assignment, submission) {
               previewMode: true,
             })}
           </div>
-        ` : ""}
+        ` : simpleRubricPreview}
         <div class="review-stack">
           ${assignment.rubric.map((item) => {
             const key = "sa_" + item.id;
