@@ -130,6 +130,142 @@ function parseLevelPoints(label = '') {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+const RUBRIC_SCHEMA_PROMPT = `
+You are an expert academic rubric parser.
+Read the uploaded rubric text and return one valid JSON object only.
+
+SCHEMA:
+{
+  "title": string,
+  "subtitle": string,
+  "totalPoints": number,
+  "notes": string[],
+  "criteria": [
+    {
+      "id": string,
+      "name": string,
+      "minScore": number,
+      "maxScore": number,
+      "levels": [
+        {
+          "label": string,
+          "score": number,
+          "description": string
+        }
+      ]
+    }
+  ],
+  "attribution": string
+}
+
+RULES:
+- Output raw JSON only. No markdown.
+- Preserve the rubric's real criteria. Do not invent new ones.
+- Keep levels ordered highest score to lowest score.
+- If a score range appears, use the higher score as the level score and keep minScore accurate.
+- Put deduction rules or special instructions into notes.
+- If a field is missing, use an empty string or sensible default.
+`.trim();
+
+function rubricSchemaToMatrix(schema = {}, fileName = '') {
+  const criteria = Array.isArray(schema?.criteria) ? schema.criteria : [];
+  if (!criteria.length) return null;
+
+  const headers = (criteria[0]?.levels || []).map((level) => {
+    const label = String(level?.label || '').trim();
+    const score = Number(level?.score ?? 0);
+    return label && Number.isFinite(score) ? `${label} – ${score}` : label || String(score || '');
+  }).filter(Boolean);
+
+  if (!headers.length) return null;
+
+  const rows = criteria.map((criterion, criterionIndex) => {
+    const levels = Array.isArray(criterion?.levels) ? criterion.levels : [];
+    const maxScore = Number(criterion?.maxScore ?? Math.max(...levels.map((level) => Number(level?.score ?? 0)), 0));
+    const minScore = Number(criterion?.minScore ?? Math.min(...levels.map((level) => Number(level?.score ?? 0)), maxScore));
+
+    return {
+      id: criterion?.id || `rubric-row-${criterionIndex + 1}`,
+      section: "",
+      subcriterion: criterion?.name || `Criterion ${criterionIndex + 1}`,
+      name: criterion?.name || `Criterion ${criterionIndex + 1}`,
+      description: "",
+      points: maxScore,
+      pointsLabel: Number.isFinite(minScore) && minScore !== maxScore
+        ? `${minScore} – ${maxScore} points`
+        : `${maxScore} points`,
+      levels: levels.map((level, levelIndex) => {
+        const score = Number(level?.score ?? 0);
+        const label = String(level?.label || '').trim();
+        return {
+          id: `${criterion?.id || `criterion-${criterionIndex + 1}`}-level-${levelIndex + 1}`,
+          label: label && Number.isFinite(score) ? `${label} – ${score}` : label || `${score}`,
+          points: score,
+          description: String(level?.description || "").trim(),
+        };
+      }),
+    };
+  }).filter((row) => row.levels.length);
+
+  if (!rows.length) return null;
+
+  return {
+    kind: 'matrix',
+    name: schema?.title || fileName || 'Uploaded rubric',
+    headers,
+    rows,
+    notes: [
+      schema?.subtitle || '',
+      ...(Array.isArray(schema?.notes) ? schema.notes : []),
+      schema?.attribution || '',
+    ].filter(Boolean),
+  };
+}
+
+async function parseRubricTextWithClaude(rawText = '', fileName = '') {
+  if (!process.env.ANTHROPIC_API_KEY || !String(rawText).trim()) return null;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      system: RUBRIC_SCHEMA_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `Parse this rubric into the schema.\n\n${rawText}`,
+        },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `Claude rubric parse failed (${response.status})`);
+  }
+
+  const raw = Array.isArray(data?.content)
+    ? data.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
+    : '';
+  const cleaned = raw.replace(/^```(?:json)?/m, '').replace(/```$/m, '').trim();
+  const parsed = JSON.parse(cleaned);
+  return rubricSchemaToMatrix(parsed, fileName);
+}
+
+function looksLowQualityRubricData(rubricData) {
+  if (!rubricData?.rows?.length) return true;
+  const rows = rubricData.rows;
+  const identicalNames = rows.filter((row) => row?.section && row?.name && row.section === row.name).length;
+  const vagueNames = rows.filter((row) => /^(a variety|very good|good use|good range|acceptable|word choice|simple sentences)$/i.test(String(row?.name || '').trim())).length;
+  return identicalNames >= Math.ceil(rows.length / 2) || vagueNames >= Math.ceil(rows.length / 3);
+}
+
 function deriveSubcriterionName(sectionText = '', firstDescription = '', rowIndex = 0, seenCount = 0) {
   const cleanedSection = normalizeSectionLabel(sectionText);
   const rawLines = cleanRubricXmlCellText(sectionText)
@@ -349,6 +485,14 @@ app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
       text = rawTextResult.value;
       rubricData = documentXml ? parseRubricDocxXml(documentXml, req.file.originalname) : null;
       if (!rubricData) rubricData = parseRubricHtmlTable(htmlResult.value, req.file.originalname);
+      if (!rubricData || looksLowQualityRubricData(rubricData)) {
+        try {
+          const aiRubricData = await parseRubricTextWithClaude(text, req.file.originalname);
+          if (aiRubricData?.rows?.length) rubricData = aiRubricData;
+        } catch (aiError) {
+          console.warn('[extract-rubric] Claude rubric normalization failed:', aiError.message);
+        }
+      }
     } else if (mime === 'application/pdf') {
       // Use AI to extract text from PDF since we can't run native pdf libs easily
       const base64 = req.file.buffer.toString('base64');
@@ -373,11 +517,31 @@ app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
       });
       const aiData = await aiRes.json();
       text = aiData.content?.[0]?.text || '';
+      try {
+        const aiRubricData = await parseRubricTextWithClaude(text, req.file.originalname);
+        if (aiRubricData?.rows?.length) rubricData = aiRubricData;
+      } catch (aiError) {
+        console.warn('[extract-rubric] Claude rubric normalization failed:', aiError.message);
+      }
     } else {
       return res.status(400).json({ error: 'Please upload a PDF or Word document' });
     }
 
     res.json({ text: text.trim(), rubricData });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/rubric/parse-text', async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Text is required' });
+    const rubricData = await parseRubricTextWithClaude(text, 'Pasted rubric');
+    if (!rubricData?.rows?.length) {
+      return res.status(422).json({ error: 'Could not parse rubric text into a structured rubric.' });
+    }
+    res.json({ rubricData });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

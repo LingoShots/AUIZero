@@ -185,16 +185,23 @@ function renderRubricMatrixTable(matrixData, options = {}) {
   if (!matrix) return "";
 
   const clickable = Boolean(options.clickable);
+  const compact = Boolean(options.compact);
   const rowScoreMap = options.rowScoreMap || new Map();
   const suggestedRowScoreMap = options.suggestedRowScoreMap || new Map();
+  const criterionMinWidth = compact ? 150 : 180;
+  const levelMinWidth = compact ? 128 : 160;
+  const cellPadding = compact ? 8 : 10;
+  const headerPadding = compact ? 8 : 10;
+  const minHeight = compact ? 84 : 110;
+  const fontSize = compact ? "0.76rem" : "0.82rem";
 
   return `
     <div style="overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff;">
-      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:0.82rem;min-width:840px;">
+      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:${fontSize};min-width:${compact ? 760 : 840}px;">
         <thead>
           <tr>
-            <th style="position:sticky;top:0;background:#f4efe6;padding:10px;border-bottom:1px solid var(--line);text-align:left;min-width:180px;">Criterion</th>
-            ${safeArray(matrix.headers).map((header) => `<th style="position:sticky;top:0;background:#f4efe6;padding:10px;border-bottom:1px solid var(--line);text-align:left;min-width:160px;">${escapeHtml(header)}</th>`).join("")}
+            <th style="position:sticky;top:0;background:#f4efe6;padding:${headerPadding}px;border-bottom:1px solid var(--line);text-align:left;min-width:${criterionMinWidth}px;">Criterion</th>
+            ${safeArray(matrix.headers).map((header) => `<th style="position:sticky;top:0;background:#f4efe6;padding:${headerPadding}px;border-bottom:1px solid var(--line);text-align:left;min-width:${levelMinWidth}px;">${escapeHtml(header)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
@@ -203,7 +210,7 @@ function renderRubricMatrixTable(matrixData, options = {}) {
             const suggested = suggestedRowScoreMap.get(row.id);
             return `
               <tr>
-                <td style="padding:10px;vertical-align:top;border-bottom:1px solid var(--line);background:#faf7f0;">
+                <td style="padding:${cellPadding}px;vertical-align:top;border-bottom:1px solid var(--line);background:#faf7f0;">
                   ${row.section && row.section !== row.name ? `<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">${escapeHtml(row.section)}</div>` : ""}
                   <div style="font-weight:700;">${escapeHtml(row.name)}</div>
                   ${row.pointsLabel ? `<div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escapeHtml(row.pointsLabel)}</div>` : ""}
@@ -218,10 +225,10 @@ function renderRubricMatrixTable(matrixData, options = {}) {
                     <div style="line-height:1.5;">${escapeHtml(level.description || "—")}</div>
                   `;
                   return `
-                    <td style="padding:8px;vertical-align:top;border-bottom:1px solid var(--line);">
+                    <td style="padding:${compact ? 6 : 8}px;vertical-align:top;border-bottom:1px solid var(--line);">
                       ${clickable
-                        ? `<button class="button-ghost" data-action="select-rubric-band" data-criterion-id="${row.id}" data-band-id="${escapeAttribute(level.id)}" style="width:100%;min-height:100%;padding:10px;white-space:normal;text-align:left;background:${background};border-color:${border};">${content}</button>`
-                        : `<div style="padding:10px;border:1px solid ${border};border-radius:10px;background:${background};min-height:110px;">${content}</div>`
+                        ? `<button class="button-ghost" data-action="select-rubric-band" data-criterion-id="${row.id}" data-band-id="${escapeAttribute(level.id)}" style="width:100%;min-height:100%;padding:${cellPadding}px;white-space:normal;text-align:left;background:${background};border-color:${border};">${content}</button>`
+                        : `<div style="padding:${cellPadding}px;border:1px solid ${border};border-radius:10px;background:${background};min-height:${minHeight}px;">${content}</div>`
                       }
                     </td>
                   `;
@@ -2265,7 +2272,7 @@ function renderTeacherWorkspace() {
                 </select>
               </div>
             ` : ""}
-            ${(ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricData?.rows?.length) ? `
+            ${!ui.teacherAssist && (ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricData?.rows?.length) ? `
               <div style="margin-top:12px;">
                 ${renderUploadedRubricPreview("Uploaded rubric", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData)}
               </div>
@@ -2629,7 +2636,7 @@ function renderTeacherGrading(assignment, submission) {
         </div>
       </div>
 
-      <div class="review-grid">
+      <div class="review-grid ${matrixRubric ? "review-grid-stacked" : ""}">
         <div class="review-card">
 
           <div style="margin-bottom:16px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;">
@@ -2742,7 +2749,7 @@ function renderTeacherGrading(assignment, submission) {
                     ${matrixRubric.notes.map((note) => `<div style="font-size:0.8rem;color:var(--muted);line-height:1.5;">${escapeHtml(note)}</div>`).join("")}
                   </div>
                 ` : ""}
-                ${renderRubricMatrixTable(matrixRubric, { clickable: true, rowScoreMap: reviewSummary.rowScoreMap, suggestedRowScoreMap })}
+                ${renderRubricMatrixTable(matrixRubric, { clickable: true, compact: true, rowScoreMap: reviewSummary.rowScoreMap, suggestedRowScoreMap })}
               `
               : reviewSummary.rubric.map((criterion) => {
                   const bands = getCriterionBands(criterion);
