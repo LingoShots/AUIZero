@@ -32,7 +32,13 @@ const Auth = (() => {
         });
       }
     }
-    return res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: text || `Request failed (${res.status})` };
+    }
   }
 
   async function signIn(email, password, stayLoggedIn = true) {
