@@ -27,6 +27,7 @@ const ui = {
   showClassModal: false,
   classModalName: "",
   classModalError: "",
+  showTutorialModal: false,
   showFullRubric: false,
   inviteText: "",
   inviteMailto: "",
@@ -601,7 +602,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
         </div>
       ` : ""}
       ${schema.criteria[0]?.levels?.length ? `
-        <div class="rubric-level-legend">
+        <div class="rubric-level-legend" style="grid-template-columns:repeat(${Math.max(schema.criteria[0].levels.length, 1)}, minmax(0, 1fr));">
           ${schema.criteria[0].levels.map((level) => {
             const theme = levelTheme(level.label);
             return `<span class="rubric-level-legend-chip" style="background:${theme.badge};color:${theme.text};">${escapeHtml(level.label)} — ${level.score} pts</span>`;
@@ -754,6 +755,7 @@ function createBlankTeacherDraft() {
     ideaRequestLimit: 3,
     feedbackRequestLimit: 2,
     chatTimeLimit: 0,
+    disableChatbot: false,
     deadline: "",
     studentFocus: "",
     rubric: [],
@@ -762,6 +764,19 @@ function createBlankTeacherDraft() {
     uploadedRubricData: null,
     uploadedRubricSchema: null,
   };
+}
+
+function isChatDisabled(config = {}) {
+  return Boolean(config?.disableChatbot) || Number(config?.chatTimeLimit ?? 0) < 0;
+}
+
+function getVisibleChatTimeLimit(config = {}) {
+  return isChatDisabled(config) ? 0 : Number(config?.chatTimeLimit ?? 0);
+}
+
+function assignmentUsesSingleParagraph(assignment = {}) {
+  const haystack = `${assignment?.title || ""} ${assignment?.brief || ""} ${assignment?.prompt || ""}`.toLowerCase();
+  return /\bparagraph\b/.test(haystack) && !/\bparagraphs\b/.test(haystack);
 }
 
 function getAssignmentRubricType(assignment) {
@@ -879,6 +894,55 @@ function calculateTeacherReviewSummary(assignment, submission, rowScores = submi
     selectedCount,
     isComplete: rubric.length > 0 && selectedCount === rubric.length,
   };
+}
+
+function buildCriterionAnalytics(assignment, submissions) {
+  const rubric = safeArray(assignment?.rubric);
+  if (!rubric.length) return [];
+
+  return rubric.map((criterion) => {
+    const bands = getCriterionBands(criterion)
+      .slice()
+      .sort((a, b) => Number(b.points ?? 0) - Number(a.points ?? 0));
+    const counts = new Map(bands.map((band) => [band.id || `${criterion.id}-${band.points}`, 0]));
+    let gradedCount = 0;
+    let totalPoints = 0;
+
+    safeArray(submissions).forEach((submission) => {
+      const rowMap = getTeacherReviewRowScoreMap(submission?.teacherReview?.rowScores);
+      const entry = rowMap.get(criterion.id);
+      if (!entry) return;
+      gradedCount += 1;
+      totalPoints += Number(entry.points ?? 0);
+      const matchingBand = bands.find((band) => (band.id || `${criterion.id}-${band.points}`) === entry.bandId)
+        || findClosestBand(criterion, entry.points);
+      if (matchingBand) {
+        const key = matchingBand.id || `${criterion.id}-${matchingBand.points}`;
+        counts.set(key, Number(counts.get(key) || 0) + 1);
+      }
+    });
+
+    const distribution = bands.map((band) => {
+      const key = band.id || `${criterion.id}-${band.points}`;
+      const count = Number(counts.get(key) || 0);
+      return {
+        id: key,
+        label: cleanRubricLevelLabel(band.label || `${band.points}`),
+        points: Number(band.points ?? 0),
+        count,
+        share: gradedCount ? count / gradedCount : 0,
+      };
+    });
+
+    return {
+      criterionId: criterion.id,
+      criterionName: criterion.name || "Criterion",
+      gradedCount,
+      averageScore: gradedCount ? (totalPoints / gradedCount) : 0,
+      maxPoints: Number(criterion.points || 0),
+      distribution,
+    };
+  });
 }
 
 async function syncTeacherReviewToServer(submission) {
@@ -1094,9 +1158,11 @@ async function loadTeacherClassContext(classId) {
 
   if (!currentClassId) return;
 
-  const membersData = await Auth.apiFetch(`/api/classes/${currentClassId}/members`);
+  const [membersData, assignData] = await Promise.all([
+    Auth.apiFetch(`/api/classes/${currentClassId}/members`),
+    Auth.apiFetch(`/api/classes/${currentClassId}/assignments`)
+  ]);
   currentClassMembers = membersData.members || [];
-  const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
   const raw = assignData.assignments || [];
   state.assignments = raw.map((a) => normalizeAssignment({
     id: a.id,
@@ -1190,6 +1256,7 @@ function mapServerSubmission(serverSubmission) {
     selfAssessment: serverSubmission?.self_assessment || {},
     chatHistory: Array.isArray(serverSubmission?.chat_history) ? serverSubmission.chat_history : [],
     chatStartedAt: serverSubmission?.chat_started_at || null,
+    chatSkippedAt: serverSubmission?.chat_skipped_at || null,
     status: serverSubmission?.status || "draft",
     startedAt: serverSubmission?.started_at || null,
     updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
@@ -1677,6 +1744,39 @@ if (action === "sign-out") {
     return;
   }
 
+  if (action === "open-tutorial") {
+    ui.showTutorialModal = true;
+    render();
+    return;
+  }
+
+  if (action === "close-tutorial") {
+    ui.showTutorialModal = false;
+    render();
+    return;
+  }
+
+  if (["jump-brief", "jump-settings", "jump-output", "jump-review"].includes(action)) {
+    ui.showTutorialModal = false;
+    render();
+    const targetId = {
+      "jump-brief": "teacher-brief",
+      "jump-settings": "teacher-shared-settings",
+      "jump-output": "teacher-generated-assignment",
+      "jump-review": "teacher-review-panel",
+    }[action];
+    window.setTimeout(() => {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (typeof el.focus === "function" && targetId === "teacher-brief") {
+          el.focus();
+        }
+      }
+    }, 40);
+    return;
+  }
+
  if (action === "use-generated-assignment" && ui.teacherAssist) {
     applyTeacherAssistToDraft();
     ui.notice = "Generated assignment details copied into the draft.";
@@ -1692,6 +1792,13 @@ if (action === "sign-out") {
       ui.selectedSavedRubricId = "";
     }
     ui.notice = "Saved rubric removed from your reusable library.";
+    render();
+    return;
+  }
+
+  if (action === "clear-saved-rubric-selection") {
+    clearUploadedRubric();
+    ui.notice = "Saved rubric cleared from this assignment draft.";
     render();
     return;
   }
@@ -1814,12 +1921,34 @@ if (action === "back-to-assignments") {
 }
   if (action === "student-next-step") {
     const nextStep = Number(target.dataset.step);
+    if (nextStep === 2) {
+      const notes = document.getElementById("chat-skip-notes");
+      const submission = getStudentSubmission();
+      if (notes && submission) {
+        submission.outline.partOne = notes.value.trim();
+      }
+    }
     if (canAdvanceToStep(nextStep)) {
       ui.studentStep = nextStep;
       ui.notice = "";
     } else {
       render();
     }
+    render();
+    return;
+  }
+
+  if (action === "skip-chat-to-draft") {
+    const submission = getStudentSubmission();
+    if (!submission) return;
+    const notes = document.getElementById("chat-skip-notes");
+    submission.chatSkippedAt = new Date().toISOString();
+    if (notes) {
+      submission.outline.partOne = notes.value.trim();
+    }
+    ui.studentStep = 2;
+    ui.notice = "You can return to the chat later if you want more idea help.";
+    persistState();
     render();
     return;
   }
@@ -2125,7 +2254,12 @@ async function handleChange(event) {
   const target = event.target;
 
   if (target.dataset.teacherField) {
-    ui.teacherDraft[target.dataset.teacherField] = target.value;
+    ui.teacherDraft[target.dataset.teacherField] = target.type === "checkbox" ? target.checked : target.value;
+    if (target.dataset.teacherField === "disableChatbot" && target.checked) {
+      ui.teacherDraft.chatTimeLimit = -1;
+    } else if (target.dataset.teacherField === "disableChatbot" && !target.checked && Number(ui.teacherDraft.chatTimeLimit) < 0) {
+      ui.teacherDraft.chatTimeLimit = 0;
+    }
     return;
   }
 
@@ -2393,7 +2527,7 @@ function render() {
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal();
+  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderTutorialModal();
 
   // Start chat timer if student is on step 1 and there's a time limit
   if (ui.role === "student" && ui.studentStep === 1) {
@@ -2702,15 +2836,15 @@ function renderWritingHeatmap(submission) {
             const count = buckets[`${d}__${h}`] || 0;
             const intensity = count === 0 ? 0 : Math.max(0.12, count / maxCount);
             const bg = count === 0
-              ? "#f0ece4"
-              : `rgba(165,82,51,${intensity})`;
+              ? "#eef3fb"
+              : `rgba(95,143,255,${intensity})`;
             return `<div title="${count} edit${count !== 1 ? "s" : ""} — ${hourLabel(h)} on ${d}" style="height:24px;border-radius:4px;background:${bg};"></div>`;
           }).join("")}
         `).join("")}
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:0.75rem;color:var(--muted);">
         <span>Less</span>
-        ${[0.12, 0.35, 0.6, 0.85, 1].map(v => `<div style="width:14px;height:14px;border-radius:3px;background:rgba(165,82,51,${v});"></div>`).join("")}
+        ${[0.12, 0.35, 0.6, 0.85, 1].map(v => `<div style="width:14px;height:14px;border-radius:3px;background:rgba(95,143,255,${v});"></div>`).join("")}
         <span>More</span>
         <span style="margin-left:12px;">${events.length} total edits across ${days.length} day${days.length !== 1 ? "s" : ""}</span>
       </div>
@@ -2763,6 +2897,65 @@ function renderClassModal() {
   `;
 }
 
+function renderTutorialModal() {
+  if (!ui.showTutorialModal) return "";
+  const steps = [
+    {
+      title: "Start with the brief",
+      body: "Describe the assignment in plain English first. Then either format it with AI or finish it manually.",
+      action: "jump-brief",
+      label: "Go to teacher brief",
+    },
+    {
+      title: "Set the shared rules",
+      body: "Upload or reuse a rubric, set deadlines, feedback checks, chat limits, and decide whether the chatbot is enabled.",
+      action: "jump-settings",
+      label: "Go to shared settings",
+    },
+    {
+      title: "Save or publish",
+      body: "You can save a draft without AI, then publish it only to the current class when it is ready.",
+      action: "jump-output",
+      label: "Go to assignment builder",
+    },
+    {
+      title: "Review with analytics",
+      body: "Once students submit, use the review area to grade, see criterion trends, and move student by student.",
+      action: "jump-review",
+      label: "Go to review area",
+    },
+  ];
+
+  return `
+    <div style="position:fixed;inset:0;background:rgba(10,18,33,0.38);z-index:1000;display:grid;place-items:center;padding:20px;">
+      <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:760px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px;">
+          <div>
+            <p class="mini-label" style="margin-bottom:6px;">Tutorial walkthrough</p>
+            <h3 style="margin:0 0 6px;">Quick tour of the teacher workflow</h3>
+            <p class="subtle" style="margin:0;">Use these shortcuts to jump to the parts of the page you need without hunting around.</p>
+          </div>
+          <button class="button-ghost" data-action="close-tutorial">Close</button>
+        </div>
+        <div style="display:grid;gap:12px;">
+          ${steps.map((step, index) => `
+            <div style="border:1px solid var(--line);border-radius:16px;padding:16px;background:#f8fbff;">
+              <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+                <div>
+                  <p class="mini-label" style="margin-bottom:4px;">Step ${index + 1}</p>
+                  <strong style="display:block;margin-bottom:4px;">${escapeHtml(step.title)}</strong>
+                  <p class="subtle">${escapeHtml(step.body)}</p>
+                </div>
+                <button class="button-secondary" data-action="${step.action}">${escapeHtml(step.label)}</button>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTopbar() {
   const studentOptions = "";
 
@@ -2778,6 +2971,7 @@ function renderTopbar() {
       <div class="toolbar">
         ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
        ${ui.role === "teacher" ? `
+          <button class="button-ghost" data-action="open-tutorial" style="font-size:0.82rem;">Tutorial</button>
           ${currentClassId ? `<span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>` : ""}
           ${currentClasses.length === 0 ? `
             <button class="button-secondary" data-action="create-class">+ Create first class</button>
@@ -2842,6 +3036,14 @@ function renderTeacherWorkspace() {
             <label for="teacher-brief">Teacher brief</label>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
+          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <p class="mini-label" style="margin-bottom:4px;">Shared assignment settings</p>
+                <p class="subtle">These settings apply whether you save manually or use AI formatting.</p>
+              </div>
+              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
+            </div>
           <div class="field">
             <label>Rubric (optional — drag and drop or click to upload)</label>
             <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
@@ -2864,6 +3066,10 @@ function renderTeacherWorkspace() {
                     <option value="">Select a saved rubric</option>
                     ${savedRubrics.map((entry) => `<option value="${entry.id}" ${ui.selectedSavedRubricId === entry.id ? "selected" : ""}>${escapeHtml(entry.name)}</option>`).join("")}
                   </select>
+                  ${ui.selectedSavedRubricId
+                    ? `<button class="button-ghost" data-action="clear-saved-rubric-selection" style="min-height:42px;">Clear</button>`
+                    : ""
+                  }
                   ${selectedSavedRubric?.source === "upload"
                     ? `<button class="button-ghost" data-action="remove-saved-rubric" data-rubric-id="${selectedSavedRubric.id}" style="min-height:42px;">Remove saved rubric</button>`
                     : ""
@@ -2895,7 +3101,13 @@ function renderTeacherWorkspace() {
             </div>
             <div class="field">
               <label for="teacher-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
-              <input id="teacher-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.chatTimeLimit))}" />
+              <input id="teacher-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(getVisibleChatTimeLimit(ui.teacherDraft)))}" ${ui.teacherDraft.disableChatbot ? "disabled" : ""} />
+            </div>
+            <div class="field" style="display:flex;align-items:flex-end;">
+              <label style="display:flex;gap:10px;align-items:center;min-height:44px;padding:0 4px;font-weight:600;">
+                <input id="teacher-disable-chatbot" data-teacher-field="disableChatbot" type="checkbox" ${ui.teacherDraft.disableChatbot ? "checked" : ""} />
+                Disable chatbot
+              </label>
             </div>
             <div class="field" style="grid-column:1 / -1;">
               <label for="teacher-deadline-date">Deadline</label>
@@ -2915,6 +3127,7 @@ function renderTeacherWorkspace() {
                 ${["A0", "A1", "A2", "B1", "B2", "C1", "C2"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(level)}</option>`).join("")}
               </select>
             </div>
+          </div>
           </div>
         </div>
         ${
@@ -2993,7 +3206,7 @@ function renderTeacherWorkspace() {
                   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div>
                       <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
-                      <p class="subtle">Skip AI if you already know the student-facing title and prompt.</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. The shared settings above still control rubric upload, deadline, feedback, and chatbot rules.</p>
                     </div>
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
@@ -3107,6 +3320,7 @@ function renderTeacherReview(assignment, submissions) {
   const flaggedCount = submissions.filter(
     s => Array.isArray(s.writingEvents) && s.writingEvents.some(e => e && e.flagged)
   ).length;
+  const criterionAnalytics = buildCriterionAnalytics(assignment, submissions.filter((submission) => submission?.teacherReview?.savedAt));
 
   return `
         <section id="teacher-review-section" class="panel review-shell">
@@ -3133,6 +3347,42 @@ function renderTeacherReview(assignment, submissions) {
           <div style="font-size:1.5rem;font-weight:700;">${flaggedCount}</div>
           <div style="font-size:0.75rem;color:var(--muted);">Paste flags</div>
         </div>
+      </div>
+
+      <div id="teacher-review-panel" class="teacher-ready-card" style="margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px;">
+          <div>
+            <p class="mini-label" style="margin-bottom:4px;">Grade analytics</p>
+            <p class="subtle">After you grade a class set, this shows where students collectively struggled on each criterion.</p>
+          </div>
+          <span class="pill">${gradedCount} graded so far</span>
+        </div>
+        ${criterionAnalytics.some((criterion) => criterion.gradedCount > 0) ? `
+          <div style="display:grid;gap:10px;">
+            ${criterionAnalytics.map((criterion) => `
+              <div style="border:1px solid var(--line);border-radius:14px;padding:14px;background:#fbfdff;">
+                <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+                  <div>
+                    <strong style="display:block;margin-bottom:4px;">${escapeHtml(criterion.criterionName)}</strong>
+                    <span class="subtle">Average ${criterion.averageScore.toFixed(1)}/${criterion.maxPoints}</span>
+                  </div>
+                  <span class="pill">${criterion.gradedCount} graded</span>
+                </div>
+                <div style="display:grid;gap:8px;">
+                  ${criterion.distribution.map((band) => `
+                    <div style="display:grid;grid-template-columns:minmax(160px,220px) minmax(0,1fr) auto;gap:10px;align-items:center;">
+                      <span class="rubric-level-legend-chip" style="width:100%;background:${levelTheme(band.label).badge};color:${levelTheme(band.label).text};">${escapeHtml(band.label)} · ${band.points}</span>
+                      <div style="height:12px;border-radius:999px;background:#e9eff9;overflow:hidden;">
+                        <div style="height:100%;width:${band.count ? Math.max(6, Math.round(band.share * 100)) : 0}%;background:linear-gradient(90deg,var(--accent),#9fc0ff);border-radius:inherit;"></div>
+                      </div>
+                      <span class="subtle">${band.count}</span>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        ` : `<div class="empty-state compact-empty"><h3>No analytics yet</h3><p>Once you save some grades, the criterion distributions will appear here automatically.</p></div>`}
       </div>
 
       <div class="student-list">
@@ -3541,14 +3791,15 @@ function renderStudentStep(assignment, submission) {
 
 function renderStudentIdeasStep(assignment, submission) {
   const chatHistory = submission.chatHistory || [];
-  const timeLimit = assignment.chatTimeLimit || 0;
+  const chatDisabled = isChatDisabled(assignment);
+  const timeLimit = chatDisabled ? 0 : Math.max(0, Number(assignment.chatTimeLimit || 0));
   const chatStartedAt = submission.chatStartedAt;
   const elapsedMins = chatStartedAt ? (Date.now() - Date.parse(chatStartedAt)) / 60000 : 0;
   const timeExpired = timeLimit > 0 && elapsedMins >= timeLimit;
   const totalSecsRemaining = (timeLimit > 0 && chatStartedAt) ? Math.max(0, Math.round((timeLimit * 60) - (Date.now() - Date.parse(chatStartedAt)) / 1000)) : null;
   const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
   const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
-  const hasEnoughChat = chatHistory.length >= 2;
+  const hasEnoughChat = chatDisabled || submission.chatSkippedAt || chatHistory.length >= 2;
 
   return `
     <div class="step-card wizard-card">
@@ -3556,7 +3807,7 @@ function renderStudentIdeasStep(assignment, submission) {
         <div>
           <div class="step-number">1</div>
           <h3>Explore your ideas</h3>
-          <p class="subtle">Chat with your writing coach. Answer the questions to develop your thinking before you write.</p>
+          <p class="subtle">${chatDisabled ? "Your teacher has turned off the chatbot for this assignment. You can move straight to drafting when you are ready." : "Chat with your writing coach. Answer the questions to develop your thinking before you write."}</p>
         </div>
         ${timeLimit > 0 && minsRemaining !== null ? `
           <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
@@ -3568,30 +3819,38 @@ function renderStudentIdeasStep(assignment, submission) {
         <p class="mini-label">Your focus for this piece</p>
         <ul class="focus-list">${assignment.studentFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </div>
-      <div class="chatbot-window" id="chatbot-window">
-        ${chatHistory.length === 0 ? `
-          <div class="chat-message chat-assistant">
-            <div class="chat-bubble">Hello! I'm your writing coach. I won't write anything for you, but I'll ask you questions to help you think. Let's start: what topic or idea are you thinking about for this piece?</div>
-          </div>
-        ` : chatHistory.map((msg) => `
-          <div class="chat-message chat-${escapeHtml(msg.role)}">
-            <div class="chat-bubble">${escapeHtml(msg.content)}</div>
-          </div>
-        `).join("")}
-        ${ui.chatLoading ? `
-          <div class="chat-message chat-assistant">
-            <div class="chat-bubble chat-loading"><span></span><span></span><span></span></div>
-          </div>
-        ` : ""}
-      </div>
-      ${!timeExpired ? `
-        <div class="chat-input-row">
-          <textarea id="chat-input" class="chat-input" placeholder="Type your answer here…" rows="2">${escapeHtml(ui.chatInput)}</textarea>
-          <button class="button" data-action="send-chat-message" ${ui.chatLoading ? "disabled" : ""}>Send</button>
+      ${chatDisabled ? `
+        <div class="teacher-ready-card">
+          <p class="mini-label">Planning prompt</p>
+          <p class="subtle" style="margin-bottom:10px;">Take a minute to jot down your main idea and one example you might use before you start drafting.</p>
+          <textarea id="chat-skip-notes" class="chat-input" rows="3" placeholder="Optional: note your main idea here before you draft.">${escapeHtml(submission.outline?.partOne || "")}</textarea>
         </div>
-      ` : `<div class="notice" style="margin-top:12px;">Your chat session has ended. Click Next to continue to your draft.</div>`}
+      ` : `
+        <div class="chatbot-window" id="chatbot-window">
+          ${chatHistory.length === 0 ? `
+            <div class="chat-message chat-assistant">
+              <div class="chat-bubble">Hello! I'm your writing coach. I won't write anything for you, but I'll ask you questions to help you think. Let's start: what topic or idea are you thinking about for this piece?</div>
+            </div>
+          ` : chatHistory.map((msg) => `
+            <div class="chat-message chat-${escapeHtml(msg.role)}">
+              <div class="chat-bubble">${escapeHtml(msg.content)}</div>
+            </div>
+          `).join("")}
+          ${ui.chatLoading ? `
+            <div class="chat-message chat-assistant">
+              <div class="chat-bubble chat-loading"><span></span><span></span><span></span></div>
+            </div>
+          ` : ""}
+        </div>
+        ${!timeExpired ? `
+          <div class="chat-input-row">
+            <textarea id="chat-input" class="chat-input" placeholder="Type your answer here…" rows="2">${escapeHtml(ui.chatInput)}</textarea>
+            <button class="button" data-action="send-chat-message" ${ui.chatLoading ? "disabled" : ""}>Send</button>
+          </div>
+        ` : `<div class="notice" style="margin-top:12px;">Your chat session has ended. Click Next to continue to your draft.</div>`}
+      `}
       <div class="wizard-nav">
-        <span></span>
+        ${chatDisabled ? `<span></span>` : `<button class="button-ghost" data-action="skip-chat-to-draft">Skip chat for now</button>`}
         <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>Next: Write Draft</button>
       </div>
     </div>
@@ -3751,14 +4010,15 @@ function renderStudentFinalStep(assignment, submission) {
 
 function canAdvanceToStep(nextStep) {
   const submission = getStudentSubmission();
+  const assignment = getStudentAssignment();
   if (!submission) {
     return false;
   }
 
   if (nextStep === 2) {
-    const hasChat = (submission.chatHistory || []).length >= 2;
+    const hasChat = isChatDisabled(assignment) || Boolean(submission.chatSkippedAt) || (submission.chatHistory || []).length >= 2;
     if (!hasChat) {
-      ui.notice = "Have a conversation with your writing coach before moving on.";
+      ui.notice = "Have a short conversation with your writing coach first, or use Skip chat if you're ready to draft.";
       return false;
     }
   }
@@ -3800,6 +4060,7 @@ async function saveTeacherAssignment() {
         wordCountMax: Number(ui.teacherAssist.wordCountMax || 400),
         ideaRequestLimit: Number(ui.teacherDraft.ideaRequestLimit || 3),
         feedbackRequestLimit: Number(ui.teacherDraft.feedbackRequestLimit || 2),
+        disableChatbot: Boolean(ui.teacherDraft.disableChatbot),
         studentFocus: ui.teacherAssist.studentFocus || [],
         rubric: (ui.teacherAssist.rubric || []).filter((item) => (item.name || "").trim()),
       }
@@ -3827,6 +4088,7 @@ async function saveTeacherAssignment() {
     wordCountMax: draft.wordCountMax,
     ideaRequestLimit: draft.ideaRequestLimit,
     feedbackRequestLimit: draft.feedbackRequestLimit,
+    disableChatbot: Boolean(draft.disableChatbot),
     studentFocus: studentFocusArray,
     rubricSchema: ui.teacherDraft.uploadedRubricSchema
       ? normalizeRubricSchema(ui.teacherDraft.uploadedRubricSchema, ui.teacherDraft.uploadedRubricName || draft.title || "Uploaded rubric")
@@ -3852,7 +4114,7 @@ async function saveTeacherAssignment() {
     createdAt: new Date().toISOString(),
     status: "draft",
     deadline: ui.teacherDraft.deadline || "",
-    chatTimeLimit: Number(ui.teacherDraft.chatTimeLimit || 0),
+    chatTimeLimit: draft.disableChatbot ? -1 : Number(ui.teacherDraft.chatTimeLimit || 0),
     uploadedRubricText: ui.teacherDraft.uploadedRubricText || "",
     uploadedRubricName: ui.teacherDraft.uploadedRubricName || "",
     uploadedRubricData: ui.teacherDraft.uploadedRubricData || null,
@@ -4707,6 +4969,7 @@ function generateFeedback(assignment, submission) {
   const words = wordCount(text);
   const paragraphs = splitParagraphs(text);
   const sentences = splitSentences(text);
+  const singleParagraphTask = assignmentUsesSingleParagraph(assignment);
 
   if (!text) {
     return [
@@ -4715,18 +4978,18 @@ function generateFeedback(assignment, submission) {
     ];
   }
 
+  // Primary checks — triggered by what's actually in the draft
+  const primaryPool = [];
+
   if (hasFlaggedPaste) {
     primaryPool.push("Your draft contains pasted content. Please remove it and rewrite that section in your own words before requesting feedback.");
   }
-
-  // Primary checks — triggered by what's actually in the draft
-  const primaryPool = [];
 
   if (words < assignment.wordCountMin * 0.7) {
     primaryPool.push("Your draft is still short. Can you add one more example or explanation?");
   }
 
-  if (paragraphs.length < 2) {
+  if (!singleParagraphTask && paragraphs.length < 2) {
     primaryPool.push("Could you split this into at least two parts so the reader can follow your thinking more easily?");
   }
 
@@ -4746,7 +5009,7 @@ function generateFeedback(assignment, submission) {
   // Secondary checks — always available but only used when primary ones are exhausted or repeated
   const secondaryPool = [
     "Read your writing out loud. Where does it sound confusing or too quick?",
-    "Check that each paragraph has one main job.",
+    singleParagraphTask ? "Read each sentence and ask: does it clearly support your one main idea?" : "Check that each paragraph has one main job.",
     "Does your opening sentence tell the reader exactly what you are writing about?",
     "Is there one place where you could add a specific detail to make your point clearer?",
     "Look at your final sentence. Does it leave the reader with a clear idea of what you meant?",
@@ -4796,6 +5059,8 @@ RULES:
 5. If the student asks you to write for them, gently redirect with a question instead.
 6. Match your vocabulary to CEFR level ${assignment.languageLevel} — keep it simple and encouraging.
 7. Never repeat the same question twice in a conversation.
+8. After two or three useful student replies, briefly check whether they already have enough ideas to begin drafting. Ask a choice-style question such as: "Do you feel ready to draft now, or do you want one more planning question?"
+9. If the student seems ready, help them name their next drafting step instead of continuing the chat forever.
 
 Assignment title: "${assignment.title}"
 Task: "${assignment.prompt}"
@@ -5361,6 +5626,7 @@ function normalizeTeacherDraft(draft) {
     wordCountMax: Number(draft.wordCountMax || 0),
     ideaRequestLimit: Number(draft.ideaRequestLimit || 0),
     feedbackRequestLimit: Number(draft.feedbackRequestLimit || 0),
+    disableChatbot: Boolean(draft.disableChatbot),
     studentFocus: draft.studentFocus.trim(),
     rubric: draft.rubric.map((item) => ({
       ...item,
@@ -5392,6 +5658,7 @@ function createEmptySubmission(assignmentId, studentId) {
     focusAnnotations: [],
     chatHistory: [],
     chatStartedAt: null,
+    chatSkippedAt: null,
     teacherReview: createDefaultTeacherReview(),
     status: "draft",
     startedAt: null,
@@ -5480,6 +5747,7 @@ function normalizeAssignment(assignment) {
     wordCountMax: Math.max(ranges.max, ranges.min),
     ideaRequestLimit: Number(assignment?.ideaRequestLimit ?? 3),
     feedbackRequestLimit: Number(assignment?.feedbackRequestLimit ?? 2),
+    disableChatbot: isChatDisabled(assignment),
     studentFocus: safeArray(assignment?.studentFocus).length ? assignment.studentFocus : focusForType(assignmentType, "the topic"),
     rubricType: rubricSchema?.criteria?.length ? "matrix" : getAssignmentRubricType(assignment),
     rubricSchema: rubricSchema || null,
@@ -5490,7 +5758,7 @@ function normalizeAssignment(assignment) {
     createdAt: assignment?.createdAt || new Date().toISOString(),
     status: assignment?.status || "published",
     deadline: assignment?.deadline || "",
-    chatTimeLimit: Number(assignment?.chatTimeLimit ?? 0),
+    chatTimeLimit: isChatDisabled(assignment) ? -1 : Number(assignment?.chatTimeLimit ?? 0),
     uploadedRubricText,
     uploadedRubricName: assignment?.uploadedRubricName || rubricSchema?.title || "",
     uploadedRubricData,
@@ -5576,6 +5844,7 @@ function normalizeSubmission(submission) {
       timestamp: msg?.timestamp || new Date().toISOString(),
     })),
     chatStartedAt: submission?.chatStartedAt || null,
+    chatSkippedAt: submission?.chatSkippedAt || null,
         status: submission?.status || "draft",
     startedAt: submission?.startedAt || null,
     updatedAt: submission?.updatedAt || new Date().toISOString(),

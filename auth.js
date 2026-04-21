@@ -8,17 +8,30 @@ const Auth = (() => {
   function getToken() { return session?.access_token || null; }
 
   function authHeaders() {
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${getToken()}`
+    const headers = {
+      'Content-Type': 'application/json'
     };
+    const token = getToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
   }
 
   async function apiFetch(path, options = {}) {
-    const res = await fetch(path, {
+    let res = await fetch(path, {
       ...options,
       headers: { ...authHeaders(), ...(options.headers || {}) }
     });
+    if (res.status === 401) {
+      const restored = await restoreSession();
+      if (restored && getToken()) {
+        res = await fetch(path, {
+          ...options,
+          headers: { ...authHeaders(), ...(options.headers || {}) }
+        });
+      }
+    }
     return res.json();
   }
 
@@ -107,11 +120,10 @@ async function getInviteInfo(classId) {
   }
 
   async function requestPasswordReset(email) {
-    const redirectTo = `${window.location.origin}${window.location.pathname}?reset=1`;
     const data = await fetch('/api/auth/forgot-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, redirectTo })
+      body: JSON.stringify({ email })
     }).then(r => r.json());
     if (data.error) throw new Error(data.error);
     return true;

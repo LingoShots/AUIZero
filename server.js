@@ -37,6 +37,68 @@ async function getProfile(userId) {
   return data;
 }
 
+function getRequestBaseUrl(req) {
+  const configuredBase =
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_URL ||
+    process.env.SITE_URL ||
+    process.env.PUBLIC_SITE_URL;
+  if (configuredBase) {
+    return String(configuredBase).replace(/\/+$/, '');
+  }
+
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const originHeader = String(req.headers.origin || '').trim();
+
+  if (originHeader) {
+    return originHeader.replace(/\/+$/, '');
+  }
+  if (forwardedProto && forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, '');
+  }
+
+  const host = req.headers.host;
+  if (host) {
+    return `${req.protocol || 'https'}://${host}`.replace(/\/+$/, '');
+  }
+
+  return 'http://localhost:3000';
+}
+
+async function requireTeacherProfile(req) {
+  const user = await getUser(req);
+  if (!user) return { user: null, profile: null, error: 'Not authenticated', status: 401 };
+  const profile = await getProfile(user.id);
+  if (profile?.role !== 'teacher') {
+    return { user, profile, error: 'Teacher access required', status: 403 };
+  }
+  return { user, profile, error: null, status: 200 };
+}
+
+async function ensureTeacherOwnsClass(classId, teacherId) {
+  const { data, error } = await supabase
+    .from('classes')
+    .select('id, teacher_id, name')
+    .eq('id', classId)
+    .eq('teacher_id', teacherId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function ensureTeacherOwnsAssignment(assignmentId, teacherId) {
+  const { data, error } = await supabase
+    .from('assignments')
+    .select('id, class_id, title')
+    .eq('id', assignmentId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const ownedClass = await ensureTeacherOwnsClass(data.class_id, teacherId);
+  return ownedClass ? data : null;
+}
+
 // ── Rubric parsing endpoints ────────────────────────────────
 app.post('/api/rubric/parse', upload.single('rubric'), async (req, res) => {
   try {
@@ -178,13 +240,14 @@ app.post('/api/auth/signout', async (req, res) => {
 
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { email, redirectTo } = req.body || {};
+    const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
+    const redirectTo = `${getRequestBaseUrl(req)}/?reset=1`;
     const { error } = await supabase.auth.resetPasswordForEmail(String(email).trim(), {
-      redirectTo: redirectTo || undefined,
+      redirectTo,
     });
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ ok: true });
+    res.json({ ok: true, redirectTo });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -238,8 +301,8 @@ app.get('/api/classes', async (req, res) => {
 // Create a class
 app.post('/api/classes', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
     const { name } = req.body;
     const { data, error } = await supabase
       .from('classes')
@@ -372,8 +435,10 @@ app.get('/api/classes/:classId/assignments', async (req, res) => {
 // Create assignment
 app.post('/api/classes/:classId/assignments', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
+    if (!ownedClass) return res.status(403).json({ error: 'You can only add assignments to your own classes.' });
     const payload = sanitizeAssignmentPayload(req.body);
     const { data, error } = await supabase
       .from('assignments')
@@ -390,8 +455,10 @@ app.post('/api/classes/:classId/assignments', async (req, res) => {
 // Update assignment
 app.patch('/api/assignments/:id', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedAssignment = await ensureTeacherOwnsAssignment(req.params.id, user.id);
+    if (!ownedAssignment) return res.status(403).json({ error: 'You can only update assignments in your own classes.' });
     const payload = sanitizeAssignmentPayload(req.body);
     const { data, error } = await supabase
       .from('assignments')
@@ -409,8 +476,17 @@ app.patch('/api/assignments/:id', async (req, res) => {
 // Delete assignment
 app.delete('/api/assignments/:id', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedAssignment = await ensureTeacherOwnsAssignment(req.params.id, user.id);
+    if (!ownedAssignment) return res.status(403).json({ error: 'You can only delete assignments in your own classes.' });
+
+    const { error: submissionDeleteError } = await supabase
+      .from('submissions')
+      .delete()
+      .eq('assignment_id', req.params.id);
+    if (submissionDeleteError) return res.status(400).json({ error: submissionDeleteError.message });
+
     const { error } = await supabase
       .from('assignments')
       .delete()
