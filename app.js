@@ -3734,7 +3734,6 @@ async function saveTeacherAssignment() {
       deadline: assignment.deadline || null,
       chat_time_limit: assignment.chatTimeLimit,
       uploaded_rubric_text: assignment.uploadedRubricText,
-      uploaded_rubric_name: assignment.uploadedRubricName,
       status: 'draft'
     })
   }).then(data => {
@@ -3751,7 +3750,7 @@ async function saveTeacherAssignment() {
         chatTimeLimit: data.assignment.chatTimeLimit || data.assignment.chat_time_limit,
         studentFocus: data.assignment.studentFocus || data.assignment.student_focus,
         uploadedRubricText: data.assignment.uploadedRubricText || data.assignment.uploaded_rubric_text || ui.teacherDraft.uploadedRubricText,
-        uploadedRubricName: data.assignment.uploadedRubricName || data.assignment.uploaded_rubric_name || ui.teacherDraft.uploadedRubricName,
+        uploadedRubricName: data.assignment.uploadedRubricName || ui.teacherDraft.uploadedRubricName,
         classId: data.assignment.class_id || currentClassId,
       });
       state.assignments.unshift(savedAssignment);

@@ -317,6 +317,13 @@ app.get('/api/classes/:classId/members', async (req, res) => {
 
 // ── Assignments endpoints ────────────────────────────────────
 
+function sanitizeAssignmentPayload(payload = {}) {
+  const next = { ...payload };
+  delete next.uploaded_rubric_name;
+  delete next.uploadedRubricName;
+  return next;
+}
+
 // Get assignments for a class
 app.get('/api/classes/:classId/assignments', async (req, res) => {
   try {
@@ -339,9 +346,10 @@ app.post('/api/classes/:classId/assignments', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const payload = sanitizeAssignmentPayload(req.body);
     const { data, error } = await supabase
       .from('assignments')
-      .insert({ ...req.body, class_id: req.params.classId })
+      .insert({ ...payload, class_id: req.params.classId })
       .select()
       .single();
     if (error) return res.status(400).json({ error: error.message });
@@ -356,9 +364,10 @@ app.patch('/api/assignments/:id', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const payload = sanitizeAssignmentPayload(req.body);
     const { data, error } = await supabase
       .from('assignments')
-      .update(req.body)
+      .update(payload)
       .eq('id', req.params.id)
       .select()
       .single();
