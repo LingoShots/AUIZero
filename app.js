@@ -1,6 +1,9 @@
 const STORAGE_KEY = "AUIZero-v1";
 const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
+const STORAGE_BACKUP_KEY = "AUIZero-v1-backup";
 const LARGE_PASTE_LIMIT = 220;
+const PRODUCT_NAME = "Praxis";
+const PRODUCT_TAGLINE = "Thinking, drafting, and feedback made visible.";
 
 // App state — now server-backed
 let currentProfile = null;
@@ -780,6 +783,13 @@ function assignmentUsesSingleParagraph(assignment = {}) {
   return /\bparagraph\b/.test(haystack) && !/\bparagraphs\b/.test(haystack);
 }
 
+function isChatSessionExpired(assignment, submission) {
+  const timeLimit = isChatDisabled(assignment) ? 0 : Math.max(0, Number(assignment?.chatTimeLimit || 0));
+  if (timeLimit <= 0 || !submission?.chatStartedAt) return false;
+  const elapsedMs = Date.now() - Date.parse(submission.chatStartedAt);
+  return Number.isFinite(elapsedMs) && elapsedMs >= timeLimit * 60000;
+}
+
 function getAssignmentRubricType(assignment) {
   if (assignment?.rubricType) return assignment.rubricType;
   if (assignment?.uploadedRubricSchema || safeArray(assignment?.rubricSchema?.criteria).length || safeArray(assignment?.rubric?.criteria).length) return "matrix";
@@ -1145,6 +1155,9 @@ async function bootApp(profile) {
     await loadStudentAssignmentsForCurrentClass();
   }
   hydrateSelections();
+  if (profile.role !== 'teacher' && ui.selectedStudentAssignmentId) {
+    await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+  }
   render();
 }
 
@@ -1192,6 +1205,7 @@ async function loadTeacherClassContext(classId) {
 async function loadStudentAssignmentsForCurrentClass() {
   if (!currentClassId) {
     state.assignments = [];
+    state.submissions = [];
     return;
   }
 
@@ -1222,6 +1236,8 @@ async function loadStudentAssignmentsForCurrentClass() {
       classId: a.class_id || currentClassId,
       ideaRequestLimit: 3,
     }));
+  const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
+  state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
 }
 
 function mapServerSubmission(serverSubmission) {
@@ -1257,6 +1273,7 @@ function mapServerSubmission(serverSubmission) {
     chatHistory: Array.isArray(serverSubmission?.chat_history) ? serverSubmission.chat_history : [],
     chatStartedAt: serverSubmission?.chat_started_at || null,
     chatSkippedAt: serverSubmission?.chat_skipped_at || null,
+    chatExpiredAt: serverSubmission?.chat_expired_at || null,
     status: serverSubmission?.status || "draft",
     startedAt: serverSubmission?.started_at || null,
     updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
@@ -1285,6 +1302,30 @@ async function loadTeacherSubmissionsForAssignments(assignmentIds) {
     state.submissions = nextSubmissions;
   } catch (error) {
     console.error("Could not load teacher submissions:", error.message, error);
+  }
+}
+
+async function loadStudentSubmissionForAssignment(assignmentId) {
+  if (!assignmentId) return null;
+  try {
+    const result = await Auth.apiFetch(`/api/assignments/${assignmentId}/my-submission`);
+    if (result?.error || !result?.submission) return null;
+    const mapped = mapServerSubmission(result.submission);
+    const index = state.submissions.findIndex((submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId);
+    if (index >= 0) {
+      state.submissions[index] = normalizeSubmission({
+        ...state.submissions[index],
+        ...mapped,
+        chatExpiredAt: state.submissions[index]?.chatExpiredAt || mapped.chatExpiredAt || null,
+      });
+    } else {
+      state.submissions.push(mapped);
+    }
+    persistState();
+    return mapped;
+  } catch (error) {
+    console.error("Could not load student submission:", error.message, error);
+    return null;
   }
 }
 
@@ -1342,6 +1383,10 @@ function startChatTimer() {
     timerEl.textContent = expired ? "⏱ Time's up" : `⏱ ${mins}:${String(secs).padStart(2,'0')} left`;
     timerEl.className = `chat-timer ${mins <= 5 ? "chat-timer-urgent" : ""}`;
     if (expired) {
+      if (!submission.chatExpiredAt) {
+        submission.chatExpiredAt = new Date().toISOString();
+        persistState();
+      }
       clearInterval(chatTimerInterval);
       const sendBtn = document.querySelector("[data-action='send-chat-message']");
       const nextBtn = document.querySelector("[data-action='student-next-step']");
@@ -1678,10 +1723,10 @@ if (action === "switch-class") {
     const currentClass = currentClasses.find(c => c.id === currentClassId);
     const className = currentClass?.name || "your class";
     const appUrl = window.location.origin;
-    const subject = encodeURIComponent(`You have been invited to join ${className} on AUIZero`);
-    const body = encodeURIComponent(`Hello,\n\nYou have been invited to join ${className} on AUIZero.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class\n\nSee you there!`);
+    const subject = encodeURIComponent(`You have been invited to join ${className} on ${PRODUCT_NAME}`);
+    const body = encodeURIComponent(`Hello,\n\nYou have been invited to join ${className} on ${PRODUCT_NAME}.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class\n\nSee you there!`);
     const mailtoLink = `mailto:?subject=${subject}&body=${body}`;
-    const copyText = `You have been invited to join ${className} on AUIZero.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class`;
+    const copyText = `You have been invited to join ${className} on ${PRODUCT_NAME}.\n\nTo get started:\n1. Go to ${appUrl}\n2. Click "Create account"\n3. Sign up with this email address as a student\n4. Your teacher will then add you to the class`;
    ui.showInvitePanel = true;
     render();
     return;
@@ -2015,6 +2060,13 @@ if (action === "select-assignment") {
     const submission = getStudentSubmission();
     const assignment = getStudentAssignment();
     if (!submission || !assignment || ui.chatLoading) return;
+    if (isChatSessionExpired(assignment, submission)) {
+      submission.chatExpiredAt = submission.chatExpiredAt || new Date().toISOString();
+      ui.notice = "Your chat time has finished. Move on to your draft when you are ready.";
+      persistState();
+      render();
+      return;
+    }
     const textarea = document.getElementById("chat-input");
     const text = (textarea ? textarea.value : ui.chatInput).trim();
     if (!text) return;
@@ -2318,6 +2370,9 @@ if (target.id === "student-class-select") {
     ui.selectedStudentAssignmentId = null;
     await loadStudentAssignmentsForCurrentClass();
     hydrateSelections();
+    if (ui.selectedStudentAssignmentId) {
+      await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+    }
     render();
     return;
   }
@@ -2364,6 +2419,7 @@ if (target.id === "student-class-select") {
     ui.selectedStudentAssignmentId = target.value;
     ui.studentStep = 1;
     ensureStudentSubmission();
+    await loadStudentSubmissionForAssignment(target.value);
     render();
     return;
   }
@@ -2550,6 +2606,7 @@ function handlePaste(event) {
 }
 
 function render() {
+  document.title = PRODUCT_NAME;
   if (ui.role === "student") {
     hydrateSelections();
   }
@@ -2579,6 +2636,7 @@ function render() {
 }
 
 function renderAuthScreen(joinClassId = null, inviteInfo = null) {
+  document.title = PRODUCT_NAME;
   const teacherName = inviteInfo?.teacherName || "";
   const className = inviteInfo?.className || "";
   const inviteBanner = joinClassId ? `
@@ -2594,10 +2652,10 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
       <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
-          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#6ea8ff);color:white;font-weight:700;letter-spacing:0.08em;">AU</div>
+          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#8fb8ff);color:white;font-weight:800;letter-spacing:0.02em;">P</div>
           <div>
-            <h1 style="margin:0;font-family:'Manrope','Avenir Next','Segoe UI',sans-serif;font-size:1.3rem;letter-spacing:-0.03em;">AUIZero</h1>
-            <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
+            ${renderProductWordmark("h1", "brand-wordmark auth-wordmark")}
+            <p style="margin:0;color:#667063;font-size:0.85rem;">Writing made visible</p>
           </div>
         </div>
         ${inviteBanner}
@@ -2717,11 +2775,12 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
 }
 
 function renderResetPasswordScreen() {
+  document.title = `${PRODUCT_NAME} · Reset password`;
   appEl.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
       <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
         <h1 style="margin:0 0 8px;font-family:'Manrope','Avenir Next','Segoe UI',sans-serif;font-size:1.35rem;letter-spacing:-0.03em;">Reset your password</h1>
-        <p class="subtle" style="margin:0 0 16px;">Choose a new password for your AUIZero account.</p>
+        <p class="subtle" style="margin:0 0 16px;">Choose a new password for your ${PRODUCT_NAME} account.</p>
         <div class="field-stack">
           <div class="field">
             <label for="reset-password-input">New password</label>
@@ -2897,7 +2956,7 @@ function renderInvitePanel() {
   const inviteLink = `${appUrl}?join=${currentClassId}`;
   const currentClass = currentClasses.find(c => c.id === currentClassId);
   const className = currentClass?.name || "your class";
-  const inviteText = `You have been invited to join ${className} on AUIZero.\n\nClick this link to join:\n${inviteLink}\n\nYou will be asked to create an account if you don't have one. Once signed in you will be added to the class automatically.`;
+  const inviteText = `You have been invited to join ${className} on ${PRODUCT_NAME}.\n\nClick this link to join:\n${inviteLink}\n\nYou will be asked to create an account if you don't have one. Once signed in you will be added to the class automatically.`;
 
   return `
     <div style="position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:999;display:grid;place-items:center;padding:20px;">
@@ -3022,10 +3081,10 @@ function renderTopbar() {
   return `
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">AZ</div>
+        <div class="brand-mark">P</div>
         <div>
-          <h1>AUIZero</h1>
-          <p>Visible writing steps for teachers and students.</p>
+          ${renderProductWordmark("h1", "brand-wordmark")}
+          <p>${escapeHtml(PRODUCT_TAGLINE)}</p>
         </div>
       </div>
       <div class="toolbar">
@@ -3332,7 +3391,7 @@ function renderTeacherWorkspace() {
           !assignments.length
             ? `<div class="empty-state" style="padding:36px 28px;">
                 <div style="font-size:2.5rem;margin-bottom:12px;">✏️</div>
-                <h3 style="margin:0 0 8px;">Welcome to AUIZero</h3>
+                <h3 style="margin:0 0 8px;">Welcome to ${PRODUCT_NAME}</h3>
                 <p style="margin:0 0 20px;max-width:320px;margin-inline:auto;">Describe your assignment in plain English on the left, then click <strong>Format With AI</strong> to generate a student-ready task in seconds.</p>
                 <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
                   <button class="button" data-action="focus-brief">Start your first assignment</button>
@@ -3869,12 +3928,16 @@ function renderStudentIdeasStep(assignment, submission) {
   const timeLimit = chatDisabled ? 0 : Math.max(0, Number(assignment.chatTimeLimit || 0));
   const chatStartedAt = submission.chatStartedAt;
   const elapsedMins = chatStartedAt ? (Date.now() - Date.parse(chatStartedAt)) / 60000 : 0;
-  const timeExpired = timeLimit > 0 && elapsedMins >= timeLimit;
+  const timeExpired = isChatSessionExpired(assignment, submission);
   const totalSecsRemaining = (timeLimit > 0 && chatStartedAt) ? Math.max(0, Math.round((timeLimit * 60) - (Date.now() - Date.parse(chatStartedAt)) / 1000)) : null;
   const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
   const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
   const hasEnoughChat = chatDisabled || submission.chatSkippedAt || chatHistory.length >= 2;
   const chatCount = chatHistory.filter((msg) => msg.role === "user").length;
+  if (timeExpired && !submission.chatExpiredAt) {
+    submission.chatExpiredAt = new Date().toISOString();
+    persistState();
+  }
 
   return `
     <div class="step-card wizard-card">
@@ -5091,6 +5154,7 @@ function generateFeedback(assignment, submission) {
   const sentences = splitSentences(text);
   const singleParagraphTask = assignmentUsesSingleParagraph(assignment);
   const finalSentence = sentences[sentences.length - 1] || "";
+  const processTask = assignment?.assignmentType === "process";
 
   if (!text) {
     return [
@@ -5121,6 +5185,14 @@ function generateFeedback(assignment, submission) {
 
   if (!/\bbecause\b|\bfor example\b|\bfor instance\b|\bsuch as\b/i.test(text)) {
     primaryPool.push("Add a sentence that gives a reason or example so your writing feels stronger.");
+  }
+
+  if (processTask && !/\bfirst\b|\bnext\b|\bthen\b|\bafter that\b|\bfinally\b|\blast\b/i.test(text)) {
+    primaryPool.push("Add clearer step words like first, next, then, or finally so the reader can follow your process.");
+  }
+
+  if (processTask && !/\byou should\b|\byou need to\b|\bit helps\b|\bthis helps\b|\bso that\b/i.test(text)) {
+    primaryPool.push("Pick one step and explain why it helps, not just what the step is.");
   }
 
   if ((text.match(/\bthis\b|\bit\b|\bthey\b/gi) || []).length >= 5) {
@@ -5188,6 +5260,8 @@ RULES:
 9. If the student seems ready, help them name their next drafting step instead of continuing the chat forever.
 10. Do not accept vague ideas too quickly. If the student gives something broad like "ask the teacher" or "do research", ask a follow-up such as "What exactly would you ask?" or "Why would that help?" before moving on.
 11. Before you move from one main idea or step to the next, ask whether the student feels satisfied with the current one or wants to develop it a little more.
+12. If the student gives a weak first step, ask them to make it more specific before you accept it. For example, turn "ask the teacher" into one concrete question they could ask.
+13. When the assignment is about process or steps, help the student improve each step before moving to the next one.
 
 Assignment title: "${assignment.title}"
 Task: "${assignment.prompt}"
@@ -5786,6 +5860,7 @@ function createEmptySubmission(assignmentId, studentId) {
     chatHistory: [],
     chatStartedAt: null,
     chatSkippedAt: null,
+    chatExpiredAt: null,
     teacherReview: createDefaultTeacherReview(),
     status: "draft",
     startedAt: null,
@@ -5972,6 +6047,7 @@ function normalizeSubmission(submission) {
     })),
     chatStartedAt: submission?.chatStartedAt || null,
     chatSkippedAt: submission?.chatSkippedAt || null,
+    chatExpiredAt: submission?.chatExpiredAt || null,
         status: submission?.status || "draft",
     startedAt: submission?.startedAt || null,
     updatedAt: submission?.updatedAt || new Date().toISOString(),
@@ -6153,13 +6229,14 @@ function createDemoState() {
 
 function loadState() {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const stored = window.localStorage.getItem(STORAGE_KEY) || window.localStorage.getItem(STORAGE_BACKUP_KEY);
     if (!stored) throw new Error("no stored state");
     return normalizeState(JSON.parse(stored));
   } catch (e) {
-    const seeded = createDemoState();
+    const seeded = createBlankState();
     const normalized = normalizeState(seeded);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    window.localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(normalized));
     return normalized;
   }
 }
@@ -6199,6 +6276,7 @@ async function syncSubmissionToServer(submission) {
 function persistState() {
   const cloned = JSON.parse(JSON.stringify(state));
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cloned));
+  window.localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(cloned));
 }
 
 function getStudentUsers() {
@@ -6247,6 +6325,11 @@ function extractKeywords(text) {
 
 function trimTo(text, length) {
   return text.length > length ? `${text.slice(0, length - 1)}…` : text;
+}
+
+function renderProductWordmark(tagName = "span", className = "") {
+  const cls = className ? ` class="${className}"` : "";
+  return `<${tagName}${cls}>Pr<span class="brand-accent-letter">a</span>x<span class="brand-accent-letter">i</span>s</${tagName}>`;
 }
 
 function clamp(value, min, max) {
