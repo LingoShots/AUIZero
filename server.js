@@ -3,11 +3,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
-const mammoth = require('mammoth');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
+const { parseRubricBuffer, parseRubricText } = require('./rubricParser');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app = express();
@@ -41,493 +37,39 @@ async function getProfile(userId) {
   return data;
 }
 
-function decodeHtmlEntities(text = '') {
-  return String(text)
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
-function stripHtmlPreservingLines(html = '') {
-  return decodeHtmlEntities(
-    String(html)
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/p>/gi, '\n')
-      .replace(/<\/div>/gi, '\n')
-      .replace(/<\/li>/gi, '\n')
-      .replace(/<[^>]+>/g, ' ')
-  )
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
-function cleanRubricCellText(text = '') {
-  return stripHtmlPreservingLines(text)
-    .replace(/\s*\|\s*/g, ' ')
-    .replace(/[ ]{2,}/g, ' ')
-    .replace(/\n{2,}/g, '\n')
-    .trim();
-}
-
-function decodeXmlEntities(text = '') {
-  return String(text)
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#([0-9]+);/g, (_, num) => String.fromCodePoint(parseInt(num, 10)));
-}
-
-function extractWordXmlText(xml = '') {
-  return decodeXmlEntities(
-    String(xml)
-      .replace(/<w:tab\b[^>]*\/>/gi, '\t')
-      .replace(/<w:(?:br|cr)\b[^>]*\/>/gi, '\n')
-      .replace(/<\/w:p>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-  )
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
-function cleanRubricXmlCellText(xml = '') {
-  return extractWordXmlText(xml)
-    .replace(/\s*\|\s*/g, ' ')
-    .replace(/[ ]{2,}/g, ' ')
-    .replace(/\n{2,}/g, '\n')
-    .trim();
-}
-
-function normalizeSectionLabel(sectionText = '') {
-  const lines = cleanRubricXmlCellText(sectionText)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return '';
-  if (lines.length >= 4 && /^[A-Z\s]+$/.test(lines[0])) {
-    return lines[0];
-  }
-  return lines.join(' ').replace(/[ ]{2,}/g, ' ').trim();
-}
-
-function parseLevelPoints(label = '') {
-  const matches = String(label).match(/\d+(?:\.\d+)?/g) || [];
-  if (!matches.length) return 0;
-  const values = matches.map(Number).filter((value) => Number.isFinite(value));
-  if (!values.length) return 0;
-  if (values.length === 1) return values[0];
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-const RUBRIC_SCHEMA_PROMPT = `
-You are an expert academic rubric parser.
-Read the uploaded rubric text and return one valid JSON object only.
-
-SCHEMA:
-{
-  "title": string,
-  "subtitle": string,
-  "totalPoints": number,
-  "notes": string[],
-  "criteria": [
-    {
-      "id": string,
-      "name": string,
-      "minScore": number,
-      "maxScore": number,
-      "levels": [
-        {
-          "label": string,
-          "score": number,
-          "description": string
-        }
-      ]
-    }
-  ],
-  "attribution": string
-}
-
-RULES:
-- Output raw JSON only. No markdown.
-- Preserve the rubric's real criteria. Do not invent new ones.
-- Keep levels ordered highest score to lowest score.
-- If a score range appears, use the higher score as the level score and keep minScore accurate.
-- Put deduction rules or special instructions into notes.
-- If a field is missing, use an empty string or sensible default.
-`.trim();
-
-function rubricSchemaToMatrix(schema = {}, fileName = '') {
-  const criteria = Array.isArray(schema?.criteria) ? schema.criteria : [];
-  if (!criteria.length) return null;
-
-  const headers = (criteria[0]?.levels || []).map((level) => {
-    const label = String(level?.label || '').trim();
-    const score = Number(level?.score ?? 0);
-    return label && Number.isFinite(score) ? `${label} – ${score}` : label || String(score || '');
-  }).filter(Boolean);
-
-  if (!headers.length) return null;
-
-  const rows = criteria.map((criterion, criterionIndex) => {
-    const levels = Array.isArray(criterion?.levels) ? criterion.levels : [];
-    const maxScore = Number(criterion?.maxScore ?? Math.max(...levels.map((level) => Number(level?.score ?? 0)), 0));
-    const minScore = Number(criterion?.minScore ?? Math.min(...levels.map((level) => Number(level?.score ?? 0)), maxScore));
-
-    return {
-      id: criterion?.id || `rubric-row-${criterionIndex + 1}`,
-      section: "",
-      subcriterion: criterion?.name || `Criterion ${criterionIndex + 1}`,
-      name: criterion?.name || `Criterion ${criterionIndex + 1}`,
-      description: "",
-      points: maxScore,
-      pointsLabel: Number.isFinite(minScore) && minScore !== maxScore
-        ? `${minScore} – ${maxScore} points`
-        : `${maxScore} points`,
-      levels: levels.map((level, levelIndex) => {
-        const score = Number(level?.score ?? 0);
-        const label = String(level?.label || '').trim();
-        return {
-          id: `${criterion?.id || `criterion-${criterionIndex + 1}`}-level-${levelIndex + 1}`,
-          label: label && Number.isFinite(score) ? `${label} – ${score}` : label || `${score}`,
-          points: score,
-          description: String(level?.description || "").trim(),
-        };
-      }),
-    };
-  }).filter((row) => row.levels.length);
-
-  if (!rows.length) return null;
-
-  return {
-    kind: 'matrix',
-    name: schema?.title || fileName || 'Uploaded rubric',
-    headers,
-    rows,
-    notes: [
-      schema?.subtitle || '',
-      ...(Array.isArray(schema?.notes) ? schema.notes : []),
-      schema?.attribution || '',
-    ].filter(Boolean),
-  };
-}
-
-async function parseRubricTextWithClaude(rawText = '', fileName = '') {
-  if (!process.env.ANTHROPIC_API_KEY || !String(rawText).trim()) return null;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 3000,
-      system: RUBRIC_SCHEMA_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: `Parse this rubric into the schema.\n\n${rawText}`,
-        },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error?.message || `Claude rubric parse failed (${response.status})`);
-  }
-
-  const raw = Array.isArray(data?.content)
-    ? data.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
-    : '';
-  const cleaned = raw.replace(/^```(?:json)?/m, '').replace(/```$/m, '').trim();
-  const parsed = JSON.parse(cleaned);
-  return rubricSchemaToMatrix(parsed, fileName);
-}
-
-function looksLowQualityRubricData(rubricData) {
-  if (!rubricData?.rows?.length) return true;
-  const rows = rubricData.rows;
-  const identicalNames = rows.filter((row) => row?.section && row?.name && row.section === row.name).length;
-  const vagueNames = rows.filter((row) => /^(a variety|very good|good use|good range|acceptable|word choice|simple sentences)$/i.test(String(row?.name || '').trim())).length;
-  return identicalNames >= Math.ceil(rows.length / 2) || vagueNames >= Math.ceil(rows.length / 3);
-}
-
-function deriveSubcriterionName(sectionText = '', firstDescription = '', rowIndex = 0, seenCount = 0) {
-  const cleanedSection = normalizeSectionLabel(sectionText);
-  const rawLines = cleanRubricXmlCellText(sectionText)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!seenCount && cleanedSection && cleanedSection.length <= 40 && !String(sectionText).includes('\n')) {
-    return cleanedSection;
-  }
-
-  const firstSentence = cleanRubricCellText(firstDescription).split(/[.;:\n]/)[0] || '';
-  const firstWords = firstSentence
-    .replace(/[,:-]+$/, '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if ((seenCount > 0 || rawLines.length >= 4) && firstWords.length >= 2) {
-    return firstWords.slice(0, 2).join(' ');
-  }
-
-  const phraseMatch = firstSentence.match(/^(.{0,80}?)\b(is|are|may|can|will|should|must|contains?|explains?|builds?|groups?|presents?|uses?|shows?|restates?|supports?)\b/i);
-  const candidate = (phraseMatch ? phraseMatch[1] : firstSentence)
-    .replace(/\b(thoroughly|adequately|successfully|partially|clearly|effectively|usually|generally|strongly)\b$/i, '')
-    .replace(/[,:-]+$/, '')
-    .trim();
-
-  if (candidate && candidate.split(/\s+/).length <= 8 && candidate.length <= 48) {
-    return candidate;
-  }
-
-  return cleanedSection || `Criterion ${rowIndex + 1}`;
-}
-
-function extractDocxDocumentXml(buffer) {
-  const tempPath = path.join(
-    os.tmpdir(),
-    `auizero-rubric-${Date.now()}-${Math.random().toString(36).slice(2)}.docx`
-  );
-  fs.writeFileSync(tempPath, buffer);
+// ── Rubric parsing endpoints ────────────────────────────────
+app.post('/api/rubric/parse', upload.single('rubric'), async (req, res) => {
   try {
-    return execFileSync('unzip', ['-p', tempPath, 'word/document.xml'], {
-      encoding: 'utf8',
-      maxBuffer: 12 * 1024 * 1024,
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+
+    const { text, schema, rubricData } = await parseRubricBuffer(
+      req.file.buffer,
+      req.file.mimetype,
+      req.file.originalname
+    );
+
+    res.json({
+      success: true,
+      text,
+      schema,
+      rubricData,
     });
-  } finally {
-    try {
-      fs.unlinkSync(tempPath);
-    } catch (error) {
-      // Ignore cleanup failures.
-    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
-}
+});
 
-function parseRubricDocxXml(documentXml = '', fileName = '') {
-  const xml = String(documentXml);
-  const tableMatches = [...xml.matchAll(/<w:tbl\b[\s\S]*?<\/w:tbl>/gi)].map((match) => match[0]);
-  if (!tableMatches.length) return null;
-
-  const tableXml = tableMatches.sort((a, b) => b.length - a.length)[0];
-  const preTableXml = xml.slice(0, xml.indexOf(tableXml));
-  const notes = [...preTableXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/gi)]
-    .map((match) => cleanRubricXmlCellText(match[0]))
-    .filter(Boolean);
-
-  const rowMatches = [...tableXml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/gi)].map((match) => match[0]);
-  if (rowMatches.length < 2) return null;
-
-  const rows = rowMatches.map((rowXml) =>
-    [...rowXml.matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/gi)].map((match) => cleanRubricXmlCellText(match[0]))
-  );
-
-  const headerRow = rows[0] || [];
-  if (headerRow.length < 3) return null;
-
-  const hasPointsColumn = /points?/i.test(headerRow[headerRow.length - 1] || '');
-  const levelHeaders = headerRow.slice(1, hasPointsColumn ? -1 : undefined).filter(Boolean);
-  if (!levelHeaders.length) return null;
-
-  let previousSection = '';
-  const sectionCounts = new Map();
-  const rowsOut = rows.slice(1).map((cells, index) => {
-    const normalizedCells = [...cells];
-    while (normalizedCells.length < headerRow.length) normalizedCells.push('');
-
-    const rawSectionCell = normalizedCells[0] || '';
-    const rawSection = normalizeSectionLabel(rawSectionCell);
-    const section = rawSection || previousSection;
-    if (rawSection) previousSection = rawSection;
-    const seenCount = sectionCounts.get(section) || 0;
-    sectionCounts.set(section, seenCount + 1);
-
-    const descriptions = normalizedCells.slice(1, 1 + levelHeaders.length);
-    const pointsLabel = hasPointsColumn ? cleanRubricXmlCellText(normalizedCells[headerRow.length - 1] || '') : '';
-    const name = deriveSubcriterionName(rawSectionCell || section, descriptions[0], index, seenCount);
-    const levels = levelHeaders.map((header, levelIndex) => ({
-      id: `level-${index + 1}-${levelIndex + 1}`,
-      label: header,
-      points: parseLevelPoints(header),
-      description: descriptions[levelIndex] || '',
-    }));
-
-    return {
-      id: `rubric-row-${index + 1}`,
-      section,
-      subcriterion: name,
-      name,
-      description: pointsLabel || section,
-      points: Math.max(...levels.map((level) => Number(level.points || 0)), 0),
-      pointsLabel,
-      levels,
-    };
-  }).filter((row) => row.section || row.levels.some((level) => level.description));
-
-  if (!rowsOut.length) return null;
-
-  return {
-    kind: 'matrix',
-    name: fileName || 'Uploaded rubric',
-    headers: levelHeaders,
-    rows: rowsOut,
-    notes,
-  };
-}
-
-function parseRubricHtmlTable(html = '', fileName = '') {
-  const tableMatches = [...String(html).matchAll(/<table[\s\S]*?<\/table>/gi)].map((match) => match[0]);
-  if (!tableMatches.length) return null;
-
-  const tableHtml = tableMatches.sort((a, b) => b.length - a.length)[0];
-  const rowMatches = [...tableHtml.matchAll(/<tr[\s\S]*?<\/tr>/gi)].map((match) => match[0]);
-  if (rowMatches.length < 2) return null;
-
-  const rows = rowMatches.map((rowHtml) =>
-    [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((match) => cleanRubricCellText(match[1]))
-  );
-
-  const headerRow = rows[0];
-  const hasPointsColumn = headerRow[headerRow.length - 1] === '' || rows.slice(1).every((row) => /points?/i.test(row[row.length - 1] || ''));
-  const levelHeaders = headerRow.slice(1, hasPointsColumn ? -1 : undefined).filter(Boolean);
-  if (!levelHeaders.length) return null;
-
-  const notesHtml = String(html).slice(0, html.indexOf(tableHtml));
-  const notes = [...notesHtml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)]
-    .map((match) => cleanRubricCellText(match[1]))
-    .filter(Boolean);
-
-  const sectionCounts = new Map();
-  let previousSection = '';
-  const rawRows = rows.slice(1).map((cells, index) => {
-    const workingCells = [...cells];
-    const pointsLabel = hasPointsColumn ? (workingCells.pop() || '') : '';
-    const rawSectionCell = workingCells.shift() || '';
-    const rawSection = normalizeSectionLabel(rawSectionCell);
-    const section = rawSection || previousSection;
-    if (rawSection) previousSection = rawSection;
-    const seenCount = sectionCounts.get(section) || 0;
-    sectionCounts.set(section, seenCount + 1);
-
-    const descriptions = workingCells.slice(0, levelHeaders.length);
-    const name = deriveSubcriterionName(rawSectionCell || section, descriptions[0], index, seenCount);
-    const levels = levelHeaders.map((header, levelIndex) => ({
-      id: `level-${index + 1}-${levelIndex + 1}`,
-      label: header,
-      points: parseLevelPoints(header),
-      description: descriptions[levelIndex] || '',
-    }));
-
-    return {
-      id: `rubric-row-${index + 1}`,
-      section,
-      subcriterion: name,
-      name,
-      description: pointsLabel || section,
-      points: Math.max(...levels.map((level) => Number(level.points || 0)), 0),
-      levels,
-      pointsLabel,
-    };
-  }).filter((row) => row.levels.some((level) => level.description));
-
-  const parsedRows = rawRows.map((row) => ({
-    ...row,
-    subcriterion: row.subcriterion || row.name,
-  }));
-
-  if (!parsedRows.length) return null;
-
-  return {
-    kind: 'matrix',
-    name: fileName || 'Uploaded rubric',
-    headers: levelHeaders,
-    rows: parsedRows,
-    notes,
-  };
-}
-
-// ── Rubric upload endpoint ───────────────────────────────────
 app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const mime = req.file.mimetype;
-    let text = '';
-    let rubricData = null;
 
-    if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-        mime === 'application/msword') {
-      let documentXml = '';
-      try {
-        documentXml = extractDocxDocumentXml(req.file.buffer);
-      } catch (xmlError) {
-        documentXml = '';
-      }
+    const { text, schema, rubricData } = await parseRubricBuffer(
+      req.file.buffer,
+      req.file.mimetype,
+      req.file.originalname
+    );
 
-      const [rawTextResult, htmlResult] = await Promise.all([
-        mammoth.extractRawText({ buffer: req.file.buffer }),
-        mammoth.convertToHtml({ buffer: req.file.buffer }),
-      ]);
-      text = rawTextResult.value;
-      rubricData = documentXml ? parseRubricDocxXml(documentXml, req.file.originalname) : null;
-      if (!rubricData) rubricData = parseRubricHtmlTable(htmlResult.value, req.file.originalname);
-      if (!rubricData || looksLowQualityRubricData(rubricData)) {
-        try {
-          const aiRubricData = await parseRubricTextWithClaude(text, req.file.originalname);
-          if (aiRubricData?.rows?.length) rubricData = aiRubricData;
-        } catch (aiError) {
-          console.warn('[extract-rubric] Claude rubric normalization failed:', aiError.message);
-        }
-      }
-    } else if (mime === 'application/pdf') {
-      // Use AI to extract text from PDF since we can't run native pdf libs easily
-      const base64 = req.file.buffer.toString('base64');
-      const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 2000,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-              { type: 'text', text: 'Extract all the text from this rubric document. Return only the raw text content, preserving the structure as much as possible.' }
-            ]
-          }]
-        })
-      });
-      const aiData = await aiRes.json();
-      text = aiData.content?.[0]?.text || '';
-      try {
-        const aiRubricData = await parseRubricTextWithClaude(text, req.file.originalname);
-        if (aiRubricData?.rows?.length) rubricData = aiRubricData;
-      } catch (aiError) {
-        console.warn('[extract-rubric] Claude rubric normalization failed:', aiError.message);
-      }
-    } else {
-      return res.status(400).json({ error: 'Please upload a PDF or Word document' });
-    }
-
-    res.json({ text: text.trim(), rubricData });
+    res.json({ text, schema, rubricData });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -536,14 +78,17 @@ app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
 app.post('/api/rubric/parse-text', async (req, res) => {
   try {
     const text = String(req.body?.text || '').trim();
-    if (!text) return res.status(400).json({ error: 'Text is required' });
-    const rubricData = await parseRubricTextWithClaude(text, 'Pasted rubric');
-    if (!rubricData?.rows?.length) {
-      return res.status(422).json({ error: 'Could not parse rubric text into a structured rubric.' });
-    }
-    res.json({ rubricData });
+    if (!text) return res.status(400).json({ success: false, error: 'Text is required' });
+
+    const parsed = await parseRubricText(text, 'Pasted rubric');
+    res.json({
+      success: true,
+      text: parsed.text,
+      schema: parsed.schema,
+      rubricData: parsed.rubricData,
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
