@@ -3,7 +3,7 @@ const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
 const STORAGE_BACKUP_KEY = "AUIZero-v1-backup";
 const LARGE_PASTE_LIMIT = 220;
 const PRODUCT_NAME = "praxis";
-const PRODUCT_TAGLINE = "Structured writing support for classrooms.";
+const PRODUCT_TAGLINE = "Critical thinking, visible writing, thoughtful review.";
 
 // App state — now server-backed
 let currentProfile = null;
