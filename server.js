@@ -176,6 +176,34 @@ app.post('/api/auth/signout', async (req, res) => {
   }
 });
 
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email, redirectTo } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const { error } = await supabase.auth.resetPasswordForEmail(String(email).trim(), {
+      redirectTo: redirectTo || undefined,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/update-password', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const password = String(req.body?.password || '');
+    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    const { error } = await supabase.auth.admin.updateUserById(user.id, { password });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get current user profile
 app.get('/api/auth/me', async (req, res) => {
   try {

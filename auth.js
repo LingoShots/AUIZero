@@ -33,8 +33,10 @@ const Auth = (() => {
     profile = data.profile;
     if (stayLoggedIn) {
       localStorage.setItem('auizero_session', JSON.stringify(session));
+      sessionStorage.removeItem('auizero_session');
     } else {
       sessionStorage.setItem('auizero_session', JSON.stringify(session));
+      localStorage.removeItem('auizero_session');
     }
    return profile;
   }
@@ -57,6 +59,7 @@ const Auth = (() => {
     session = null;
     profile = null;
     localStorage.removeItem('auizero_session');
+    sessionStorage.removeItem('auizero_session');
   }
 
   async function restoreSession() {
@@ -68,6 +71,7 @@ const Auth = (() => {
       if (data.error) {
         session = null;
         localStorage.removeItem('auizero_session');
+        sessionStorage.removeItem('auizero_session');
         return null;
       }
       profile = data.profile;
@@ -102,5 +106,41 @@ async function getInviteInfo(classId) {
     }
   }
 
-  return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession, joinClassIfInvited, getInviteInfo };
+  async function requestPasswordReset(email) {
+    const redirectTo = `${window.location.origin}${window.location.pathname}?reset=1`;
+    const data = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, redirectTo })
+    }).then(r => r.json());
+    if (data.error) throw new Error(data.error);
+    return true;
+  }
+
+  async function consumeRecoverySessionFromUrl() {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const type = hash.get('type');
+    const accessToken = hash.get('access_token');
+    const refreshToken = hash.get('refresh_token');
+    if (type !== 'recovery' || !accessToken) return false;
+    session = {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: hash.get('token_type') || 'bearer',
+    };
+    window.history.replaceState({}, '', `${window.location.pathname}?reset=1`);
+    return true;
+  }
+
+  async function updatePassword(password) {
+    const data = await fetch('/api/auth/update-password', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ password })
+    }).then(r => r.json());
+    if (data.error) throw new Error(data.error);
+    return true;
+  }
+
+  return { getSession, getProfile, getToken, authHeaders, apiFetch, signIn, signUp, signOut, restoreSession, joinClassIfInvited, getInviteInfo, requestPasswordReset, consumeRecoverySessionFromUrl, updatePassword };
 })();

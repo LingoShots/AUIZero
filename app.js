@@ -23,7 +23,10 @@ const ui = {
   role: "student",
   activeUserId: "",
   pin: "",
-showInvitePanel: false,
+  showInvitePanel: false,
+  showClassModal: false,
+  classModalName: "",
+  classModalError: "",
   showFullRubric: false,
   inviteText: "",
   inviteMailto: "",
@@ -1039,8 +1042,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   appEl.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh;"><p>Loading...</p></div>`;
   const params = new URLSearchParams(window.location.search);
   const joinClassId = params.get('join');
+  const isResetFlow = params.get('reset') === '1';
   let inviteInfo = null;
   if (joinClassId) inviteInfo = await Auth.getInviteInfo(joinClassId);
+  await Auth.consumeRecoverySessionFromUrl();
+  if (isResetFlow) {
+    renderResetPasswordScreen();
+    return;
+  }
   const profile = await Auth.restoreSession();
   if (!profile) {
     setTimeout(() => renderAuthScreen(joinClassId, inviteInfo), 0);
@@ -1062,33 +1071,7 @@ async function bootApp(profile) {
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
     if (currentClassId) {
-      const membersData = await Auth.apiFetch(`/api/classes/${currentClassId}/members`);
-      currentClassMembers = membersData.members || [];
-      const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
-      const raw = assignData.assignments || [];
-      state.assignments = raw.map((a) => normalizeAssignment({
-        id: a.id,
-        title: a.title || '',
-        prompt: a.prompt || '',
-        brief: a.brief || '',
-        focus: a.focus || '',
-        assignmentType: a.assignment_type || 'response',
-        languageLevel: a.language_level || 'B1',
-        wordCountMin: a.word_count_min || 250,
-        wordCountMax: a.word_count_max || 400,
-        feedbackRequestLimit: a.feedback_request_limit || 2,
-        chatTimeLimit: a.chat_time_limit || 0,
-        studentFocus: a.student_focus || [],
-        rubric: a.rubric || [],
-        deadline: a.deadline || '',
-        status: a.status || 'draft',
-        uploadedRubricText: a.uploaded_rubric_text || '',
-        uploadedRubricName: a.uploaded_rubric_name || '',
-        createdAt: a.created_at || new Date().toISOString(),
-        classId: a.class_id || currentClassId,
-        ideaRequestLimit: 3,
-      }));
-      await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
+      await loadTeacherClassContext(currentClassId);
     }
   } else {
     const data = await Auth.apiFetch('/api/student/classes');
@@ -1098,6 +1081,46 @@ async function bootApp(profile) {
   }
   hydrateSelections();
   render();
+}
+
+async function loadTeacherClassContext(classId) {
+  currentClassId = classId || null;
+  currentClassMembers = [];
+  state.assignments = [];
+  state.submissions = [];
+  ui.selectedAssignmentId = null;
+  ui.selectedReviewSubmissionId = null;
+  ui.selectedReviewStudentId = null;
+
+  if (!currentClassId) return;
+
+  const membersData = await Auth.apiFetch(`/api/classes/${currentClassId}/members`);
+  currentClassMembers = membersData.members || [];
+  const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
+  const raw = assignData.assignments || [];
+  state.assignments = raw.map((a) => normalizeAssignment({
+    id: a.id,
+    title: a.title || '',
+    prompt: a.prompt || '',
+    brief: a.brief || '',
+    focus: a.focus || '',
+    assignmentType: a.assignment_type || 'response',
+    languageLevel: a.language_level || 'B1',
+    wordCountMin: a.word_count_min || 250,
+    wordCountMax: a.word_count_max || 400,
+    feedbackRequestLimit: a.feedback_request_limit || 2,
+    chatTimeLimit: a.chat_time_limit || 0,
+    studentFocus: a.student_focus || [],
+    rubric: a.rubric || [],
+    deadline: a.deadline || '',
+    status: a.status || 'draft',
+    uploadedRubricText: a.uploaded_rubric_text || '',
+    uploadedRubricName: a.uploaded_rubric_name || '',
+    createdAt: a.created_at || new Date().toISOString(),
+    classId: a.class_id || currentClassId,
+    ideaRequestLimit: 3,
+  }));
+  await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
 }
 
 async function loadStudentAssignmentsForCurrentClass() {
@@ -1506,18 +1529,42 @@ if (action === "switch-class") {
   }
 
   if (action === "create-class") {
-    const name = prompt("Class name:");
-    if (!name) return;
+    ui.showClassModal = true;
+    ui.classModalName = "";
+    ui.classModalError = "";
+    render();
+    return;
+  }
+
+  if (action === "close-class-modal") {
+    ui.showClassModal = false;
+    ui.classModalName = "";
+    ui.classModalError = "";
+    render();
+    return;
+  }
+
+  if (action === "submit-create-class") {
+    const name = ui.classModalName.trim();
+    if (!name) {
+      ui.classModalError = "Please enter a class name.";
+      render();
+      return;
+    }
     const data = await Auth.apiFetch('/api/classes', {
       method: 'POST',
       body: JSON.stringify({ name })
     });
     if (data.class) {
       currentClasses.unshift(data.class);
-      currentClassId = data.class.id;
-      ui.notice = `Class "${name}" created. Now add students with the "+ Add student" button.`;
+      await loadTeacherClassContext(data.class.id);
+      hydrateSelections();
+      ui.showClassModal = false;
+      ui.classModalName = "";
+      ui.classModalError = "";
+      ui.notice = `New class created: ${name}. You are now working in this class.`;
     } else {
-      ui.notice = `Could not create class: ${data.error || "unknown error"}`;
+      ui.classModalError = data.error || "Could not create class.";
     }
     render();
     return;
@@ -1684,6 +1731,12 @@ if (action === "sign-out") {
   if (action === "delete-assignment") {
     const assignmentId = target.dataset.assignmentId;
     if (!confirm("Delete this assignment? This cannot be undone.")) return;
+    const result = await Auth.apiFetch(`/api/assignments/${assignmentId}`, { method: 'DELETE' });
+    if (result.error) {
+      ui.notice = `Could not delete assignment: ${result.error}`;
+      render();
+      return;
+    }
     state.assignments = state.assignments.filter((a) => a.id !== assignmentId);
     state.submissions = state.submissions.filter((s) => s.assignmentId !== assignmentId);
     if (ui.selectedAssignmentId === assignmentId) ui.selectedAssignmentId = state.assignments[0]?.id || null;
@@ -2096,27 +2149,20 @@ if (target.id === "playback-speed") {
 if (target.id === "student-class-select") {
     currentClassId = target.value;
     ui.selectedStudentAssignmentId = null;
+    await loadStudentAssignmentsForCurrentClass();
     hydrateSelections();
     render();
     return;
   }
 
   if (target.id === "class-select") {
-  
-if (target.id === "class-select") {
     if (target.value === "__new__") {
-      const name = prompt("Class name:");
-      if (!name) { render(); return; }
-      const data = await Auth.apiFetch('/api/classes', {
-        method: 'POST',
-        body: JSON.stringify({ name })
-      });
-      if (data.class) {
-        currentClasses.unshift(data.class);
-        currentClassId = data.class.id;
-      }
+      ui.showClassModal = true;
+      ui.classModalName = "";
+      ui.classModalError = "";
     } else {
-      currentClassId = target.value;
+      await loadTeacherClassContext(target.value);
+      hydrateSelections();
     }
     render();
     return;
@@ -2195,7 +2241,6 @@ if (target.id === "class-select") {
     ui.activeFocusIdeaId = target.value;
     return;
   }
-}
 }
 
 function handleInput(event) {
@@ -2348,7 +2393,7 @@ function render() {
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-  ` + renderInvitePanel() + renderPasteWarning();
+  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal();
 
   // Start chat timer if student is on step 1 and there's a time limit
   if (ui.role === "student" && ui.studentStep === 1) {
@@ -2394,6 +2439,7 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--muted);cursor:pointer;">
               <input type="checkbox" id="stay-logged-in" checked style="cursor:pointer;" /> Stay logged in
             </label>
+            <button type="button" onclick="handleForgotPassword()" style="background:none;border:none;padding:0;text-align:left;color:var(--accent);font-weight:600;cursor:pointer;">Forgot password?</button>
             <button onclick="handleSignIn()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Sign in</button>
             <p id="auth-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
@@ -2452,6 +2498,28 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
       errEl.style.display = 'block';
     }
   };
+
+  window.handleForgotPassword = async () => {
+    const email = document.getElementById('auth-email').value.trim();
+    const errEl = document.getElementById('auth-error');
+    errEl.style.display = 'none';
+    if (!email) {
+      errEl.textContent = 'Enter your email first, then click forgot password.';
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--danger)';
+      return;
+    }
+    try {
+      await Auth.requestPasswordReset(email);
+      errEl.textContent = 'Password reset email sent. Check your inbox.';
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--sage)';
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--danger)';
+    }
+  };
   
   window.handleSignUp = async () => {
     const name = document.getElementById('auth-signup-name').value.trim();
@@ -2471,6 +2539,65 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
     } catch (e) {
       errEl.textContent = e.message;
       errEl.style.display = 'block';
+    }
+  };
+}
+
+function renderResetPasswordScreen() {
+  appEl.innerHTML = `
+    <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
+      <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
+        <h1 style="margin:0 0 8px;font-family:'Manrope','Avenir Next','Segoe UI',sans-serif;font-size:1.35rem;letter-spacing:-0.03em;">Reset your password</h1>
+        <p class="subtle" style="margin:0 0 16px;">Choose a new password for your AUIZero account.</p>
+        <div class="field-stack">
+          <div class="field">
+            <label for="reset-password-input">New password</label>
+            <input id="reset-password-input" type="password" placeholder="At least 6 characters" />
+          </div>
+          <div class="field">
+            <label for="reset-password-confirm">Confirm password</label>
+            <input id="reset-password-confirm" type="password" placeholder="Repeat your new password" />
+          </div>
+          <p id="reset-password-error" style="display:none;margin:0;font-size:0.88rem;"></p>
+          <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button class="button-ghost" onclick="window.location.href='/'">Cancel</button>
+            <button class="button" onclick="handleResetPassword()">Save new password</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  window.handleResetPassword = async () => {
+    const password = document.getElementById('reset-password-input').value;
+    const confirm = document.getElementById('reset-password-confirm').value;
+    const errEl = document.getElementById('reset-password-error');
+    errEl.style.display = 'none';
+    if (!password || password.length < 6) {
+      errEl.textContent = 'Password must be at least 6 characters.';
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--danger)';
+      return;
+    }
+    if (password !== confirm) {
+      errEl.textContent = 'Passwords do not match.';
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--danger)';
+      return;
+    }
+    try {
+      await Auth.updatePassword(password);
+      errEl.textContent = 'Password updated. You can sign in now.';
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--sage)';
+      setTimeout(() => {
+        window.history.replaceState({}, '', '/');
+        renderAuthScreen();
+      }, 800);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      errEl.style.color = 'var(--danger)';
     }
   };
 }
@@ -2614,6 +2741,28 @@ function renderInvitePanel() {
   `;
 }
 
+function renderClassModal() {
+  if (!ui.showClassModal) return "";
+  return `
+    <div style="position:fixed;inset:0;background:rgba(10,18,33,0.35);z-index:1000;display:grid;place-items:center;padding:20px;">
+      <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
+        <p class="mini-label" style="margin-bottom:6px;">Create class</p>
+        <h3 style="margin:0 0 8px;">Start a new class space</h3>
+        <p class="subtle" style="margin:0 0 14px;">This will become your current class immediately, with its own students and assignments.</p>
+        <div class="field" style="margin-bottom:10px;">
+          <label for="class-modal-name">Class name</label>
+          <input id="class-modal-name" value="${escapeAttribute(ui.classModalName)}" oninput="ui.classModalName=this.value" placeholder="Example: AWG 1001 Section B" />
+        </div>
+        ${ui.classModalError ? `<p style="margin:0 0 12px;color:var(--danger);font-size:0.88rem;">${escapeHtml(ui.classModalError)}</p>` : ""}
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+          <button class="button-ghost" data-action="close-class-modal">Cancel</button>
+          <button class="button" data-action="submit-create-class">Create class</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTopbar() {
   const studentOptions = "";
 
@@ -2629,6 +2778,7 @@ function renderTopbar() {
       <div class="toolbar">
         ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
        ${ui.role === "teacher" ? `
+          ${currentClassId ? `<span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>` : ""}
           ${currentClasses.length === 0 ? `
             <button class="button-secondary" data-action="create-class">+ Create first class</button>
           ` : `
@@ -2899,7 +3049,6 @@ function renderTeacherWorkspace() {
                 <p style="margin:0 0 20px;max-width:320px;margin-inline:auto;">Describe your assignment in plain English on the left, then click <strong>Format With AI</strong> to generate a student-ready task in seconds.</p>
                 <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
                   <button class="button" data-action="focus-brief">Start your first assignment</button>
-                  <button class="button-ghost" data-action="load-demo">Explore the demo</button>
                 </div>
               </div>`
             : `
