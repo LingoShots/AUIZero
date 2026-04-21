@@ -2652,7 +2652,7 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
       <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
-          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#8fb8ff);color:white;font-weight:700;letter-spacing:0.01em;">p</div>
+          <div class="brand-mark brand-mark-auth">${renderBrandGlyph()}</div>
           <div>
             ${renderProductWordmark("h1", "brand-wordmark auth-wordmark")}
             <p style="margin:0;color:#667063;font-size:0.85rem;">${escapeHtml(PRODUCT_TAGLINE)}</p>
@@ -3081,7 +3081,7 @@ function renderTopbar() {
   return `
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">p</div>
+        <div class="brand-mark">${renderBrandGlyph()}</div>
         <div>
           ${renderProductWordmark("h1", "brand-wordmark")}
           <p>${escapeHtml(PRODUCT_TAGLINE)}</p>
@@ -6330,6 +6330,18 @@ function trimTo(text, length) {
 function renderProductWordmark(tagName = "span", className = "") {
   const cls = className ? ` class="${className}"` : "";
   return `<${tagName}${cls}>pr<span class="brand-accent-letter">a</span>x<span class="brand-accent-letter">i</span>s</${tagName}>`;
+}
+
+function renderBrandGlyph() {
+  return `
+    <svg viewBox="0 0 64 64" fill="none" aria-hidden="true" focusable="false">
+      <rect width="64" height="64" rx="18" fill="#F7FAFF"/>
+      <rect x="2" y="2" width="60" height="60" rx="16" stroke="#D8E5FF" stroke-width="2"/>
+      <path d="M25.5 15.5V49" stroke="#4D7DF0" stroke-width="7" stroke-linecap="round"/>
+      <path d="M25.5 18.5H35.75C42.2393 18.5 47.5 23.7607 47.5 30.25C47.5 36.7393 42.2393 42 35.75 42H25.5" stroke="#4D7DF0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="44.5" cy="18.5" r="3.5" fill="#8FAEFF"/>
+    </svg>
+  `;
 }
 
 function clamp(value, min, max) {
