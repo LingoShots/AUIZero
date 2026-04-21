@@ -1198,14 +1198,16 @@ async function loadTeacherClassContext(classId) {
     uploadedRubricName: a.uploaded_rubric_name || '',
     createdAt: a.created_at || new Date().toISOString(),
     classId: a.class_id || currentClassId,
-    ideaRequestLimit: 3,
+      ideaRequestLimit: 3,
   }));
+  persistState();
 }
 
 async function loadStudentAssignmentsForCurrentClass() {
   if (!currentClassId) {
     state.assignments = [];
     state.submissions = [];
+    persistState();
     return;
   }
 
@@ -1238,6 +1240,7 @@ async function loadStudentAssignmentsForCurrentClass() {
     }));
   const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
   state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
+  persistState();
 }
 
 function mapServerSubmission(serverSubmission) {
@@ -1349,6 +1352,13 @@ async function loadReviewDataForAssignment(assignmentId) {
 }
 
 let autoSaveTimer = null;
+function showAutosaveIndicator(message = "Saved") {
+  const indicator = document.getElementById("autosave-indicator");
+  if (!indicator) return;
+  indicator.textContent = message;
+  indicator.style.opacity = "1";
+  setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
+}
 
 function bindEvents() {
   appEl.addEventListener("click", handleClick);
@@ -1386,6 +1396,7 @@ function startChatTimer() {
       if (!submission.chatExpiredAt) {
         submission.chatExpiredAt = new Date().toISOString();
         persistState();
+        scheduleSubmissionSync(600);
       }
       clearInterval(chatTimerInterval);
       const sendBtn = document.querySelector("[data-action='send-chat-message']");
@@ -1404,13 +1415,18 @@ function scheduleAutoSave() {
     if (!submission) return;
     persistState();
     syncSubmissionToServer(submission);
-    const indicator = document.getElementById("autosave-indicator");
-    if (indicator) {
-      indicator.textContent = "Saved";
-      indicator.style.opacity = "1";
-      setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
-    }
-  }, 30000);
+    showAutosaveIndicator("Saved");
+  }, 8000);
+}
+
+function scheduleSubmissionSync(delay = 1800) {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    const submission = getStudentSubmission();
+    if (!submission) return;
+    persistState();
+    syncSubmissionToServer(submission);
+  }, delay);
 }
 
 function buildFormatPrompt() {
@@ -1766,6 +1782,12 @@ if (action === "sign-out") {
     currentProfile = null;
     currentClasses = [];
     currentClassId = null;
+    currentClassMembers = [];
+    state = createBlankState();
+    ui.selectedAssignmentId = null;
+    ui.selectedStudentAssignmentId = null;
+    ui.selectedReviewSubmissionId = null;
+    ui.selectedReviewStudentId = null;
     appEl.innerHTML = '';
     setTimeout(() => renderAuthScreen(), 0);
     return;
@@ -1785,25 +1807,13 @@ if (action === "sign-out") {
   }
 
   if (action === "load-demo") {
-    stopPlayback();
-    state = createDemoState();
-    ui.selectedAssignmentId = state.assignments[0]?.id || null;
-    ui.teacherDraft = createBlankTeacherDraft();
-    ui.teacherAssist = null;
-    ui.notice = "Demo loaded — explore the sample assignment and student work.";
-    hydrateSelections();
+    ui.notice = "Demo mode is disabled in the pilot build.";
     render();
     return;
   }
     
   if (action === "reset-app") {
-    stopPlayback();
-    state = createBlankState();
-    ui.teacherDraft = createBlankTeacherDraft();
-    ui.teacherAssist = null;
-    ui.notice = "Workspace cleared. Ready for a fresh pilot.";
-    hydrateSelections();
-    persistState();
+    ui.notice = "Workspace reset is disabled in the pilot build.";
     render();
     return;
   }
@@ -1922,10 +1932,9 @@ if (action === "sign-out") {
       render();
       return;
     }
-    state.assignments = state.assignments.filter((a) => a.id !== assignmentId);
-    state.submissions = state.submissions.filter((s) => s.assignmentId !== assignmentId);
+    await loadTeacherClassContext(currentClassId);
     if (ui.selectedAssignmentId === assignmentId) ui.selectedAssignmentId = state.assignments[0]?.id || null;
-    if (ui.selectedStudentAssignmentId === assignmentId) ui.selectedStudentAssignmentId = state.assignments[0]?.id || null;
+    if (ui.selectedStudentAssignmentId === assignmentId) ui.selectedStudentAssignmentId = null;
     ui.selectedReviewSubmissionId = null;
     ui.notice = "Assignment deleted.";
     persistState();
@@ -1992,6 +2001,9 @@ if (action === "select-assignment") {
       const submission = getStudentSubmission();
       if (notes && submission) {
         submission.outline.partOne = notes.value.trim();
+        submission.updatedAt = new Date().toISOString();
+        persistState();
+        scheduleSubmissionSync();
       }
     }
     if (nextStep === 3) {
@@ -2027,6 +2039,7 @@ if (action === "select-assignment") {
     ui.studentStep = 2;
     ui.notice = "You can return to the chat later if you want more idea help.";
     persistState();
+    scheduleSubmissionSync();
     render();
     return;
   }
@@ -2064,6 +2077,7 @@ if (action === "select-assignment") {
       submission.chatExpiredAt = submission.chatExpiredAt || new Date().toISOString();
       ui.notice = "Your chat time has finished. Move on to your draft when you are ready.";
       persistState();
+      scheduleSubmissionSync();
       render();
       return;
     }
@@ -2081,6 +2095,7 @@ if (action === "select-assignment") {
     ui.chatInput = "";
     ui.chatLoading = true;
     persistState();
+    scheduleSubmissionSync(900);
     render();
 
     // Scroll chat to bottom
@@ -2103,6 +2118,7 @@ if (action === "select-assignment") {
         submission.updatedAt = new Date().toISOString();
         ui.chatLoading = false;
         persistState();
+        scheduleSubmissionSync(900);
         render();
         setTimeout(() => {
           const win = document.getElementById("chatbot-window");
@@ -2114,6 +2130,7 @@ if (action === "select-assignment") {
         submission.chatHistory.push({ role: "assistant", content: "Sorry, I couldn't connect. Please try again.", timestamp: new Date().toISOString() });
         ui.chatLoading = false;
         persistState();
+        scheduleSubmissionSync(900);
         render();
       });
     return;
@@ -2331,6 +2348,7 @@ if (action === "select-assignment") {
     });
     ui.notice = "Writing focus saved.";
     persistState();
+    scheduleSubmissionSync();
     render();
   }
 }
@@ -2513,6 +2531,7 @@ function handleInput(event) {
     idea[target.dataset.ideaField] = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
+    scheduleSubmissionSync();
     return;
   }
 
@@ -2542,6 +2561,7 @@ function handleInput(event) {
     submission.finalText = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
+    scheduleSubmissionSync();
     updateFinalMeters();
     return;
   }
@@ -2557,6 +2577,7 @@ function handleInput(event) {
       el.closest(".sa-option").classList.toggle("sa-selected", el === target);
     });
     persistState();
+    scheduleSubmissionSync();
     return;
   }
   if (target.dataset.reflectionField) {
@@ -2568,6 +2589,7 @@ function handleInput(event) {
     submission.reflections[target.dataset.reflectionField] = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
+    scheduleSubmissionSync();
     return;
   }
 
@@ -2580,6 +2602,7 @@ function handleInput(event) {
     submission.outline[target.dataset.outlineField] = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
+    scheduleSubmissionSync();
     return;
   }
 }
@@ -4310,8 +4333,7 @@ async function saveTeacherAssignment() {
     return;
   }
 
-  // Save to Supabase
-  Auth.apiFetch(`/api/classes/${currentClassId}/assignments`, {
+  const data = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`, {
     method: 'POST',
     body: JSON.stringify({
       title: assignment.title,
@@ -4330,32 +4352,22 @@ async function saveTeacherAssignment() {
       uploaded_rubric_text: assignment.uploadedRubricText,
       status: 'draft'
     })
-  }).then(data => {
-    if (data.error) {
-      ui.notice = "Could not save assignment: " + data.error;
-    } else {
-      const savedAssignment = normalizeAssignment({
-        ...data.assignment,
-        assignmentType: data.assignment.assignmentType || data.assignment.assignment_type,
-        languageLevel: data.assignment.languageLevel || data.assignment.language_level,
-        wordCountMin: data.assignment.wordCountMin || data.assignment.word_count_min,
-        wordCountMax: data.assignment.wordCountMax || data.assignment.word_count_max,
-        feedbackRequestLimit: data.assignment.feedbackRequestLimit || data.assignment.feedback_request_limit,
-        chatTimeLimit: data.assignment.chatTimeLimit || data.assignment.chat_time_limit,
-        studentFocus: data.assignment.studentFocus || data.assignment.student_focus,
-        uploadedRubricText: data.assignment.uploadedRubricText || data.assignment.uploaded_rubric_text || ui.teacherDraft.uploadedRubricText,
-        uploadedRubricName: data.assignment.uploadedRubricName || ui.teacherDraft.uploadedRubricName,
-        classId: data.assignment.class_id || currentClassId,
-      });
-      state.assignments.unshift(savedAssignment);
-      ui.selectedAssignmentId = savedAssignment.id;
-      ui.selectedReviewSubmissionId = null;
-      ui.teacherDraft = createBlankTeacherDraft();
-      ui.teacherAssist = null;
-      ui.notice = "Assignment saved as draft. Publish it when you're ready for students to see it.";
-    }
-    render();
   });
+  if (data.error) {
+    ui.notice = "Could not save assignment: " + data.error;
+    render();
+    return;
+  }
+
+  const savedAssignmentId = data.assignment?.id || null;
+  await loadTeacherClassContext(currentClassId);
+  ui.selectedAssignmentId = savedAssignmentId || state.assignments[0]?.id || null;
+  ui.selectedReviewSubmissionId = null;
+  ui.teacherDraft = createBlankTeacherDraft();
+  ui.teacherAssist = null;
+  ui.notice = "Assignment saved as draft. Publish it when you're ready for students to see it.";
+  persistState();
+  render();
 }
 
 function handleIdeaRequest() {
@@ -4381,6 +4393,7 @@ function handleIdeaRequest() {
   submission.updatedAt = new Date().toISOString();
   ui.notice = "Short ideas added. Now pick one and explain it in your own words.";
   persistState();
+  scheduleSubmissionSync();
   render();
 }
 
@@ -4405,6 +4418,7 @@ function handleFeedbackRequest() {
   submission.updatedAt = new Date().toISOString();
   ui.notice = "Draft check added. Use it to improve your own writing.";
   persistState();
+  scheduleSubmissionSync();
   render();
 }
 
@@ -5871,12 +5885,7 @@ function createEmptySubmission(assignmentId, studentId) {
 
 function createBlankState() {
   return {
-    users: [
-      { id: "teacher-1", name: "Ms. Rivera", role: "teacher" },
-      { id: "student-1", name: "Jordan Lee", role: "student" },
-      { id: "student-2", name: "Amina Patel", role: "student" },
-      { id: "student-3", name: "Eli Brooks", role: "student" },
-    ],
+    users: [],
     assignments: [],
     submissions: [],
   };
@@ -6242,17 +6251,21 @@ function loadState() {
 }
 
 async function syncSubmissionToServer(submission) {
-  if (!submission?.assignmentId) return;
+  if (!submission?.assignmentId || currentProfile?.role !== "student") return;
   try {
     const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
     if (existing.error) return;
     const serverId = existing.submission?.id;
     if (!serverId) return;
     const payload = {
+      idea_responses: submission.ideaResponses || [],
       draft_text: submission.draftText || "",
       final_text: submission.finalText || "",
       reflections: submission.reflections || { improved: "" },
+      outline: submission.outline || { partOne: "", partTwo: "", partThree: "" },
       chat_history: submission.chatHistory || [],
+      chat_skipped_at: submission.chatSkippedAt || null,
+      chat_expired_at: submission.chatExpiredAt || null,
       writing_events: submission.writingEvents || [],
       feedback_history: submission.feedbackHistory || [],
       focus_annotations: submission.focusAnnotations || [],

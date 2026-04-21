@@ -90,13 +90,54 @@ async function ensureTeacherOwnsClass(classId, teacherId) {
 async function ensureTeacherOwnsAssignment(assignmentId, teacherId) {
   const { data, error } = await supabase
     .from('assignments')
-    .select('id, class_id, title')
+    .select('id, class_id, title, status')
     .eq('id', assignmentId)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
   const ownedClass = await ensureTeacherOwnsClass(data.class_id, teacherId);
   return ownedClass ? data : null;
+}
+
+async function ensureStudentBelongsToClass(classId, studentId) {
+  const { data, error } = await supabase
+    .from('class_members')
+    .select('class_id')
+    .eq('class_id', classId)
+    .eq('student_id', studentId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function ensureUserCanAccessClass(classId, userId) {
+  const ownedClass = await ensureTeacherOwnsClass(classId, userId);
+  if (ownedClass) return { role: 'teacher', classRecord: ownedClass };
+  const enrolledClass = await ensureStudentBelongsToClass(classId, userId);
+  if (enrolledClass) return { role: 'student', classRecord: enrolledClass };
+  return null;
+}
+
+async function ensureStudentCanAccessAssignment(assignmentId, studentId) {
+  const { data, error } = await supabase
+    .from('assignments')
+    .select('id, class_id, status')
+    .eq('id', assignmentId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const enrolledClass = await ensureStudentBelongsToClass(data.class_id, studentId);
+  return enrolledClass ? data : null;
+}
+
+async function getSubmissionRecord(submissionId) {
+  const { data, error } = await supabase
+    .from('submissions')
+    .select('id, assignment_id, student_id')
+    .eq('id', submissionId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
 }
 
 // ── Rubric parsing endpoints ────────────────────────────────
@@ -397,8 +438,10 @@ app.post('/api/classes/:classId/join', async (req, res) => {
 
 app.get('/api/classes/:classId/members', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
+    if (!ownedClass) return res.status(403).json({ error: 'You can only view rosters for your own classes.' });
     const { data, error } = await supabase
       .from('class_members')
       .select('student_id, profiles(id, name)')
@@ -424,11 +467,17 @@ app.get('/api/classes/:classId/assignments', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
-    const { data, error } = await supabase
+    const access = await ensureUserCanAccessClass(req.params.classId, user.id);
+    if (!access) return res.status(403).json({ error: 'You do not have access to this class.' });
+    let query = supabase
       .from('assignments')
       .select('*')
       .eq('class_id', req.params.classId)
       .order('created_at', { ascending: false });
+    if (access.role === 'student') {
+      query = query.eq('status', 'published');
+    }
+    const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
     res.json({ assignments: data });
   } catch (error) {
@@ -507,8 +556,10 @@ app.delete('/api/assignments/:id', async (req, res) => {
 // Get all submissions for an assignment (teacher)
 app.get('/api/assignments/:assignmentId/submissions', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedAssignment = await ensureTeacherOwnsAssignment(req.params.assignmentId, user.id);
+    if (!ownedAssignment) return res.status(403).json({ error: 'You can only view submissions for your own assignments.' });
     const { data, error } = await supabase
       .from('submissions')
       .select('*, profiles(id, name)')
@@ -525,6 +576,10 @@ app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const accessibleAssignment = await ensureStudentCanAccessAssignment(req.params.assignmentId, user.id);
+    if (!accessibleAssignment) {
+      return res.status(403).json({ error: 'You do not have access to this assignment.' });
+    }
     let { data, error } = await supabase
       .from('submissions')
       .select('*')
@@ -556,13 +611,15 @@ app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
 // Upsert a submission shell for teacher review/status updates
 app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
-    const profile = await getProfile(user.id);
-    if (profile?.role !== 'teacher') return res.status(403).json({ error: 'Teacher access required' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
 
     const assignmentId = req.params.assignmentId;
     const studentId = req.params.studentId;
+    const ownedAssignment = await ensureTeacherOwnsAssignment(assignmentId, user.id);
+    if (!ownedAssignment) return res.status(403).json({ error: 'You can only review submissions for your own assignments.' });
+    const enrolledStudent = await ensureStudentBelongsToClass(ownedAssignment.class_id, studentId);
+    if (!enrolledStudent) return res.status(400).json({ error: 'That student is not enrolled in this class.' });
     const payload = { ...req.body, updated_at: new Date().toISOString() };
 
     let { data, error } = await supabase
@@ -608,6 +665,14 @@ app.patch('/api/submissions/:id', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const submission = await getSubmissionRecord(req.params.id);
+    if (!submission) return res.status(404).json({ error: 'Submission not found' });
+    if (submission.student_id !== user.id) {
+      const ownedAssignment = await ensureTeacherOwnsAssignment(submission.assignment_id, user.id);
+      if (!ownedAssignment) {
+        return res.status(403).json({ error: 'You do not have permission to update this submission.' });
+      }
+    }
     const { data, error } = await supabase
       .from('submissions')
       .update({ ...req.body, updated_at: new Date().toISOString() })
