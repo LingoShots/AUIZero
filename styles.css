@@ -314,10 +314,14 @@ button {
   background: var(--surface-soft);
 }
 
-.assignment-list,
 .student-list,
 .timeline-list {
   max-height: 480px;
+  overflow: auto;
+}
+
+.assignment-list {
+  max-height: 680px;
   overflow: auto;
 }
 
@@ -834,10 +838,13 @@ button {
     gap: 6px;
   }
 
-  .assignment-list,
   .student-list,
   .timeline-list {
     max-height: 320px;
+  }
+
+  .assignment-list {
+    max-height: 420px;
   }
 }
 

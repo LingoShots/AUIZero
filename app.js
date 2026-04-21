@@ -2379,39 +2379,46 @@ function renderTeacherWorkspace() {
             `
             : `
               <div id="teacher-generated-assignment" class="teacher-output">
-                <div class="teacher-ready-card">
-                  <p class="mini-label">Manual assignment setup</p>
-                  <p class="subtle" style="margin:0 0 12px;">You can save this assignment without AI. Add the student-facing title and prompt here, or use Format With AI to draft them for you.</p>
-                  <div class="field" style="margin-bottom:10px;">
-                    <label for="teacher-title">Assignment title</label>
-                    <input id="teacher-title" data-teacher-field="title" value="${escapeAttribute(ui.teacherDraft.title)}" placeholder="Assignment title" />
-                  </div>
-                  <div class="field" style="margin-bottom:10px;">
-                    <label for="teacher-prompt">Task prompt</label>
-                    <textarea id="teacher-prompt" data-teacher-field="prompt" placeholder="Write the instructions students will see.">${escapeHtml(ui.teacherDraft.prompt)}</textarea>
-                  </div>
-                  <div class="field-grid" style="margin-bottom:10px;">
-                    <div class="field">
-                      <label for="teacher-word-min">Min words</label>
-                      <input id="teacher-word-min" type="number" data-teacher-field="wordCountMin" value="${escapeAttribute(String(ui.teacherDraft.wordCountMin))}" />
+                <details class="teacher-ready-card" ${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "open" : ""}>
+                  <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div>
+                      <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt.</p>
+                    </div>
+                    <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
+                  </summary>
+                  <div style="margin-top:14px;">
+                    <div class="field" style="margin-bottom:10px;">
+                      <label for="teacher-title">Assignment title</label>
+                      <input id="teacher-title" data-teacher-field="title" value="${escapeAttribute(ui.teacherDraft.title)}" placeholder="Assignment title" />
+                    </div>
+                    <div class="field" style="margin-bottom:10px;">
+                      <label for="teacher-prompt">Task prompt</label>
+                      <textarea id="teacher-prompt" data-teacher-field="prompt" placeholder="Write the instructions students will see.">${escapeHtml(ui.teacherDraft.prompt)}</textarea>
+                    </div>
+                    <div class="field-grid" style="margin-bottom:10px;">
+                      <div class="field">
+                        <label for="teacher-word-min">Min words</label>
+                        <input id="teacher-word-min" type="number" data-teacher-field="wordCountMin" value="${escapeAttribute(String(ui.teacherDraft.wordCountMin))}" />
+                      </div>
+                      <div class="field">
+                        <label for="teacher-word-max">Max words</label>
+                        <input id="teacher-word-max" type="number" data-teacher-field="wordCountMax" value="${escapeAttribute(String(ui.teacherDraft.wordCountMax))}" />
+                      </div>
+                    </div>
+                    <div class="field" style="margin-bottom:10px;">
+                      <label for="teacher-assignment-type">Assignment type</label>
+                      <select id="teacher-assignment-type" data-teacher-field="assignmentType">
+                        ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+                      </select>
                     </div>
                     <div class="field">
-                      <label for="teacher-word-max">Max words</label>
-                      <input id="teacher-word-max" type="number" data-teacher-field="wordCountMax" value="${escapeAttribute(String(ui.teacherDraft.wordCountMax))}" />
+                      <label for="teacher-student-focus">Student focus</label>
+                      <textarea id="teacher-student-focus" data-teacher-field="studentFocus" placeholder="One focus point per line">${escapeHtml(ui.teacherDraft.studentFocus)}</textarea>
+                      <p class="subtle" style="font-size:0.82rem;margin-top:6px;">Optional. One focus point per line.</p>
                     </div>
                   </div>
-                  <div class="field" style="margin-bottom:10px;">
-                    <label for="teacher-assignment-type">Assignment type</label>
-                    <select id="teacher-assignment-type" data-teacher-field="assignmentType">
-                      ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="teacher-student-focus">Student focus</label>
-                    <textarea id="teacher-student-focus" data-teacher-field="studentFocus" placeholder="One focus point per line">${escapeHtml(ui.teacherDraft.studentFocus)}</textarea>
-                    <p class="subtle" style="font-size:0.82rem;margin-top:6px;">Optional. One focus point per line.</p>
-                  </div>
-                </div>
+                </details>
               </div>
             `
         }
@@ -4855,6 +4862,7 @@ function normalizeRubricRow(item) {
     points,
     section: item?.section || "",
     subcriterion: item?.subcriterion || "",
+    pointsLabel: item?.pointsLabel || "",
     bands: levels.length ? bands : (bands.length ? bands : createScoreBandsForPoints(points)),
     levels,
   };
