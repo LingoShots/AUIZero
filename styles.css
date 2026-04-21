@@ -238,6 +238,10 @@ button {
   margin-top: 0;
 }
 
+.review-grid-stacked {
+  grid-template-columns: 1fr;
+}
+
 .student-shell {
   margin-top: 18px;
 }
