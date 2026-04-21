@@ -108,6 +108,19 @@ function cleanRubricXmlCellText(xml = '') {
     .trim();
 }
 
+function normalizeSectionLabel(sectionText = '') {
+  const lines = cleanRubricXmlCellText(sectionText)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return '';
+  if (lines.length >= 4 && /^[A-Z\s]+$/.test(lines[0])) {
+    return lines[0];
+  }
+  return lines.join(' ').replace(/[ ]{2,}/g, ' ').trim();
+}
+
 function parseLevelPoints(label = '') {
   const matches = String(label).match(/\d+(?:\.\d+)?/g) || [];
   if (!matches.length) return 0;
@@ -118,18 +131,32 @@ function parseLevelPoints(label = '') {
 }
 
 function deriveSubcriterionName(sectionText = '', firstDescription = '', rowIndex = 0, seenCount = 0) {
-  const cleanedSection = cleanRubricCellText(sectionText);
-  if (!seenCount && cleanedSection && cleanedSection.length <= 40) {
+  const cleanedSection = normalizeSectionLabel(sectionText);
+  const rawLines = cleanRubricXmlCellText(sectionText)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!seenCount && cleanedSection && cleanedSection.length <= 40 && !String(sectionText).includes('\n')) {
     return cleanedSection;
   }
 
   const firstSentence = cleanRubricCellText(firstDescription).split(/[.;:\n]/)[0] || '';
+  const firstWords = firstSentence
+    .replace(/[,:-]+$/, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if ((seenCount > 0 || rawLines.length >= 4) && firstWords.length >= 2) {
+    return firstWords.slice(0, 2).join(' ');
+  }
+
   const phraseMatch = firstSentence.match(/^(.{0,80}?)\b(is|are|may|can|will|should|must|contains?|explains?|builds?|groups?|presents?|uses?|shows?|restates?|supports?)\b/i);
   const candidate = (phraseMatch ? phraseMatch[1] : firstSentence)
+    .replace(/\b(thoroughly|adequately|successfully|partially|clearly|effectively|usually|generally|strongly)\b$/i, '')
     .replace(/[,:-]+$/, '')
     .trim();
 
-  if (candidate && candidate.split(/\s+/).length <= 8) {
+  if (candidate && candidate.split(/\s+/).length <= 8 && candidate.length <= 48) {
     return candidate;
   }
 
@@ -182,17 +209,21 @@ function parseRubricDocxXml(documentXml = '', fileName = '') {
   if (!levelHeaders.length) return null;
 
   let previousSection = '';
+  const sectionCounts = new Map();
   const rowsOut = rows.slice(1).map((cells, index) => {
     const normalizedCells = [...cells];
     while (normalizedCells.length < headerRow.length) normalizedCells.push('');
 
-    const rawSection = cleanRubricXmlCellText(normalizedCells[0] || '');
+    const rawSectionCell = normalizedCells[0] || '';
+    const rawSection = normalizeSectionLabel(rawSectionCell);
     const section = rawSection || previousSection;
     if (rawSection) previousSection = rawSection;
+    const seenCount = sectionCounts.get(section) || 0;
+    sectionCounts.set(section, seenCount + 1);
 
     const descriptions = normalizedCells.slice(1, 1 + levelHeaders.length);
     const pointsLabel = hasPointsColumn ? cleanRubricXmlCellText(normalizedCells[headerRow.length - 1] || '') : '';
-    const name = deriveSubcriterionName(section, descriptions[0], index, 0);
+    const name = deriveSubcriterionName(rawSectionCell || section, descriptions[0], index, seenCount);
     const levels = levelHeaders.map((header, levelIndex) => ({
       id: `level-${index + 1}-${levelIndex + 1}`,
       label: header,
@@ -246,15 +277,19 @@ function parseRubricHtmlTable(html = '', fileName = '') {
     .filter(Boolean);
 
   const sectionCounts = new Map();
+  let previousSection = '';
   const rawRows = rows.slice(1).map((cells, index) => {
     const workingCells = [...cells];
     const pointsLabel = hasPointsColumn ? (workingCells.pop() || '') : '';
-    const section = cleanRubricCellText(workingCells.shift() || '');
+    const rawSectionCell = workingCells.shift() || '';
+    const rawSection = normalizeSectionLabel(rawSectionCell);
+    const section = rawSection || previousSection;
+    if (rawSection) previousSection = rawSection;
     const seenCount = sectionCounts.get(section) || 0;
     sectionCounts.set(section, seenCount + 1);
 
     const descriptions = workingCells.slice(0, levelHeaders.length);
-    const name = deriveSubcriterionName(section, descriptions[0], index, seenCount);
+    const name = deriveSubcriterionName(rawSectionCell || section, descriptions[0], index, seenCount);
     const levels = levelHeaders.map((header, levelIndex) => ({
       id: `level-${index + 1}-${levelIndex + 1}`,
       label: header,
@@ -276,8 +311,7 @@ function parseRubricHtmlTable(html = '', fileName = '') {
 
   const parsedRows = rawRows.map((row) => ({
     ...row,
-    name: row.section || row.name,
-    subcriterion: row.section || row.subcriterion,
+    subcriterion: row.subcriterion || row.name,
   }));
 
   if (!parsedRows.length) return null;
@@ -301,20 +335,20 @@ app.post('/api/extract-rubric', upload.single('rubric'), async (req, res) => {
 
     if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
         mime === 'application/msword') {
+      let documentXml = '';
+      try {
+        documentXml = extractDocxDocumentXml(req.file.buffer);
+      } catch (xmlError) {
+        documentXml = '';
+      }
+
       const [rawTextResult, htmlResult] = await Promise.all([
         mammoth.extractRawText({ buffer: req.file.buffer }),
         mammoth.convertToHtml({ buffer: req.file.buffer }),
       ]);
       text = rawTextResult.value;
-      rubricData = parseRubricHtmlTable(htmlResult.value, req.file.originalname);
-      if (!rubricData) {
-        try {
-          const documentXml = extractDocxDocumentXml(req.file.buffer);
-          rubricData = parseRubricDocxXml(documentXml, req.file.originalname);
-        } catch (xmlError) {
-          // Keep the raw text fallback if XML extraction is unavailable in the environment.
-        }
-      }
+      rubricData = documentXml ? parseRubricDocxXml(documentXml, req.file.originalname) : null;
+      if (!rubricData) rubricData = parseRubricHtmlTable(htmlResult.value, req.file.originalname);
     } else if (mime === 'application/pdf') {
       // Use AI to extract text from PDF since we can't run native pdf libs easily
       const base64 = req.file.buffer.toString('base64');
