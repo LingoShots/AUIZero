@@ -2,8 +2,8 @@ const STORAGE_KEY = "AUIZero-v1";
 const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
 const STORAGE_BACKUP_KEY = "AUIZero-v1-backup";
 const LARGE_PASTE_LIMIT = 220;
-const PRODUCT_NAME = "Praxis";
-const PRODUCT_TAGLINE = "Thinking, drafting, and feedback made visible.";
+const PRODUCT_NAME = "praxis";
+const PRODUCT_TAGLINE = "Structured writing support for classrooms.";
 
 // App state — now server-backed
 let currentProfile = null;
@@ -2652,10 +2652,10 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
       <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
-          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#8fb8ff);color:white;font-weight:800;letter-spacing:0.02em;">P</div>
+          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#8fb8ff);color:white;font-weight:700;letter-spacing:0.01em;">p</div>
           <div>
             ${renderProductWordmark("h1", "brand-wordmark auth-wordmark")}
-            <p style="margin:0;color:#667063;font-size:0.85rem;">Writing made visible</p>
+            <p style="margin:0;color:#667063;font-size:0.85rem;">${escapeHtml(PRODUCT_TAGLINE)}</p>
           </div>
         </div>
         ${inviteBanner}
@@ -3081,7 +3081,7 @@ function renderTopbar() {
   return `
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">P</div>
+        <div class="brand-mark">p</div>
         <div>
           ${renderProductWordmark("h1", "brand-wordmark")}
           <p>${escapeHtml(PRODUCT_TAGLINE)}</p>
@@ -6329,7 +6329,7 @@ function trimTo(text, length) {
 
 function renderProductWordmark(tagName = "span", className = "") {
   const cls = className ? ` class="${className}"` : "";
-  return `<${tagName}${cls}>Pr<span class="brand-accent-letter">a</span>x<span class="brand-accent-letter">i</span>s</${tagName}>`;
+  return `<${tagName}${cls}>pr<span class="brand-accent-letter">a</span>x<span class="brand-accent-letter">i</span>s</${tagName}>`;
 }
 
 function clamp(value, min, max) {
