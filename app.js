@@ -495,8 +495,8 @@ function renderRubricMatrixTable(matrixData, options = {}) {
       <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:${fontSize};min-width:${compact ? 760 : 840}px;">
         <thead>
           <tr>
-            <th style="position:sticky;top:0;background:#f4efe6;padding:${headerPadding}px;border-bottom:1px solid var(--line);text-align:left;min-width:${criterionMinWidth}px;">Criterion</th>
-            ${safeArray(matrix.headers).map((header) => `<th style="position:sticky;top:0;background:#f4efe6;padding:${headerPadding}px;border-bottom:1px solid var(--line);text-align:left;min-width:${levelMinWidth}px;">${escapeHtml(header)}</th>`).join("")}
+            <th style="position:sticky;top:0;background:#eef4ff;padding:${headerPadding}px;border-bottom:1px solid var(--line);text-align:left;min-width:${criterionMinWidth}px;">Criterion</th>
+            ${safeArray(matrix.headers).map((header) => `<th style="position:sticky;top:0;background:#eef4ff;padding:${headerPadding}px;border-bottom:1px solid var(--line);text-align:left;min-width:${levelMinWidth}px;">${escapeHtml(header)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
@@ -505,7 +505,7 @@ function renderRubricMatrixTable(matrixData, options = {}) {
             const suggested = suggestedRowScoreMap.get(row.id);
             return `
               <tr>
-                <td style="padding:${cellPadding}px;vertical-align:top;border-bottom:1px solid var(--line);background:#faf7f0;">
+                <td style="padding:${cellPadding}px;vertical-align:top;border-bottom:1px solid var(--line);background:#f7faff;">
                   ${row.section && row.section !== row.name ? `<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">${escapeHtml(row.section)}</div>` : ""}
                   <div style="font-weight:700;">${escapeHtml(row.name)}</div>
                   ${row.pointsLabel ? `<div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escapeHtml(row.pointsLabel)}</div>` : ""}
@@ -513,8 +513,8 @@ function renderRubricMatrixTable(matrixData, options = {}) {
                 ${safeArray(row.levels).map((level) => {
                   const isSelected = selected?.bandId === level.id;
                   const isSuggested = suggested?.bandId === level.id;
-                  const background = isSelected ? "#dff3e4" : isSuggested ? "#f4efe6" : "#fff";
-                  const border = isSelected ? "#4f8f68" : isSuggested ? "#c8b9a2" : "transparent";
+                  const background = isSelected ? "#e8fbf4" : isSuggested ? "#eef4ff" : "#fff";
+                  const border = isSelected ? "#34a587" : isSuggested ? "#b6c8f6" : "transparent";
                   const content = `
                     <div style="font-weight:700;font-size:0.78rem;margin-bottom:6px;">${escapeHtml(level.label)}</div>
                     <div style="line-height:1.5;">${escapeHtml(level.description || "—")}</div>
@@ -620,7 +620,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
                 ${selected ? `
                   <span class="rubric-selection-pill" style="background:${statusTheme.badge};color:${statusTheme.text};">${escapeHtml(selected.label)} · ${selected.points} pts</span>
                 ` : suggested ? `
-                  <span class="rubric-selection-pill" style="background:#f4efe6;color:#7a664d;">Suggested · ${escapeHtml(suggested.label)} · ${suggested.points} pts</span>
+                  <span class="rubric-selection-pill" style="background:#eef4ff;color:#4562b8;">Suggested · ${escapeHtml(suggested.label)} · ${suggested.points} pts</span>
                 ` : ""}
               </div>
               <div class="rubric-level-grid ${previewMode ? "rubric-level-grid-preview" : `rubric-level-grid-${Math.min(Math.max(criterion.levels.length, 1), 5)}`}">
@@ -2374,18 +2374,18 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
   ` : "";
   appEl.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
-      <div style="width:100%;max-width:400px;background:rgba(255,253,249,0.94);border:1px solid rgba(221,210,194,0.9);border-radius:18px;padding:32px;box-shadow:0 12px 30px rgba(62,41,26,0.08);">
+      <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
-          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#a55233,#844125);color:white;font-weight:700;letter-spacing:0.08em;">AU</div>
+          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#6ea8ff);color:white;font-weight:700;letter-spacing:0.08em;">AU</div>
           <div>
-            <h1 style="margin:0;font-family:'Iowan Old Style','Palatino Linotype',serif;font-size:1.3rem;letter-spacing:-0.02em;">AUIZero</h1>
+            <h1 style="margin:0;font-family:'Manrope','Avenir Next','Segoe UI',sans-serif;font-size:1.3rem;letter-spacing:-0.03em;">AUIZero</h1>
             <p style="margin:0;color:#667063;font-size:0.85rem;">Visible writing steps</p>
           </div>
         </div>
         ${inviteBanner}
-        <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid #ddd2c2;border-radius:10px;overflow:hidden;">
-          <button id="auth-tab-signin" onclick="showAuthTab('signin')" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:#a55233;">Sign in</button>
-          <button id="auth-tab-signup" onclick="showAuthTab('signup')" style="flex:1;padding:10px;border:none;background:#f4efe6;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
+        <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#eef4ff;">
+          <button id="auth-tab-signin" onclick="showAuthTab('signin')" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:var(--accent);">Sign in</button>
+          <button id="auth-tab-signup" onclick="showAuthTab('signup')" style="flex:1;padding:10px;border:none;background:#eef4ff;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
         </div>
         <div id="auth-signin-form">
           <div style="display:grid;gap:12px;">
@@ -2394,7 +2394,7 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--muted);cursor:pointer;">
               <input type="checkbox" id="stay-logged-in" checked style="cursor:pointer;" /> Stay logged in
             </label>
-            <button onclick="handleSignIn()" style="background:linear-gradient(135deg,#a55233,#844125);color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;">Sign in</button>
+            <button onclick="handleSignIn()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Sign in</button>
             <p id="auth-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
         </div>
@@ -2404,10 +2404,10 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <input id="auth-signup-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <input id="auth-signup-password" type="password" placeholder="Password (min 6 characters)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <div style="display:flex;gap:8px;">
-              <button onclick="setSignupRole('student')" id="role-btn-student" style="flex:1;padding:10px;border:2px solid #a55233;border-radius:10px;background:#f4e0d4;font:inherit;font-weight:700;cursor:pointer;color:#844125;">Student</button>
+              <button onclick="setSignupRole('student')" id="role-btn-student" style="flex:1;padding:10px;border:2px solid var(--accent);border-radius:10px;background:#e7eeff;font:inherit;font-weight:700;cursor:pointer;color:var(--accent-deep);">Student</button>
               ${!joinClassId ? `<button onclick="setSignupRole('teacher')" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
               </div>
-            <button onclick="handleSignUp()" style="background:linear-gradient(135deg,#a55233,#844125);color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;">Create account</button>
+            <button onclick="handleSignUp()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Create account</button>
             <p id="auth-signup-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
         </div>
@@ -2421,20 +2421,20 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
   window.showAuthTab = (tab) => {
     document.getElementById('auth-signin-form').style.display = tab === 'signin' ? 'block' : 'none';
     document.getElementById('auth-signup-form').style.display = tab === 'signup' ? 'block' : 'none';
-    document.getElementById('auth-tab-signin').style.background = tab === 'signin' ? '#fff' : '#f4efe6';
-    document.getElementById('auth-tab-signin').style.color = tab === 'signin' ? '#a55233' : '#667063';
-    document.getElementById('auth-tab-signup').style.background = tab === 'signup' ? '#fff' : '#f4efe6';
-    document.getElementById('auth-tab-signup').style.color = tab === 'signup' ? '#a55233' : '#667063';
+    document.getElementById('auth-tab-signin').style.background = tab === 'signin' ? '#fff' : '#eef4ff';
+    document.getElementById('auth-tab-signin').style.color = tab === 'signin' ? 'var(--accent)' : '#667063';
+    document.getElementById('auth-tab-signup').style.background = tab === 'signup' ? '#fff' : '#eef4ff';
+    document.getElementById('auth-tab-signup').style.color = tab === 'signup' ? 'var(--accent)' : '#667063';
   };
 
   window.setSignupRole = (role) => {
     window.signupRole = role;
-    document.getElementById('role-btn-student').style.border = role === 'student' ? '2px solid #a55233' : '1px solid #ddd2c2';
-    document.getElementById('role-btn-student').style.background = role === 'student' ? '#f4e0d4' : '#fff';
-    document.getElementById('role-btn-student').style.color = role === 'student' ? '#844125' : '#667063';
-    document.getElementById('role-btn-teacher').style.border = role === 'teacher' ? '2px solid #a55233' : '1px solid #ddd2c2';
-    document.getElementById('role-btn-teacher').style.background = role === 'teacher' ? '#f4e0d4' : '#fff';
-    document.getElementById('role-btn-teacher').style.color = role === 'teacher' ? '#844125' : '#667063';
+    document.getElementById('role-btn-student').style.border = role === 'student' ? '2px solid var(--accent)' : '1px solid var(--line)';
+    document.getElementById('role-btn-student').style.background = role === 'student' ? '#e7eeff' : '#fff';
+    document.getElementById('role-btn-student').style.color = role === 'student' ? 'var(--accent-deep)' : '#667063';
+    document.getElementById('role-btn-teacher').style.border = role === 'teacher' ? '2px solid var(--accent)' : '1px solid var(--line)';
+    document.getElementById('role-btn-teacher').style.background = role === 'teacher' ? '#e7eeff' : '#fff';
+    document.getElementById('role-btn-teacher').style.color = role === 'teacher' ? 'var(--accent-deep)' : '#667063';
   };
 
   window.handleSignIn = async () => {
