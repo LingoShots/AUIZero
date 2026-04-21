@@ -570,6 +570,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
   const previewMode = Boolean(options.previewMode);
   const rowScoreMap = options.rowScoreMap || new Map();
   const suggestedRowScoreMap = options.suggestedRowScoreMap || new Map();
+  const selectionAction = options.selectionAction || "select-rubric-band";
   const currentScore = typeof options.currentScore === "number"
     ? options.currentScore
     : Array.from(rowScoreMap.values()).reduce((sum, entry) => sum + Number(entry?.points ?? 0), 0);
@@ -643,7 +644,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
                     <span class="rubric-level-text">${renderRichTextHtml(level.description || "No descriptor provided.")}</span>
                   `;
                   return clickable
-                    ? `<button class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" data-action="select-rubric-band" data-criterion-id="${escapeAttribute(criterion.id)}" data-band-id="${escapeAttribute(level.id)}" style="background:${bg};border-color:${border};">${content}</button>`
+                    ? `<button class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" data-action="${escapeAttribute(selectionAction)}" data-criterion-id="${escapeAttribute(criterion.id)}" data-band-id="${escapeAttribute(level.id)}" style="background:${bg};border-color:${border};">${content}</button>`
                     : `<div class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" style="background:${bg};border-color:${border};">${content}</div>`;
                 }).join("")}
               </div>
@@ -786,7 +787,7 @@ function assignmentUsesSingleParagraph(assignment = {}) {
 function isChatSessionExpired(assignment, submission) {
   const timeLimit = isChatDisabled(assignment) ? 0 : Math.max(0, Number(assignment?.chatTimeLimit || 0));
   if (timeLimit <= 0 || !submission?.chatStartedAt) return false;
-  const elapsedMs = Date.now() - Date.parse(submission.chatStartedAt);
+  const elapsedMs = getActiveChatElapsedMs(assignment, submission);
   return Number.isFinite(elapsedMs) && elapsedMs >= timeLimit * 60000;
 }
 
@@ -865,6 +866,14 @@ function buildTeacherReviewRowScore(criterion, band) {
 function getTeacherReviewRowScoreMap(rowScores) {
   return new Map(
     safeArray(rowScores)
+      .filter((entry) => entry?.criterionId)
+      .map((entry) => [entry.criterionId, entry])
+  );
+}
+
+function getStudentSelfAssessmentRowScoreMap(submission) {
+  return new Map(
+    safeArray(submission?.selfAssessment?.rowScores)
       .filter((entry) => entry?.criterionId)
       .map((entry) => [entry.criterionId, entry])
   );
@@ -1105,6 +1114,7 @@ let appEl = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   appEl = document.getElementById("app");
+  bindLifecycleEvents();
 
   // Bind events once here so they work on auth screen and app screen
  appEl.addEventListener("click", handleClick);
@@ -1152,6 +1162,8 @@ async function bootApp(profile) {
     const data = await Auth.apiFetch('/api/student/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
+    state.assignments = [];
+    state.submissions = [];
     await loadStudentAssignmentsForCurrentClass();
   }
   hydrateSelections();
@@ -1211,36 +1223,43 @@ async function loadStudentAssignmentsForCurrentClass() {
     return;
   }
 
-  const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
-  const raw = assignData.assignments || [];
+  try {
+    const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
+    const raw = assignData.assignments || [];
 
-  state.assignments = raw
-    .filter(a => a.status === 'published')
-    .map((a) => normalizeAssignment({
-      id: a.id,
-      title: a.title || '',
-      prompt: a.prompt || '',
-      brief: a.brief || '',
-      focus: a.focus || '',
-      assignmentType: a.assignment_type || 'response',
-      languageLevel: a.language_level || 'B1',
-      wordCountMin: a.word_count_min || 250,
-      wordCountMax: a.word_count_max || 400,
-      feedbackRequestLimit: a.feedback_request_limit || 2,
-      chatTimeLimit: a.chat_time_limit || 0,
-      studentFocus: a.student_focus || [],
-      rubric: a.rubric || [],
-      deadline: a.deadline || '',
-      status: a.status || 'published',
-      uploadedRubricText: a.uploaded_rubric_text || '',
-      uploadedRubricName: a.uploaded_rubric_name || '',
-      createdAt: a.created_at || new Date().toISOString(),
-      classId: a.class_id || currentClassId,
-      ideaRequestLimit: 3,
-    }));
-  const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
-  state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
-  persistState();
+    state.assignments = raw
+      .filter(a => a.status === 'published')
+      .map((a) => normalizeAssignment({
+        id: a.id,
+        title: a.title || '',
+        prompt: a.prompt || '',
+        brief: a.brief || '',
+        focus: a.focus || '',
+        assignmentType: a.assignment_type || 'response',
+        languageLevel: a.language_level || 'B1',
+        wordCountMin: a.word_count_min || 250,
+        wordCountMax: a.word_count_max || 400,
+        feedbackRequestLimit: a.feedback_request_limit || 2,
+        chatTimeLimit: a.chat_time_limit || 0,
+        studentFocus: a.student_focus || [],
+        rubric: a.rubric || [],
+        deadline: a.deadline || '',
+        status: a.status || 'published',
+        uploadedRubricText: a.uploaded_rubric_text || '',
+        uploadedRubricName: a.uploaded_rubric_name || '',
+        createdAt: a.created_at || new Date().toISOString(),
+        classId: a.class_id || currentClassId,
+        ideaRequestLimit: 3,
+      }));
+    const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
+    state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
+    persistState();
+  } catch (error) {
+    state.assignments = [];
+    state.submissions = [];
+    persistState();
+    console.error("Could not load student assignments:", error.message, error);
+  }
 }
 
 function mapServerSubmission(serverSubmission) {
@@ -1277,6 +1296,8 @@ function mapServerSubmission(serverSubmission) {
     chatStartedAt: serverSubmission?.chat_started_at || null,
     chatSkippedAt: serverSubmission?.chat_skipped_at || null,
     chatExpiredAt: serverSubmission?.chat_expired_at || null,
+    chatElapsedMs: serverSubmission?.chat_elapsed_ms || 0,
+    chatResumedAt: null,
     status: serverSubmission?.status || "draft",
     startedAt: serverSubmission?.started_at || null,
     updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
@@ -1320,6 +1341,8 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
         ...state.submissions[index],
         ...mapped,
         chatExpiredAt: state.submissions[index]?.chatExpiredAt || mapped.chatExpiredAt || null,
+        chatElapsedMs: state.submissions[index]?.chatElapsedMs || mapped.chatElapsedMs || 0,
+        chatResumedAt: state.submissions[index]?.chatResumedAt || null,
       });
     } else {
       state.submissions.push(mapped);
@@ -1352,12 +1375,61 @@ async function loadReviewDataForAssignment(assignmentId) {
 }
 
 let autoSaveTimer = null;
+let lifecycleEventsBound = false;
 function showAutosaveIndicator(message = "Saved") {
   const indicator = document.getElementById("autosave-indicator");
   if (!indicator) return;
   indicator.textContent = message;
   indicator.style.opacity = "1";
   setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
+}
+
+function getActiveChatElapsedMs(assignment, submission) {
+  const timeLimit = isChatDisabled(assignment) ? 0 : Math.max(0, Number(assignment?.chatTimeLimit || 0));
+  if (timeLimit <= 0 || !submission?.chatStartedAt) return 0;
+  const accumulated = Number(submission?.chatElapsedMs || 0);
+  const resumedAt = submission?.chatResumedAt ? Date.parse(submission.chatResumedAt) : null;
+  if (!resumedAt || Number.isNaN(resumedAt)) return accumulated;
+  return accumulated + Math.max(0, Date.now() - resumedAt);
+}
+
+function pauseActiveChatSession() {
+  const assignment = getStudentAssignment();
+  const submission = getStudentSubmission();
+  if (!assignment || !submission?.chatResumedAt || isChatDisabled(assignment)) return;
+  const resumedAt = Date.parse(submission.chatResumedAt);
+  if (!Number.isNaN(resumedAt)) {
+    submission.chatElapsedMs = Number(submission.chatElapsedMs || 0) + Math.max(0, Date.now() - resumedAt);
+  }
+  submission.chatResumedAt = null;
+  submission.updatedAt = new Date().toISOString();
+  persistState();
+}
+
+function resumeActiveChatSession() {
+  const assignment = getStudentAssignment();
+  const submission = getStudentSubmission();
+  if (!assignment || !submission?.chatStartedAt || submission.chatSkippedAt || submission.chatExpiredAt || isChatDisabled(assignment)) return;
+  if (!submission.chatResumedAt) {
+    submission.chatResumedAt = new Date().toISOString();
+    persistState();
+  }
+}
+
+function bindLifecycleEvents() {
+  if (lifecycleEventsBound) return;
+  lifecycleEventsBound = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      pauseActiveChatSession();
+    } else if (ui.role === "student" && ui.studentStep === 1) {
+      resumeActiveChatSession();
+      render();
+    }
+  });
+  window.addEventListener("beforeunload", () => {
+    pauseActiveChatSession();
+  });
 }
 
 function bindEvents() {
@@ -1380,13 +1452,14 @@ let chatTimerInterval = null;
 
 function startChatTimer() {
   if (chatTimerInterval) clearInterval(chatTimerInterval);
+  resumeActiveChatSession();
   chatTimerInterval = setInterval(() => {
     const timerEl = document.querySelector(".chat-timer");
     if (!timerEl) { clearInterval(chatTimerInterval); return; }
     const assignment = state.assignments.find(a => a.id === ui.selectedStudentAssignmentId) || null;
     const submission = state.submissions.find(s => s.assignmentId === ui.selectedStudentAssignmentId && s.studentId === currentProfile?.id) || null;
     if (!assignment?.chatTimeLimit || !submission?.chatStartedAt) return;
-    const totalSecs = Math.max(0, Math.round((assignment.chatTimeLimit * 60) - (Date.now() - Date.parse(submission.chatStartedAt)) / 1000));
+    const totalSecs = Math.max(0, Math.round((assignment.chatTimeLimit * 60) - getActiveChatElapsedMs(assignment, submission) / 1000));
     const mins = Math.floor(totalSecs / 60);
     const secs = totalSecs % 60;
     const expired = totalSecs <= 0;
@@ -1394,6 +1467,7 @@ function startChatTimer() {
     timerEl.className = `chat-timer ${mins <= 5 ? "chat-timer-urgent" : ""}`;
     if (expired) {
       if (!submission.chatExpiredAt) {
+        pauseActiveChatSession();
         submission.chatExpiredAt = new Date().toISOString();
         persistState();
         scheduleSubmissionSync(600);
@@ -1650,7 +1724,12 @@ if (action === "generate-teacher-assist") {
   }
 
   if (action === "save-draft") {
+    const submission = getStudentSubmission();
+    if (!submission) return;
+    submission.updatedAt = new Date().toISOString();
     persistState();
+    await syncSubmissionToServer(submission);
+    showAutosaveIndicator("Draft saved");
     ui.notice = "Draft saved.";
     render();
     return;
@@ -2010,7 +2089,7 @@ if (action === "select-assignment") {
       const assignment = getStudentAssignment();
       const submission = getStudentSubmission();
       const shouldPromptForFeedback = assignment && submission
-        ? Number(submission.feedbackHistory.length || 0) === 0 && Number(assignment.feedbackRequestLimit || 0) > 0
+        ? Number(submission.feedbackHistory.length || 0) < Number(assignment.feedbackRequestLimit || 0)
         : false;
       if (shouldPromptForFeedback && submission?.draftText?.trim()) {
         ui.showDraftFeedbackPrompt = true;
@@ -2088,6 +2167,10 @@ if (action === "select-assignment") {
     // Start timer on first message
     if (!submission.chatStartedAt) {
       submission.chatStartedAt = new Date().toISOString();
+      submission.chatElapsedMs = Number(submission.chatElapsedMs || 0);
+      submission.chatResumedAt = submission.chatStartedAt;
+    } else if (!submission.chatResumedAt) {
+      submission.chatResumedAt = new Date().toISOString();
     }
 
     submission.chatHistory = submission.chatHistory || [];
@@ -2282,6 +2365,35 @@ if (action === "select-assignment") {
     submission.teacherReview.rowScores = [...remainingRows, nextEntry];
     submission.teacherReview.finalScore = calculateTeacherReviewSummary(assignment, submission, submission.teacherReview.rowScores).totalScore;
     persistState();
+    render();
+    return;
+  }
+
+  if (action === "select-self-assessment-band") {
+    const submission = getStudentSubmission();
+    const assignment = getStudentAssignment();
+    if (!submission || !assignment) return;
+    const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
+    const criterion = safeArray(rubricSchema?.criteria).find((item) => item.id === target.dataset.criterionId);
+    if (!criterion) return;
+    const band = safeArray(criterion.levels).find((item) => item.id === target.dataset.bandId);
+    if (!band) return;
+    const nextEntry = {
+      criterionId: criterion.id,
+      criterionName: criterion.name || "Criterion",
+      bandId: band.id,
+      label: cleanRubricLevelLabel(band.label || `${band.score}`),
+      points: Number(band.score ?? band.points ?? 0),
+      maxPoints: Number(criterion.maxScore ?? criterion.points ?? 0),
+    };
+    const remainingRows = safeArray(submission.selfAssessment?.rowScores).filter((entry) => entry.criterionId !== criterion.id);
+    submission.selfAssessment = {
+      ...(submission.selfAssessment || {}),
+      rowScores: [...remainingRows, nextEntry],
+    };
+    submission.updatedAt = new Date().toISOString();
+    persistState();
+    scheduleSubmissionSync();
     render();
     return;
   }
@@ -3950,9 +4062,11 @@ function renderStudentIdeasStep(assignment, submission) {
   const chatDisabled = isChatDisabled(assignment);
   const timeLimit = chatDisabled ? 0 : Math.max(0, Number(assignment.chatTimeLimit || 0));
   const chatStartedAt = submission.chatStartedAt;
-  const elapsedMins = chatStartedAt ? (Date.now() - Date.parse(chatStartedAt)) / 60000 : 0;
+  if (!chatDisabled && chatStartedAt && !submission.chatSkippedAt && !submission.chatExpiredAt && !document.hidden) {
+    resumeActiveChatSession();
+  }
   const timeExpired = isChatSessionExpired(assignment, submission);
-  const totalSecsRemaining = (timeLimit > 0 && chatStartedAt) ? Math.max(0, Math.round((timeLimit * 60) - (Date.now() - Date.parse(chatStartedAt)) / 1000)) : null;
+  const totalSecsRemaining = (timeLimit > 0 && chatStartedAt) ? Math.max(0, Math.round((timeLimit * 60) - getActiveChatElapsedMs(assignment, submission) / 1000)) : null;
   const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
   const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
   const hasEnoughChat = chatDisabled || submission.chatSkippedAt || chatHistory.length >= 2;
@@ -4080,31 +4194,8 @@ function renderStudentDraftStep(assignment, submission) {
 function renderStudentFinalStep(assignment, submission) {
   const selfAssessment = submission.selfAssessment || {};
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
-  const simpleRubricPreview = !rubricSchema && safeArray(assignment.rubric).length ? `
-    <div style="display:grid;gap:10px;">
-      ${assignment.rubric.map((item) => `
-        <div style="border:1px solid var(--line);border-radius:14px;padding:12px;background:#fbfdff;">
-          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
-            <div>
-              <strong style="display:block;margin-bottom:4px;">${escapeHtml(item.name)}</strong>
-              <p class="rubric-description">${escapeHtml(item.description)}</p>
-            </div>
-            <span class="pill">${item.points} pts</span>
-          </div>
-          ${safeArray(getCriterionBands(item)).length ? `
-            <div style="display:grid;gap:8px;margin-top:10px;">
-              ${getCriterionBands(item).map((band) => `
-                <div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;">
-                  <strong style="display:block;margin-bottom:4px;">${escapeHtml(cleanRubricLevelLabel(band.label || `${band.points}`))} · ${band.points} pts</strong>
-                  <p class="subtle">${escapeHtml(band.description || "No descriptor provided.")}</p>
-                </div>
-              `).join("")}
-            </div>
-          ` : ""}
-        </div>
-      `).join("")}
-    </div>
-  ` : "";
+  const selfAssessmentRowMap = getStudentSelfAssessmentRowScoreMap(submission);
+  const selfAssessmentScore = Array.from(selfAssessmentRowMap.values()).reduce((sum, entry) => sum + Number(entry?.points ?? 0), 0);
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -4166,43 +4257,22 @@ function renderStudentFinalStep(assignment, submission) {
       <div class="teacher-ready-card">
         <p class="mini-label">Self-assessment — rate yourself against the rubric</p>
         <p class="subtle" style="margin:4px 0 14px;">Be honest. Your teacher will see your ratings alongside their own assessment.</p>
-        <p class="mini-label" style="margin-bottom:8px;">Full rubric reference</p>
+        <p class="mini-label" style="margin-bottom:8px;">Rubric</p>
         ${rubricSchema ? `
           <div style="margin-bottom:14px;">
             ${renderRubricSchemaLayout(rubricSchema, {
-              clickable: false,
+              clickable: true,
               compact: true,
               previewMode: true,
+              selectionAction: "select-self-assessment-band",
+              rowScoreMap: selfAssessmentRowMap,
+              currentScore: selfAssessmentScore,
             })}
           </div>
-        ` : simpleRubricPreview}
-        <div class="review-stack">
-          ${assignment.rubric.map((item) => {
-            const key = "sa_" + item.id;
-            const currentVal = selfAssessment[key] || "";
-            return `
-              <div class="rubric-score" style="flex-direction:column;align-items:stretch;gap:10px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                  <div>
-                    <strong>${escapeHtml(item.name)}</strong>
-                    <p class="rubric-description">${escapeHtml(item.description)}</p>
-                  </div>
-                  <strong style="flex-shrink:0;margin-left:12px;">/ ${item.points}</strong>
-                </div>
-                <div class="self-assessment-row">
-                  ${Array.from({length: Math.min(item.points, 5)}, (_, i) => Math.round((i + 1) * item.points / Math.min(item.points, 5))).map(n => `
-                    <label class="sa-option ${currentVal == n ? "sa-selected" : ""}">
-                      <input type="radio" name="${key}" data-sa-key="${key}" value="${n}" ${currentVal == n ? "checked" : ""} style="display:none;" />
-                      ${n}
-                    </label>
-                  `).join("")}
-                </div>
-              </div>`;
-          }).join("")}
-        </div>
-        <div style="text-align:right;font-size:0.9rem;font-weight:700;color:var(--accent-deep);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">
-          Total: ${assignment.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts
-        </div>
+        ` : `<p class="subtle">No rubric available for self-assessment yet.</p>`}
+        <div class="field" style="margin-top:14px;">
+          <label for="student-reflection-improved">Reflection — what did you improve from draft to final?</label>
+          <textarea id="student-reflection-improved" rows="4" data-reflection-field="improved" placeholder="Explain what you changed and why.">${escapeHtml(submission.reflections.improved || "")}</textarea>
         </div>
       </div>
       <div class="wizard-nav">
@@ -5875,6 +5945,8 @@ function createEmptySubmission(assignmentId, studentId) {
     chatStartedAt: null,
     chatSkippedAt: null,
     chatExpiredAt: null,
+    chatElapsedMs: 0,
+    chatResumedAt: null,
     teacherReview: createDefaultTeacherReview(),
     status: "draft",
     startedAt: null,
@@ -6057,7 +6129,9 @@ function normalizeSubmission(submission) {
     chatStartedAt: submission?.chatStartedAt || null,
     chatSkippedAt: submission?.chatSkippedAt || null,
     chatExpiredAt: submission?.chatExpiredAt || null,
-        status: submission?.status || "draft",
+    chatElapsedMs: Number(submission?.chatElapsedMs || 0),
+    chatResumedAt: submission?.chatResumedAt || null,
+    status: submission?.status || "draft",
     startedAt: submission?.startedAt || null,
     updatedAt: submission?.updatedAt || new Date().toISOString(),
     submittedAt: submission?.submittedAt || null,
