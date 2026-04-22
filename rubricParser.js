@@ -43,6 +43,7 @@ RULES:
 - If several subparts share one score range or one merged score cell, keep them inside a single criterion instead of splitting them into separate scored criteria.
 - For paragraph rubrics, descriptors about topic sentence, supporting sentences/details, transitions, and concluding sentence often belong to one shared criterion. Combine those subparts into each level description when they share the same point range.
 - If a field is missing, use an empty string or a sensible default.
+- If the rubric contains bold text, preserve it in bold. 
 `.trim();
 
 function slugifyRubricId(text, fallback = 'criterion') {
