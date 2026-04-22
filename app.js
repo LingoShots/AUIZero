@@ -38,6 +38,7 @@ const ui = {
   teacherView: "assignments",
   teacherDraft: null,
   teacherAssist: null,
+  aiAssistLoading: false,
   selectedSavedRubricId: "",
   selectedAssignmentId: null,
   selectedStudentAssignmentId: null,
@@ -60,6 +61,7 @@ const ui = {
 };
 
 let state = { assignments: [], submissions: [], users: [] };
+let teacherAssistAbortController = null;
 
 function slugifyRubricId(text, fallback = "criterion") {
   const cleaned = String(text || "")
@@ -208,7 +210,9 @@ function normalizeRubricSchema(schema = {}, fallbackName = "Uploaded rubric") {
     .filter(Boolean);
 
   const requestedTotalPoints = Number(schema?.totalPoints || 0);
-  const criteria = coalesceSharedRubricCriteria(rawCriteria, requestedTotalPoints);
+  const criteria = schema?.preserveCriteria
+    ? rawCriteria
+    : coalesceSharedRubricCriteria(rawCriteria, requestedTotalPoints);
   const totalPoints = Number(requestedTotalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
 
   return {
@@ -321,6 +325,7 @@ function simpleRubricRowsToSchema(source, fallbackName = "Rubric") {
   return normalizeRubricSchema({
     title: fallbackName,
     totalPoints: rows.reduce((sum, row) => sum + Number(row.maxScore || 0), 0),
+    preserveCriteria: true,
     criteria: rows,
   }, fallbackName);
 }
@@ -1615,6 +1620,7 @@ async function handleClick(event) {
   const action = target.dataset.action;
 
 if (action === "generate-teacher-assist") {
+    if (ui.aiAssistLoading) return;
     // Capture all form values before render wipes them
     const deadlineDateInput = document.getElementById("teacher-deadline-date");
     const deadlineTimeInput = document.getElementById("teacher-deadline-time");
@@ -1632,13 +1638,16 @@ if (action === "generate-teacher-assist") {
     if (langLevel) ui.teacherDraft.languageLevel = langLevel.value;
     const totalPts = document.getElementById("teacher-total-points");
     if (totalPts) ui.teacherDraft.totalPoints = Number(totalPts.value);
-    ui.notice = "AI is thinking...";
+    ui.notice = "";
+    ui.aiAssistLoading = true;
+    teacherAssistAbortController = new AbortController();
     render();
 
     // Try reaching the API at the same domain (relative path)
     fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: teacherAssistAbortController.signal,
       body: JSON.stringify({ 
        prompt: buildFormatPrompt()
       })
@@ -1684,6 +1693,8 @@ if (action === "generate-teacher-assist") {
       }
       ui.teacherAssist = parsed;
       ui.notice = "Assignment generated successfully!";
+      ui.aiAssistLoading = false;
+      teacherAssistAbortController = null;
       render();
 
       requestAnimationFrame(() => {
@@ -1694,12 +1705,29 @@ if (action === "generate-teacher-assist") {
       });
     })
     .catch(err => {
+      if (err.name === "AbortError") {
+        ui.notice = "AI formatting cancelled.";
+      } else {
       console.error("Fetch Error:", err);
-      ui.notice = "Error: Could not reach the AI. Check console.";
+        ui.notice = "Error: Could not reach the AI. Check console.";
+      }
+      ui.aiAssistLoading = false;
+      teacherAssistAbortController = null;
       render();
     });
   return;
 }
+
+  if (action === "cancel-teacher-assist") {
+    if (teacherAssistAbortController) {
+      teacherAssistAbortController.abort();
+    }
+    ui.aiAssistLoading = false;
+    teacherAssistAbortController = null;
+    ui.notice = "AI formatting cancelled.";
+    render();
+    return;
+  }
 
   if (action === "apply-saved-rubric") {
     const select = document.getElementById("saved-rubric-select");
@@ -3347,17 +3375,88 @@ function renderTeacherWorkspace() {
   const manualSaveReady = Boolean(
     ui.teacherAssist || ((ui.teacherDraft.title || "").trim() && (ui.teacherDraft.prompt || "").trim())
   );
-  const sharedSettingsSummary = `
-    <div style="display:grid;gap:8px;margin:10px 0 0;">
-      <div class="pill-row" style="flex-wrap:wrap;">
-        <span class="pill">Rubric: ${escapeHtml(ui.teacherDraft.uploadedRubricName || (ui.selectedSavedRubricId ? "saved rubric selected" : "none"))}</span>
-        <span class="pill">Feedback checks: ${ui.teacherDraft.feedbackRequestLimit}</span>
-        <span class="pill">Total points: ${ui.teacherDraft.totalPoints}</span>
-        <span class="pill">Chat: ${ui.teacherDraft.disableChatbot ? "Disabled" : `${getVisibleChatTimeLimit(ui.teacherDraft)} min`}</span>
-        <span class="pill">Deadline: ${ui.teacherDraft.deadline ? escapeHtml(new Date(ui.teacherDraft.deadline).toLocaleString()) : "None"}</span>
-        <span class="pill">Level: ${escapeHtml(ui.teacherDraft.languageLevel)}</span>
+  const hasUploadedRubricPreview = Boolean(
+    ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length
+  );
+  const sharedSettingsFields = `
+    <div class="field">
+      <label>Rubric (optional — drag and drop or click to upload)</label>
+      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
+        ondragover="event.preventDefault();this.style.borderColor='var(--accent)';"
+        ondragleave="this.style.borderColor='var(--line)';"
+        ondrop="handleRubricDrop(event);"
+        onclick="document.getElementById('rubric-file-input').click();">
+        ${ui.teacherDraft.uploadedRubricText
+          ? `<p style="color:var(--accent-deep);font-weight:600;margin:0;">✓ Rubric loaded — ${ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length || 0} criteria ready</p>
+             <button class="button-ghost" style="margin-top:8px;font-size:0.8rem;" onclick="event.stopPropagation();clearUploadedRubric();">Remove</button>`
+          : `<p style="color:var(--muted);margin:0;">Drop your rubric PDF or Word doc here, or click to browse</p>`
+        }
       </div>
-      <p class="subtle" style="font-size:0.8rem;">These shared settings live above and apply to both the manual and AI setup paths.</p>
+      <input type="file" id="rubric-file-input" accept=".pdf,.doc,.docx" style="display:none;" onchange="handleRubricFile(this.files[0]);" />
+      ${savedRubrics.length ? `
+        <div style="margin-top:10px;">
+          <label for="saved-rubric-select" style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px;">Use a previous rubric</label>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <select id="saved-rubric-select" style="flex:1;min-width:240px;">
+              <option value="">Select a saved rubric</option>
+              ${savedRubrics.map((entry) => `<option value="${entry.id}" ${ui.selectedSavedRubricId === entry.id ? "selected" : ""}>${escapeHtml(entry.name)}</option>`).join("")}
+            </select>
+            ${ui.selectedSavedRubricId
+              ? `<button class="button-ghost" data-action="clear-saved-rubric-selection" style="min-height:42px;">Clear</button>`
+              : ""
+            }
+            ${selectedSavedRubric?.source === "upload"
+              ? `<button class="button-ghost" data-action="remove-saved-rubric" data-rubric-id="${selectedSavedRubric.id}" style="min-height:42px;">Remove saved rubric</button>`
+              : ""
+            }
+          </div>
+          ${selectedSavedRubric && selectedSavedRubric.source !== "upload"
+            ? `<p class="subtle" style="font-size:0.78rem;margin-top:6px;">This rubric is attached to an existing assignment, so it stays in the list.</p>`
+            : ""
+          }
+        </div>
+      ` : ""}
+    </div>
+    <div class="field-grid compact-grid">
+      <div class="field">
+        <label for="teacher-feedback-limit">Feedback checks</label>
+        <input id="teacher-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
+      </div>
+      <div class="field">
+        <label>Total points</label>
+        ${ui.teacherAssist
+          ? `<div style="font-size:1.1rem;font-weight:700;padding:8px 0;">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts (auto-calculated from rubric)</div>`
+          : `<input id="teacher-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />`
+        }
+      </div>
+      <div class="field">
+        <label for="teacher-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
+        <input id="teacher-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(getVisibleChatTimeLimit(ui.teacherDraft)))}" ${ui.teacherDraft.disableChatbot ? "disabled" : ""} />
+      </div>
+      <div class="field" style="display:flex;align-items:flex-end;">
+        <label style="display:flex;gap:10px;align-items:center;min-height:44px;padding:0 4px;font-weight:600;">
+          <input id="teacher-disable-chatbot" data-teacher-field="disableChatbot" type="checkbox" ${ui.teacherDraft.disableChatbot ? "checked" : ""} />
+          Disable chatbot
+        </label>
+      </div>
+      <div class="field" style="grid-column:1 / -1;">
+        <label for="teacher-deadline-date">Deadline</label>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:8px;align-items:end;">
+          <div style="min-width:0;">
+            <input id="teacher-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="width:100%;min-width:0;" />
+          </div>
+          <select id="teacher-deadline-time">
+            ${buildDeadlineTimeOptions(getDeadlineTimePart(ui.teacherDraft.deadline))}
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="teacher-language-level">Student language level</label>
+        <select id="teacher-language-level" data-teacher-field="languageLevel">
+          ${["A0", "A1", "A2", "B1", "B2", "C1", "C2"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(level)}</option>`).join("")}
+        </select>
+      </div>
     </div>
   `;
 
@@ -3370,8 +3469,8 @@ function renderTeacherWorkspace() {
             <h2 class="panel-title">Describe the assignment in plain English</h2>
           </div>
           <div class="toolbar">
-            <button class="button-secondary" data-action="generate-teacher-assist">Format With AI</button>
-            <button class="button" data-action="save-assignment" ${!manualSaveReady ? "disabled" : ""}>Save</button>
+            <button class="button-secondary" data-action="generate-teacher-assist" ${ui.aiAssistLoading ? "disabled" : ""}>Format With AI</button>
+            <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>Save</button>
           </div>
         </div>
         <div class="field-stack">
@@ -3379,99 +3478,27 @@ function renderTeacherWorkspace() {
             <label for="teacher-brief">Teacher brief</label>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
-          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+          ${ui.aiAssistLoading ? `
+            <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <div>
+                  <p class="mini-label" style="margin-bottom:4px;">AI is thinking…</p>
+                  <p class="subtle">You can cancel, fix the brief or settings, and try again.</p>
+                </div>
+                <button class="button-ghost" data-action="cancel-teacher-assist" style="min-height:36px;padding:0 12px;">✕</button>
+              </div>
+            </div>
+          ` : ""}
+          ${ui.teacherAssist ? `<div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
               <div>
-                <p class="mini-label" style="margin-bottom:4px;">Shared assignment settings</p>
-                <p class="subtle">These settings apply whether you save manually or use AI formatting.</p>
+                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
+                <p class="subtle">These settings still apply while you review the AI-generated version.</p>
               </div>
               <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
             </div>
-          <div class="field">
-            <label>Rubric (optional — drag and drop or click to upload)</label>
-            <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
-              ondragover="event.preventDefault();this.style.borderColor='var(--accent)';"
-              ondragleave="this.style.borderColor='var(--line)';"
-              ondrop="handleRubricDrop(event);"
-              onclick="document.getElementById('rubric-file-input').click();">
-              ${ui.teacherDraft.uploadedRubricText
-                ? `<p style="color:var(--accent-deep);font-weight:600;margin:0;">✓ Rubric loaded — ${ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length || 0} criteria ready</p>
-                   <button class="button-ghost" style="margin-top:8px;font-size:0.8rem;" onclick="event.stopPropagation();clearUploadedRubric();">Remove</button>`
-                : `<p style="color:var(--muted);margin:0;">Drop your rubric PDF or Word doc here, or click to browse</p>`
-              }
-            </div>
-            <input type="file" id="rubric-file-input" accept=".pdf,.doc,.docx" style="display:none;" onchange="handleRubricFile(this.files[0]);" />
-            ${savedRubrics.length ? `
-              <div style="margin-top:10px;">
-                <label for="saved-rubric-select" style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px;">Use a previous rubric</label>
-                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-                  <select id="saved-rubric-select" style="flex:1;min-width:240px;">
-                    <option value="">Select a saved rubric</option>
-                    ${savedRubrics.map((entry) => `<option value="${entry.id}" ${ui.selectedSavedRubricId === entry.id ? "selected" : ""}>${escapeHtml(entry.name)}</option>`).join("")}
-                  </select>
-                  ${ui.selectedSavedRubricId
-                    ? `<button class="button-ghost" data-action="clear-saved-rubric-selection" style="min-height:42px;">Clear</button>`
-                    : ""
-                  }
-                  ${selectedSavedRubric?.source === "upload"
-                    ? `<button class="button-ghost" data-action="remove-saved-rubric" data-rubric-id="${selectedSavedRubric.id}" style="min-height:42px;">Remove saved rubric</button>`
-                    : ""
-                  }
-                </div>
-                ${selectedSavedRubric && selectedSavedRubric.source !== "upload"
-                  ? `<p class="subtle" style="font-size:0.78rem;margin-top:6px;">This rubric is attached to an existing assignment, so it stays in the list.</p>`
-                  : ""
-                }
-              </div>
-            ` : ""}
-            ${!ui.teacherAssist && (ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length) ? `
-              <div style="margin-top:12px;">
-                ${renderUploadedRubricPreview("Uploaded rubric", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData, ui.teacherDraft.uploadedRubricSchema)}
-              </div>
-            ` : ""}
-          </div>
-          <div class="field-grid compact-grid">
-            <div class="field">
-              <label for="teacher-feedback-limit">Feedback checks</label>
-              <input id="teacher-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
-            </div>
-            <div class="field">
-              <label>Total points</label>
-              ${ui.teacherAssist
-                ? `<div style="font-size:1.1rem;font-weight:700;padding:8px 0;">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts (auto-calculated from rubric)</div>`
-                : `<input id="teacher-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />`
-              }
-            </div>
-            <div class="field">
-              <label for="teacher-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
-              <input id="teacher-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(getVisibleChatTimeLimit(ui.teacherDraft)))}" ${ui.teacherDraft.disableChatbot ? "disabled" : ""} />
-            </div>
-            <div class="field" style="display:flex;align-items:flex-end;">
-              <label style="display:flex;gap:10px;align-items:center;min-height:44px;padding:0 4px;font-weight:600;">
-                <input id="teacher-disable-chatbot" data-teacher-field="disableChatbot" type="checkbox" ${ui.teacherDraft.disableChatbot ? "checked" : ""} />
-                Disable chatbot
-              </label>
-            </div>
-            <div class="field" style="grid-column:1 / -1;">
-              <label for="teacher-deadline-date">Deadline</label>
-              <div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:8px;align-items:end;">
-                <div style="min-width:0;">
-                  <input id="teacher-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="width:100%;min-width:0;" />
-                </div>
-                <select id="teacher-deadline-time">
-                  ${buildDeadlineTimeOptions(getDeadlineTimePart(ui.teacherDraft.deadline))}
-                </select>
-              </div>
-            </div>
-
-            <div class="field">
-              <label for="teacher-language-level">Student language level</label>
-              <select id="teacher-language-level" data-teacher-field="languageLevel">
-                ${["A0", "A1", "A2", "B1", "B2", "C1", "C2"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(level)}</option>`).join("")}
-              </select>
-            </div>
-          </div>
-          </div>
+            ${sharedSettingsFields}
+          </div>` : ""}
         </div>
         ${
           ui.teacherAssist
@@ -3516,10 +3543,9 @@ function renderTeacherWorkspace() {
                     <p class="mini-label">Rubric</p>
                     <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts total</span>
                   </div>
-                  ${(ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length)
+                  ${hasUploadedRubricPreview
                     ? `
-                      <p class="subtle" style="font-size:0.84rem;margin:0 0 10px;">Keeping the uploaded rubric visible here so you can confirm the exact version before saving.</p>
-                      ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData, ui.teacherDraft.uploadedRubricSchema)}
+                      <p class="subtle" style="font-size:0.84rem;margin:0;">The uploaded rubric is shown in full below so you can confirm the exact version before saving.</p>
                     `
                     : `
                       <div class="review-stack">
@@ -3549,12 +3575,12 @@ function renderTeacherWorkspace() {
                   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div>
                       <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
-                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. The shared settings above still control rubric upload, deadline, feedback, and chatbot rules.</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. Everything you need for manual setup is here too.</p>
                     </div>
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
                   <div style="margin-top:14px;">
-                    ${sharedSettingsSummary}
+                    ${sharedSettingsFields}
                     <div class="field" style="margin-bottom:10px;">
                       <label for="teacher-title">Assignment title</label>
                       <input id="teacher-title" data-teacher-field="title" value="${escapeAttribute(ui.teacherDraft.title)}" placeholder="Assignment title" />
@@ -3650,6 +3676,11 @@ function renderTeacherWorkspace() {
             `
         }
       </div>
+      ${hasUploadedRubricPreview ? `
+        <div class="panel panel-tight" style="grid-column:1 / -1;">
+          ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData, ui.teacherDraft.uploadedRubricSchema)}
+        </div>
+      ` : ""}
     </section>
     ${ui.teacherView === "review" && selectedAssignment ? renderTeacherReview(selectedAssignment, submissions) : ""}
     ${ui.teacherView === "grading" && selectedAssignment && selectedSubmission ? renderTeacherGrading(selectedAssignment, selectedSubmission) : ""}
@@ -4813,7 +4844,11 @@ function getSelectedAssignment() {
 }
 
 function getStudentAssignment() {
-  return state.assignments.find((assignment) => assignment.id === ui.selectedStudentAssignmentId && assignment.status === "published") || null;
+  return state.assignments.find((assignment) =>
+    assignment.id === ui.selectedStudentAssignmentId &&
+    assignment.status === "published" &&
+    (!assignment.classId || assignment.classId === currentClassId)
+  ) || null;
 }
 
 function getAssignmentSubmissions(assignmentId) {
@@ -6120,6 +6155,7 @@ function normalizeAssignment(assignment) {
     rubricMeta: assignment?.rubricMeta || { reminderRules: [] },
     createdBy: assignment?.createdBy || "teacher-1",
     createdAt: assignment?.createdAt || new Date().toISOString(),
+    classId: assignment?.classId || assignment?.class_id || "",
     status: assignment?.status || "published",
     deadline: assignment?.deadline || "",
     chatTimeLimit: isChatDisabled(assignment) ? -1 : Number(assignment?.chatTimeLimit ?? 0),
