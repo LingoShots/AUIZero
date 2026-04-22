@@ -1,6 +1,7 @@
 const STORAGE_KEY = "AUIZero-v1";
 const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
 const STORAGE_BACKUP_KEY = "AUIZero-v1-backup";
+const ACTIVE_CLASS_KEY = "AUIZero-active-class-v1";
 const LARGE_PASTE_LIMIT = 220;
 const PRODUCT_NAME = "praxis";
 const PRODUCT_TAGLINE = "Think clearly. Write clearly.";
@@ -70,6 +71,114 @@ const ui = {
 
 let state = { assignments: [], submissions: [], users: [] };
 let teacherAssistAbortController = null;
+
+function loadActiveClassPreferences() {
+  try {
+    return JSON.parse(window.localStorage.getItem(ACTIVE_CLASS_KEY) || "{}") || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveActiveClassPreferences(preferences) {
+  try {
+    window.localStorage.setItem(ACTIVE_CLASS_KEY, JSON.stringify(preferences || {}));
+  } catch (_) {
+    // Ignore localStorage write failures and keep the app usable.
+  }
+}
+
+function getActiveClassPreferenceKey(profile = currentProfile) {
+  if (!profile?.id || !profile?.role) return "";
+  return `${profile.role}:${profile.id}`;
+}
+
+function getSavedActiveClassId(profile = currentProfile) {
+  const key = getActiveClassPreferenceKey(profile);
+  if (!key) return null;
+  const preferences = loadActiveClassPreferences();
+  return preferences[key] || null;
+}
+
+function saveActiveClassId(profile = currentProfile, classId = currentClassId) {
+  const key = getActiveClassPreferenceKey(profile);
+  if (!key) return;
+  const preferences = loadActiveClassPreferences();
+  if (classId) {
+    preferences[key] = classId;
+  } else {
+    delete preferences[key];
+  }
+  saveActiveClassPreferences(preferences);
+}
+
+function chooseBestTeacherClassId(classes, classAssignments = [], preferredClassId = null) {
+  const preferredAssignments = preferredClassId
+    ? safeArray(classAssignments[classes.findIndex((cls) => cls.id === preferredClassId)])
+    : [];
+  const anyClassHasAssignments = classAssignments.some((assignments) => safeArray(assignments).length);
+  if (
+    preferredClassId &&
+    classes.some((cls) => cls.id === preferredClassId) &&
+    (preferredAssignments.length || !anyClassHasAssignments)
+  ) {
+    return preferredClassId;
+  }
+
+  const ranked = classes
+    .map((cls, index) => {
+      const assignments = safeArray(classAssignments[index]);
+      const totalCount = assignments.length;
+      const publishedCount = assignments.filter((assignment) => assignment?.status === "published").length;
+      return {
+        id: cls.id,
+        score: (publishedCount * 100) + (totalCount * 10) - index,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return ranked[0]?.score > 0 ? ranked[0].id : (classes[0]?.id || null);
+}
+
+function chooseBestStudentClassId(classes, assignments = [], preferredClassId = null) {
+  if (!classes.length) return null;
+  if (preferredClassId && classes.some((cls) => cls.id === preferredClassId)) {
+    const preferredHasAssignments = assignments.some((assignment) => assignment?.classId === preferredClassId);
+    if (preferredHasAssignments || !assignments.some((assignment) => assignment?.classId)) {
+      return preferredClassId;
+    }
+  }
+
+  const classWithAssignments = classes.find((cls) => assignments.some((assignment) => assignment?.classId === cls.id));
+  return classWithAssignments?.id || preferredClassId || classes[0]?.id || null;
+}
+
+async function resolveTeacherStartingClass(profile, classes) {
+  const preferredClassId = getSavedActiveClassId(profile);
+  if (!classes.length) return null;
+  if (preferredClassId && classes.some((cls) => cls.id === preferredClassId)) {
+    return preferredClassId;
+  }
+  if (classes.length === 1) {
+    return classes[0]?.id || null;
+  }
+
+  const assignmentResults = await Promise.allSettled(
+    classes.map((cls) => Auth.apiFetch(`/api/classes/${cls.id}/assignments`))
+  );
+  const classAssignments = assignmentResults.map((result) => (
+    result.status === "fulfilled" ? safeArray(result.value?.assignments) : []
+  ));
+  return chooseBestTeacherClassId(classes, classAssignments, preferredClassId);
+}
+
+function recoverStudentActiveClass(profile = currentProfile) {
+  const preferredClassId = getSavedActiveClassId(profile) || currentClassId;
+  const bestClassId = chooseBestStudentClassId(currentClasses, state.assignments, preferredClassId);
+  currentClassId = bestClassId;
+  saveActiveClassId(profile, currentClassId);
+  return currentClassId;
+}
 
 function slugifyRubricId(text, fallback = "criterion") {
   const cleaned = String(text || "")
@@ -1110,6 +1219,7 @@ function buildTeacherReviewRowScore(criterion, band) {
     criterionName: criterion.name || "Criterion",
     bandId: band.id || `band-${criterion.id}-${band.points}`,
     label: cleanRubricLevelLabel(band.label || `${band.points}`),
+    description: String(band.description || "").trim(),
     points: Number(band.points ?? 0),
     maxPoints: Number(criterion.points || 0),
   };
@@ -1295,10 +1405,15 @@ function getTeacherReviewRowsForExport(assignment, submission) {
   const reviewSummary = calculateTeacherReviewSummary(assignment, submission);
   return reviewSummary.rubric.map((criterion) => {
     const selected = reviewSummary.rowScoreMap.get(criterion.id);
+    const matchedBand = selected
+      ? getCriterionBands(criterion).find((band) => (band.id || `band-${criterion.id}-${band.points}`) === selected.bandId)
+        || findClosestBand(criterion, selected.points)
+      : null;
     return {
       criterion: criterion.name,
       description: criterion.description,
-      selectedLabel: selected?.label || "",
+      selectedLabel: selected?.label || cleanRubricLevelLabel(matchedBand?.label || "") || "",
+      selectedDescription: selected?.description || String(matchedBand?.description || "").trim(),
       selectedPoints: Number(selected?.points ?? 0),
       maxPoints: Number(criterion.points || 0),
     };
@@ -1317,7 +1432,7 @@ function buildLmsGradeText(assignment, submission) {
     `Score: ${total}/${maxScore}`,
     "",
     "Rubric breakdown:",
-    ...rows.map((row) => `- ${row.criterion}: ${row.selectedLabel ? `${row.selectedLabel} (${row.selectedPoints}/${row.maxPoints})` : `Not scored (0/${row.maxPoints})`}`),
+    ...rows.map((row) => `- ${row.criterion}: ${row.selectedLabel ? `${row.selectedLabel} (${row.selectedPoints}/${row.maxPoints})${row.selectedDescription ? ` — ${row.selectedDescription}` : ""}` : `Not scored (0/${row.maxPoints})`}`),
   ];
 
   if (submission.teacherReview?.finalNotes) {
@@ -1439,15 +1554,16 @@ async function bootApp(profile) {
   if (profile.role === 'teacher') {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
-    currentClassId = currentClasses[0]?.id || null;
+    currentClassId = await resolveTeacherStartingClass(profile, currentClasses);
     if (currentClassId) {
       await loadTeacherClassContext(currentClassId);
     }
   } else {
-    await refreshStudentClasses();
+    await refreshStudentClasses(getSavedActiveClassId(profile));
     state.assignments = [];
     state.submissions = [];
     await loadStudentAssignmentsForCurrentClass();
+    recoverStudentActiveClass(profile);
   }
   hydrateSelections();
   if (profile.role !== 'teacher' && ui.selectedStudentAssignmentId) {
@@ -1458,6 +1574,7 @@ async function bootApp(profile) {
 
 async function loadTeacherClassContext(classId) {
   currentClassId = classId || null;
+  saveActiveClassId(currentProfile, currentClassId);
   currentClassMembers = [];
   state.assignments = [];
   state.submissions = [];
@@ -1506,6 +1623,7 @@ async function refreshStudentClasses(preferredClassId = currentClassId) {
   } else {
     currentClassId = currentClasses[0]?.id || null;
   }
+  saveActiveClassId(currentProfile, currentClassId);
   return currentClasses;
 }
 
@@ -1553,6 +1671,7 @@ async function loadStudentAssignmentsForCurrentClass() {
         classId: a.class_id || currentClassId,
         ideaRequestLimit: 3,
       }));
+    recoverStudentActiveClass(currentProfile);
     const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
     state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
     persistState();
@@ -2154,6 +2273,7 @@ if (action === "generate-teacher-assist") {
 if (action === "switch-class") {
     pauseActiveChatSession();
     currentClassId = target.dataset.classId;
+    saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = null;
     ui.notice = "";
     hydrateSelections();
@@ -2168,6 +2288,7 @@ if (action === "switch-class") {
   if (action === "open-assignment") {
     pauseActiveChatSession();
     currentClassId = target.dataset.classId;
+    saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = target.dataset.assignmentId;
     ui.studentStep = 1;
     ui.notice = "";
@@ -3012,6 +3133,7 @@ if (target.id === "playback-speed") {
 if (target.id === "student-class-select") {
     pauseActiveChatSession();
     currentClassId = target.value;
+    saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = null;
     ui.notice = "";
     hydrateSelections();
@@ -4434,26 +4556,6 @@ function renderTeacherGrading(assignment, submission) {
           </details>
 
           <details style="margin-bottom:16px;">
-            <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Letter-by-letter playback</summary>
-            <div style="margin-top:10px;">
-              <div class="pill-row" style="margin-bottom:10px;">
-                <button class="button-ghost" data-action="playback-step" data-direction="-1" ${playback.frames.length <= 1 ? "disabled" : ""}>← Back</button>
-                <button class="button-ghost" data-action="playback-toggle" ${playback.frames.length <= 1 ? "disabled" : ""}>${ui.playback.isPlaying ? "Pause" : "Play"}</button>
-                <button class="button-ghost" data-action="playback-step" data-direction="1" ${playback.frames.length <= 1 ? "disabled" : ""}>Next →</button>
-                <label class="subtle" style="display:flex;align-items:center;gap:8px;">Speed
-                  <select id="playback-speed">
-                    ${[0.5, 1, 1.5, 2, 3].map((speed) => `<option value="${speed}" ${Number(ui.playback.speed) === Number(speed) ? "selected" : ""}>${speed}×</option>`).join("")}
-                  </select>
-                </label>
-                <span id="playback-meta" class="pill">${escapeHtml(`Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}`)}</span>
-              </div>
-              <input id="playback-slider" type="range" min="0" max="${Math.max(playback.frames.length - 1, 0)}" value="${playback.index}" style="width:100%;margin-bottom:10px;" ${playback.frames.length <= 1 ? "disabled" : ""} />
-              <div id="playback-label" class="subtle" style="margin-bottom:8px;">${escapeHtml(playback.label)}</div>
-              <div id="playback-screen" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:180px;max-height:380px;overflow:auto;"><pre style="margin:0;white-space:pre-wrap;word-break:break-word;">${escapeHtml(playback.text)}</pre></div>
-            </div>
-          </details>
-
-          <details style="margin-bottom:16px;">
             <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Coaching chat (${(submission.chatHistory || []).filter(m => m.role === "user").length} student messages)</summary>
             <div style="margin-top:10px;max-height:200px;overflow-y:auto;display:grid;gap:6px;">
               ${(submission.chatHistory || []).map(m => `
@@ -4899,7 +5001,8 @@ function renderStudentFinalStep(assignment, submission) {
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fbfdff;">
                   <div style="min-width:0;">
                     <strong style="display:block;margin-bottom:4px;">${escapeHtml(row.criterion)}</strong>
-                    <span class="subtle" style="font-size:0.82rem;">${escapeHtml(row.selectedLabel || "Not scored")}</span>
+                    <span class="subtle" style="font-size:0.82rem;display:block;">${escapeHtml(row.selectedLabel || "Not scored")}</span>
+                    ${row.selectedDescription ? `<span class="subtle" style="font-size:0.8rem;display:block;margin-top:4px;line-height:1.5;">${escapeHtml(row.selectedDescription)}</span>` : ""}
                   </div>
                   <strong style="white-space:nowrap;">${row.selectedPoints}/${row.maxPoints}</strong>
                 </div>
@@ -5016,7 +5119,8 @@ function renderStudentFinalStep(assignment, submission) {
                   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fbfdff;">
                     <div style="min-width:0;">
                       <strong style="display:block;margin-bottom:4px;">${escapeHtml(row.criterion)}</strong>
-                      <span class="subtle" style="font-size:0.82rem;">${escapeHtml(row.selectedLabel || "Not scored")}</span>
+                      <span class="subtle" style="font-size:0.82rem;display:block;">${escapeHtml(row.selectedLabel || "Not scored")}</span>
+                      ${row.selectedDescription ? `<span class="subtle" style="font-size:0.8rem;display:block;margin-top:4px;line-height:1.5;">${escapeHtml(row.selectedDescription)}</span>` : ""}
                     </div>
                     <strong style="white-space:nowrap;">${row.selectedPoints}/${row.maxPoints}</strong>
                   </div>
@@ -5450,7 +5554,7 @@ function renderPlaybackScreenOnly() {
   }
 
   const playback = getPlaybackState(submission);
-  playbackScreen.innerHTML = `<pre>${escapeHtml(playback.text)}</pre>`;
+  playbackScreen.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(playback.text)}</pre>`;
 }
 
 function startPlayback(frames) {
@@ -5497,7 +5601,7 @@ function syncPlaybackUi() {
 
   const playbackScreen = document.getElementById("playback-screen");
   if (playbackScreen) {
-    playbackScreen.innerHTML = `<pre>${escapeHtml(playback.text)}</pre>`;
+    playbackScreen.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(playback.text)}</pre>`;
   }
 
   const playbackMeta = document.getElementById("playback-meta");
@@ -6464,7 +6568,7 @@ function downloadStudentWork(assignment, submission) {
     <tr>
       <td>${escapeHtml(row.criterion)}</td>
       <td>${escapeHtml(row.description || "—")}</td>
-      <td>${escapeHtml(row.selectedLabel || "Not scored")}</td>
+      <td>${escapeHtml(row.selectedLabel || "Not scored")}${row.selectedDescription ? `<div style="margin-top:4px;color:#667063;">${escapeHtml(row.selectedDescription)}</div>` : ""}</td>
       <td>${row.selectedPoints}/${row.maxPoints}</td>
     </tr>`).join("");
 
