@@ -2098,8 +2098,10 @@ if (action === "generate-teacher-assist") {
     submission.teacherReview.annotations = submission.teacherReview.annotations || [];
     submission.teacherReview.annotations.push({ id: uid("ann"), code, selectedText: annotationText, note });
     ui.lastAnnotationSelection = annotationText;
-    persistState();
-    render();
+    preserveTeacherTextScroll(() => {
+      persistState();
+      render();
+    });
     return;
   }
 
@@ -2108,8 +2110,10 @@ if (action === "generate-teacher-assist") {
     if (!submission?.teacherReview?.annotations) return;
     const index = Number(target.dataset.annotationIndex);
     submission.teacherReview.annotations.splice(index, 1);
-    persistState();
-    render();
+    preserveTeacherTextScroll(() => {
+      persistState();
+      render();
+    });
     return;
   }
 
@@ -2452,6 +2456,26 @@ if (action === "sign-out") {
     await saveTeacherAssignment();
     return;
   }
+
+ if (action === "back-to-assignments") {
+    ui.teacherView = "assignments";
+    ui.selectedAssignmentId = null;
+    ui.selectedReviewSubmissionId = null;
+    ui.selectedReviewStudentId = null;
+    ui.playback.touched = false;
+    render();
+    return;
+  }
+
+  if (action === "back-to-review") {
+    ui.teacherView = "review";
+    ui.selectedReviewSubmissionId = null;
+    ui.selectedReviewStudentId = null;
+    ui.playback.touched = false;
+    render();
+    return;
+  }
+
  if (action === "publish-assignment") {
     const assignmentId = target.dataset.assignmentId;
     const assignment = state.assignments.find((a) => a.id === assignmentId);
@@ -2499,31 +2523,11 @@ if (action === "sign-out") {
     return;
   }
 
-if (action === "back-to-assignments") {
-    ui.teacherView = "assignments";
-    ui.selectedAssignmentId = null;
-    ui.selectedReviewSubmissionId = null;
-    ui.selectedReviewStudentId = null;
-    ui.playback.touched = false;
-    render();
-    return;
-  }
-
-  if (action === "back-to-review") {
-    ui.teacherView = "review";
-    ui.selectedReviewSubmissionId = null;
-    ui.selectedReviewStudentId = null;
-    ui.playback.touched = false;
-    render();
-    return;
-  }
-  
 if (action === "select-assignment") {
   stopPlayback();
   ui.selectedAssignmentId = target.dataset.assignmentId;
   ui.selectedReviewSubmissionId = null;
   ui.selectedReviewStudentId = null;
-  ui.playback.touched = false;
   ui.teacherView = "review";
   ui.notice = "Loading submissions...";
   render();
@@ -4023,7 +4027,7 @@ function renderTeacherWorkspace() {
                   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div>
                       <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
-                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. The same rubric, deadline, chatbot, and feedback controls are available below.</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. The same deadline, chatbot, language, and feedback controls are available below.</p>
                     </div>
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
@@ -4060,7 +4064,7 @@ function renderTeacherWorkspace() {
                     </div>
                     <div class="teacher-ready-card" style="margin-top:14px;">
                       <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                      <p class="subtle" style="margin:0 0 12px;">Use the same class, deadline, chatbot, language, and feedback controls here without switching back to the AI path.</p>
+                      <p class="subtle" style="margin:0 0 12px;">Use the same class, deadline, chatbot, language, and feedback controls here without jumping back to the AI path.</p>
                       <div class="pill-row" style="margin-bottom:10px;">
                         <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
                       </div>
@@ -4434,26 +4438,6 @@ function renderTeacherGrading(assignment, submission) {
           </details>
 
           <details style="margin-bottom:16px;">
-            <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Letter-by-letter playback</summary>
-            <div style="margin-top:10px;">
-              <div class="pill-row" style="margin-bottom:10px;">
-                <button class="button-ghost" data-action="playback-step" data-direction="-1" ${playback.frames.length <= 1 ? "disabled" : ""}>← Back</button>
-                <button class="button-ghost" data-action="playback-toggle" ${playback.frames.length <= 1 ? "disabled" : ""}>${ui.playback.isPlaying ? "Pause" : "Play"}</button>
-                <button class="button-ghost" data-action="playback-step" data-direction="1" ${playback.frames.length <= 1 ? "disabled" : ""}>Next →</button>
-                <label class="subtle" style="display:flex;align-items:center;gap:8px;">Speed
-                  <select id="playback-speed">
-                    ${[0.5, 1, 1.5, 2, 3].map((speed) => `<option value="${speed}" ${Number(ui.playback.speed) === Number(speed) ? "selected" : ""}>${speed}×</option>`).join("")}
-                  </select>
-                </label>
-                <span id="playback-meta" class="pill">${escapeHtml(`Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}`)}</span>
-              </div>
-              <input id="playback-slider" type="range" min="0" max="${Math.max(playback.frames.length - 1, 0)}" value="${playback.index}" style="width:100%;margin-bottom:10px;" ${playback.frames.length <= 1 ? "disabled" : ""} />
-              <div id="playback-label" class="subtle" style="margin-bottom:8px;">${escapeHtml(playback.label)}</div>
-              <div id="playback-screen" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:180px;max-height:380px;overflow:auto;"><pre style="margin:0;white-space:pre-wrap;word-break:break-word;">${escapeHtml(playback.text)}</pre></div>
-            </div>
-          </details>
-
-          <details style="margin-bottom:16px;">
             <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Coaching chat (${(submission.chatHistory || []).filter(m => m.role === "user").length} student messages)</summary>
             <div style="margin-top:10px;max-height:200px;overflow-y:auto;display:grid;gap:6px;">
               ${(submission.chatHistory || []).map(m => `
@@ -4658,11 +4642,7 @@ function renderStudentWorkspace() {
                 ` : ""}
                 ${assignmentBuckets.submitted.length ? `
                   <optgroup label="Submitted work">
-                    ${assignmentBuckets.submitted.map(({ assignment: item, isGraded }) => {
-                      const itemSubmission = state.submissions.find((submission) => submission.assignmentId === item.id && submission.studentId === ui.activeUserId);
-                      const score = itemSubmission?.teacherReview?.finalScore;
-                      return `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}${isGraded ? ` — Graded${score !== "" && score != null ? ` (${escapeHtml(String(score))})` : ""}` : " — Awaiting review"}</option>`;
-                    }).join("")}
+                    ${assignmentBuckets.submitted.map(({ assignment: item, isGraded }) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}${isGraded ? " — Graded" : " — Awaiting review"}</option>`).join("")}
                   </optgroup>
                 ` : ""}
               `
@@ -4886,7 +4866,7 @@ function renderStudentFinalStep(assignment, submission) {
           <div class="submitted-icon">✓</div>
           <div>
             <strong>Submitted and graded</strong>
-            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Open the report or review the comments below.</p>
+            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Review the teacher feedback below or download the graded report.</p>
           </div>
           <button class="button-secondary" data-action="download-work" style="flex-shrink:0;margin-left:auto;">⬇ Download graded report</button>
         </div>
@@ -4924,14 +4904,17 @@ function renderStudentFinalStep(assignment, submission) {
             </div>
           ` : ""}
         </div>
-        <div class="teacher-ready-card" style="margin-top:14px;">
-          <p class="mini-label">Your final writing</p>
-          <div style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.8;white-space:pre-wrap;word-break:break-word;">${escapeHtml(submission.finalText || submission.draftText || "No final text recorded.")}</div>
-          <div class="field" style="margin-top:14px;">
-            <label>Reflection — what you improved</label>
-            <div style="background:#fbfdff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.reflections.improved || "No reflection recorded.")}</div>
+        <details class="teacher-ready-card" style="margin-top:14px;">
+          <summary style="cursor:pointer;font-weight:600;">View your final writing and reflection</summary>
+          <div style="margin-top:14px;">
+            <p class="mini-label">Your final writing</p>
+            <div style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.8;white-space:pre-wrap;word-break:break-word;">${escapeHtml(submission.finalText || submission.draftText || "No final text recorded.")}</div>
+            <div class="field" style="margin-top:14px;">
+              <label>Reflection — what you improved</label>
+              <div style="background:#fbfdff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.reflections.improved || "No reflection recorded.")}</div>
+            </div>
           </div>
-        </div>
+        </details>
       </div>
     `;
   }
@@ -5034,7 +5017,7 @@ function renderStudentFinalStep(assignment, submission) {
                   ${submission.teacherReview.annotations.map((ann) => `
                     <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
                       <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
-                      <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
+                      <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${getErrorCodeLabel(ann.code) ? ` — ${escapeHtml(getErrorCodeLabel(ann.code))}` : ""}${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
                     </button>
                   `).join("")}
                 </div>
@@ -6326,6 +6309,18 @@ function scrollToComment(annotationId) {
   flashScrollTarget(document.getElementById(`comment-${annotationId}`));
 }
 
+function preserveTeacherTextScroll(fn) {
+  const container = document.getElementById("student-text-annotate");
+  const scrollTop = container ? container.scrollTop : 0;
+  fn();
+  requestAnimationFrame(() => {
+    const nextContainer = document.getElementById("student-text-annotate");
+    if (nextContainer) {
+      nextContainer.scrollTop = scrollTop;
+    }
+  });
+}
+
 function captureAnnotationSelection() {
   const container = document.getElementById("student-text-annotate");
   const selection = window.getSelection();
@@ -6347,7 +6342,7 @@ function renderAnnotatedText(submission) {
   );
 
   const highlights = [];
-  const pasteRanges = [];
+  const pasteHighlights = [];
   const searchStarts = new Map();
 
   const findNextSequentialIndex = (needle) => {
@@ -6365,17 +6360,20 @@ function renderAnnotatedText(submission) {
 
   for (const paste of flaggedPastes) {
     const startHint = Number.isFinite(Number(paste.start)) ? Number(paste.start) : -1;
-    let idx = startHint >= 0 && text.slice(startHint, startHint + paste.insertedText.length) === paste.insertedText
+    const idx = startHint >= 0 && text.slice(startHint, startHint + paste.insertedText.length) === paste.insertedText
       ? startHint
       : findNextSequentialIndex(paste.insertedText);
     if (idx !== -1) {
       const end = idx + paste.insertedText.length;
-      pasteRanges.push({ start: idx, end });
-      highlights.push({
+      const pasteHighlight = {
         start: idx,
         end,
         type: "paste",
-      });
+        annotationIds: [],
+        annotationCodes: [],
+      };
+      pasteHighlights.push(pasteHighlight);
+      highlights.push(pasteHighlight);
     }
   }
 
@@ -6384,7 +6382,12 @@ function renderAnnotatedText(submission) {
     const idx = findNextSequentialIndex(ann.selectedText);
     if (idx !== -1) {
       const end = idx + ann.selectedText.length;
-      const overlapsPaste = pasteRanges.some((range) => idx < range.end && end > range.start);
+      const overlappingPastes = pasteHighlights.filter((range) => idx < range.end && end > range.start);
+      const overlapsPaste = overlappingPastes.length > 0;
+      overlappingPastes.forEach((paste) => {
+        paste.annotationIds.push(ann.id || uid("ann"));
+        paste.annotationCodes.push(ann.code);
+      });
 
       highlights.push({
         start: idx,
@@ -6416,13 +6419,20 @@ function renderAnnotatedText(submission) {
     const segment = escapeHtml(text.slice(h.start, h.end));
 
     if (h.type === "paste") {
-      result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
+      const pasteTitle = h.annotationCodes?.length
+        ? `Pasted content — teacher review required. Also tagged: ${h.annotationCodes.join(", ")}`
+        : "Pasted content — teacher review required";
+      const overlayCodes = h.annotationCodes?.length
+        ? `<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.82);padding:1px 4px;border-radius:999px;">${escapeHtml(h.annotationCodes.join("/"))}</sup>`
+        : "";
+      const overlayIds = h.annotationIds?.length ? ` onclick="scrollToComment('${escapeAttribute(h.annotationIds[0])}')"` : "";
+      const overlayStyle = h.annotationCodes?.length ? "border:2px solid #5b2a86;" : "";
+      result += `<mark class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
     } else {
-      const codeLabel = getErrorCodeLabel(h.code);
       if (h.overlapsPaste) {
-        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="${escapeAttribute(codeLabel || "Click to jump to comment")}">${segment}<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.75);padding:1px 4px;border-radius:999px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
       } else {
-        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="${escapeAttribute(codeLabel || "Click to jump to comment")}">${segment}<sup style="font-size:0.76em;color:var(--accent-deep);font-weight:800;margin-left:4px;background:rgba(255,255,255,0.72);padding:1px 4px;border-radius:999px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
       }
     }
 
@@ -6640,41 +6650,16 @@ function renderTextWithPasteHighlights(text, writingEvents) {
   const flaggedPastes = (writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
   if (!flaggedPastes.length) return `<pre class="context-expanded-text">${escapeHtml(text)}</pre>`;
 
-  const searchStarts = new Map();
-  const ranges = [];
-
-  const findNextSequentialIndex = (needle) => {
-    if (!needle) return -1;
-    const start = Number(searchStarts.get(needle) || 0);
-    let idx = text.indexOf(needle, start);
-    if (idx === -1 && start > 0) {
-      idx = text.indexOf(needle);
-    }
-    if (idx !== -1) {
-      searchStarts.set(needle, idx + Math.max(needle.length, 1));
-    }
-    return idx;
-  };
-
-  for (const event of flaggedPastes) {
-    const startHint = Number.isFinite(Number(event.start)) ? Number(event.start) : -1;
-    const idx = startHint >= 0 && text.slice(startHint, startHint + event.insertedText.length) === event.insertedText
-      ? startHint
-      : findNextSequentialIndex(event.insertedText);
-    if (idx === -1) continue;
-    ranges.push({ start: idx, end: idx + event.insertedText.length });
-  }
-
-  ranges.sort((a, b) => a.start - b.start);
+  let remaining = text;
   let html = "";
-  let cursor = 0;
-  for (const range of ranges) {
-    if (range.start < cursor) continue;
-    html += escapeHtml(text.slice(cursor, range.start));
-    html += `<mark class="paste-highlight" title="Pasted content">${escapeHtml(text.slice(range.start, range.end))}</mark>`;
-    cursor = range.end;
+  for (const event of flaggedPastes) {
+    const idx = remaining.indexOf(event.insertedText);
+    if (idx === -1) continue;
+    html += escapeHtml(remaining.slice(0, idx));
+    html += `<mark class="paste-highlight" title="Pasted content">${escapeHtml(event.insertedText)}</mark>`;
+    remaining = remaining.slice(idx + event.insertedText.length);
   }
-  html += escapeHtml(text.slice(cursor));
+  html += escapeHtml(remaining);
   return `<pre class="context-expanded-text">${html}</pre>`;
 }
 
