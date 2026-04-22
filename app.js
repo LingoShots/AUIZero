@@ -2613,6 +2613,9 @@ if (target.id === "student-class-select") {
   }
 
   if (target.id === "class-select") {
+    if (!target.value) {
+      return;
+    }
     if (target.value === "__new__") {
       ui.showClassModal = true;
       ui.classModalName = "";
@@ -3317,6 +3320,7 @@ function renderDraftFeedbackModal() {
 
 function renderTopbar() {
   const studentOptions = "";
+  const classSwitcherOptions = currentClasses.filter((c) => c.id !== currentClassId);
 
   return `
     <header class="topbar">
@@ -3336,7 +3340,8 @@ function renderTopbar() {
             <button class="button-secondary" data-action="create-class">+ Create first class</button>
           ` : `
             <select id="class-select" aria-label="Select class">
-              ${currentClasses.map(c => `<option value="${c.id}" ${currentClassId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+              <option value="" selected>Change class</option>
+              ${classSwitcherOptions.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}
               <option value="__new__">+ New class</option>
             </select>
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
@@ -4316,46 +4321,6 @@ function renderStudentFinalStep(assignment, submission) {
           : ``
         }
       </div>
-      ${submission.status === "submitted" ? `
-        <div class="submitted-banner">
-          <div class="submitted-icon">✓</div>
-          <div>
-            <strong>Submitted!</strong>
-            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Your teacher will review it soon.</p>
-          </div>
-          <button class="button-secondary" data-action="download-work" style="flex-shrink:0;margin-left:auto;">⬇ Download my work</button>
-        </div>
-        ${submission.teacherReview?.savedAt ? `
-          <div class="teacher-ready-card" style="margin-top:14px;border-left:4px solid var(--accent);">
-            <p class="mini-label">Teacher feedback</p>
-            ${submission.teacherReview.finalScore !== "" ? `
-              <div style="font-size:1.3rem;font-weight:700;margin-bottom:8px;">
-                Score: ${escapeHtml(String(submission.teacherReview.finalScore))}
-              </div>
-            ` : ""}
-            ${submission.teacherReview.finalNotes ? `
-              <p style="white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.teacherReview.finalNotes)}</p>
-            ` : ""}
-                                    ${submission.teacherReview.annotations?.length ? `
-              <div style="margin-top:12px;">
-                <p class="mini-label">Marked copy</p>
-                <div id="student-feedback-text" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;">
-                  ${renderAnnotatedText(submission)}
-                </div>
-                <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
-                <div style="display:grid;gap:6px;margin-top:6px;">
-                  ${submission.teacherReview.annotations.map((ann) => `
-                                        <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
-                      <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
-                      <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
-                    </button>
-                  `).join("")}
-                </div>
-              </div>
-            ` : ""}
-          </div>
-        ` : ""}
-      ` : ""}
       <textarea id="final-editor" class="final-editor" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
       <div class="pill-row">
         <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
@@ -4378,8 +4343,8 @@ function renderStudentFinalStep(assignment, submission) {
           </div>
         ` : `<p class="subtle">No rubric available for self-assessment yet.</p>`}
         <div class="field" style="margin-top:14px;">
-          <label for="student-reflection-improved">Reflection — what did you improve from draft to final?</label>
-          <textarea id="student-reflection-improved" rows="4" data-reflection-field="improved" placeholder="Explain what you changed and why.">${escapeHtml(submission.reflections.improved || "")}</textarea>
+          <label for="student-reflection-improved">Reflection — what did you improve from draft to final? <span style="color:var(--danger);">*</span></label>
+          <textarea id="student-reflection-improved" rows="4" data-reflection-field="improved" required placeholder="Explain what you changed and why.">${escapeHtml(submission.reflections.improved || "")}</textarea>
         </div>
       </div>
       <div class="wizard-nav">
@@ -4387,6 +4352,46 @@ function renderStudentFinalStep(assignment, submission) {
         <span></span>
         <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit assignment</button>
       </div>
+      ${submission.status === "submitted" ? `
+        <div id="submitted-confirmation" class="submitted-banner" style="margin-top:16px;">
+          <div class="submitted-icon">✓</div>
+          <div>
+            <strong>Submitted!</strong>
+            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Your teacher will review it soon.</p>
+          </div>
+          <button class="button-secondary" data-action="download-work" style="flex-shrink:0;margin-left:auto;">⬇ Download my work</button>
+        </div>
+        ${submission.teacherReview?.savedAt ? `
+          <div class="teacher-ready-card" style="margin-top:14px;border-left:4px solid var(--accent);">
+            <p class="mini-label">Teacher feedback</p>
+            ${submission.teacherReview.finalScore !== "" ? `
+              <div style="font-size:1.3rem;font-weight:700;margin-bottom:8px;">
+                Score: ${escapeHtml(String(submission.teacherReview.finalScore))}
+              </div>
+            ` : ""}
+            ${submission.teacherReview.finalNotes ? `
+              <p style="white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.teacherReview.finalNotes)}</p>
+            ` : ""}
+            ${submission.teacherReview.annotations?.length ? `
+              <div style="margin-top:12px;">
+                <p class="mini-label">Marked copy</p>
+                <div id="student-feedback-text" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;">
+                  ${renderAnnotatedText(submission)}
+                </div>
+                <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
+                <div style="display:grid;gap:6px;margin-top:6px;">
+                  ${submission.teacherReview.annotations.map((ann) => `
+                    <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
+                      <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
+                      <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
+                    </button>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+          </div>
+        ` : ""}
+      ` : ""}
     </div>
   `;
 }
@@ -4608,12 +4613,13 @@ function handleSubmission() {
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
   const finalEditor = document.getElementById("final-editor");
+  const reflectionEditor = document.getElementById("student-reflection-improved");
   if (!submission || !finalEditor || !assignment) {
     return;
   }
 
   const finalText = finalEditor.value.trim();
-  const improved = submission.reflections.improved.trim();
+  const improved = (reflectionEditor ? reflectionEditor.value : submission.reflections.improved || "").trim();
 
   if (assignment.deadline && new Date(assignment.deadline) < new Date()) {
     ui.notice = "The deadline for this assignment has passed. Speak to your teacher if you need an extension.";
@@ -4626,6 +4632,13 @@ function handleSubmission() {
     render();
     return;
   }
+  if (!improved) {
+    ui.notice = "Complete the reflection before submitting.";
+    render();
+    reflectionEditor?.focus();
+    return;
+  }
+  submission.reflections.improved = improved;
   submission.finalText = finalText;
   submission.status = "submitted";
   submission.submittedAt = new Date().toISOString();
@@ -4638,6 +4651,9 @@ function handleSubmission() {
     console.log("Sync result:", result);
     ui.notice = "Final work submitted. Your teacher will review it soon.";
     render();
+    window.requestAnimationFrame(() => {
+      document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   })
   .catch(e => {
     console.error("Submit sync failed:", e);
