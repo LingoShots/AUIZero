@@ -817,6 +817,64 @@ function createBlankTeacherDraft() {
   };
 }
 
+function inferTeacherBriefSettings(text = "") {
+  const brief = String(text || "");
+  const inferred = {};
+
+  const explicitLevel = brief.match(/\b(?:CEFR\s*)?(A0|A1|A2|B1|B2|C1|C2)\b/i);
+  if (explicitLevel) {
+    inferred.languageLevel = explicitLevel[1].toUpperCase();
+  } else {
+    const levelKeywords = [
+      { pattern: /\bbeginner\b/i, level: "A1" },
+      { pattern: /\belementary\b/i, level: "A2" },
+      { pattern: /\bpre-?intermediate\b/i, level: "A2" },
+      { pattern: /\bintermediate\b/i, level: "B1" },
+      { pattern: /\bupper-?intermediate\b/i, level: "B2" },
+      { pattern: /\badvanced\b/i, level: "C1" },
+    ];
+    const matchedLevel = levelKeywords.find(({ pattern }) => pattern.test(brief));
+    if (matchedLevel) {
+      inferred.languageLevel = matchedLevel.level;
+    }
+  }
+
+  if (/\b(?:disable|turn off|switch off|skip|no|without)\s+(?:the\s+)?(?:chatbot|chat|coach)\b/i.test(brief)) {
+    inferred.disableChatbot = true;
+    inferred.chatTimeLimit = -1;
+  } else {
+    const chatPatterns = [
+      /\b(?:chat(?:bot)?|coach)(?:\s+(?:time|session))?(?:\s+limit)?(?:\s+(?:of|for|to|at|around))?[^0-9]{0,10}(\d{1,3})\s*(?:min|mins|minutes)\b/i,
+      /\b(\d{1,3})\s*(?:min|mins|minutes)\s*(?:of\s+)?(?:chat|chatbot|coach)\b/i,
+      /\bchat\s*time\s*limit[^0-9]{0,10}(\d{1,3})\b/i,
+    ];
+    for (const pattern of chatPatterns) {
+      const match = brief.match(pattern);
+      if (match) {
+        inferred.chatTimeLimit = Number(match[1]);
+        break;
+      }
+    }
+  }
+
+  const feedbackMatch = brief.match(/\b(\d+)\s*(?:feedback checks?|feedbacks?|draft checks?)\b/i);
+  if (feedbackMatch) {
+    inferred.feedbackRequestLimit = Number(feedbackMatch[1]);
+  }
+
+  const totalPointsMatch = brief.match(/\b(\d+)\s*(?:total\s*)?(?:pts|points)\b/i);
+  if (totalPointsMatch) {
+    inferred.totalPoints = Number(totalPointsMatch[1]);
+  }
+
+  const detectedType = detectAssignmentType(brief);
+  if (detectedType !== "response" || /\bresponse\b/i.test(brief)) {
+    inferred.assignmentType = detectedType;
+  }
+
+  return inferred;
+}
+
 function isChatDisabled(config = {}) {
   return Boolean(config?.disableChatbot) || Number(config?.chatTimeLimit ?? 0) < 0;
 }
@@ -1188,6 +1246,28 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   await bootApp(profile);
 });
+
+function resetAppShellState() {
+  currentProfile = null;
+  currentClasses = [];
+  currentClassId = null;
+  currentClassMembers = [];
+  state = createBlankState();
+  ui.role = "student";
+  ui.activeUserId = "";
+  ui.selectedAssignmentId = null;
+  ui.selectedStudentAssignmentId = null;
+  ui.selectedReviewSubmissionId = null;
+  ui.selectedReviewStudentId = null;
+  ui.selectedSavedRubricId = "";
+  ui.teacherView = "assignments";
+  ui.teacherDraft = createBlankTeacherDraft();
+  ui.teacherAssist = null;
+  ui.studentStep = 1;
+  ui.showDraftFeedbackPrompt = false;
+  ui.notice = "";
+}
+
 async function bootApp(profile) {
   ui.teacherDraft = createBlankTeacherDraft();
   currentProfile = profile;
@@ -1488,6 +1568,21 @@ function bindLifecycleEvents() {
   window.addEventListener("beforeunload", () => {
     pauseActiveChatSession();
   });
+  window.addEventListener("pageshow", async (event) => {
+    if (!event.persisted) return;
+    const params = new URLSearchParams(window.location.search);
+    const joinClassId = params.get('join');
+    const inviteInfo = joinClassId ? await Auth.getInviteInfo(joinClassId) : null;
+    const profile = await Auth.restoreSession();
+    if (!profile) {
+      resetAppShellState();
+      renderAuthScreen(joinClassId, inviteInfo);
+      return;
+    }
+    if (!currentProfile || currentProfile.id !== profile.id || currentProfile.role !== profile.role) {
+      await bootApp(profile);
+    }
+  });
 }
 
 function bindEvents() {
@@ -1638,6 +1733,27 @@ if (action === "generate-teacher-assist") {
     if (langLevel) ui.teacherDraft.languageLevel = langLevel.value;
     const totalPts = document.getElementById("teacher-total-points");
     if (totalPts) ui.teacherDraft.totalPoints = Number(totalPts.value);
+    const inferredSettings = inferTeacherBriefSettings(ui.teacherDraft.brief);
+    if (inferredSettings.assignmentType) {
+      ui.teacherDraft.assignmentType = inferredSettings.assignmentType;
+    }
+    if (inferredSettings.languageLevel) {
+      ui.teacherDraft.languageLevel = inferredSettings.languageLevel;
+    }
+    if (Number.isFinite(Number(inferredSettings.feedbackRequestLimit))) {
+      ui.teacherDraft.feedbackRequestLimit = Number(inferredSettings.feedbackRequestLimit);
+    }
+    if (typeof inferredSettings.disableChatbot === "boolean") {
+      ui.teacherDraft.disableChatbot = inferredSettings.disableChatbot;
+    }
+    if (ui.teacherDraft.disableChatbot) {
+      ui.teacherDraft.chatTimeLimit = -1;
+    } else if (Number.isFinite(Number(inferredSettings.chatTimeLimit)) && Number(inferredSettings.chatTimeLimit) >= 0) {
+      ui.teacherDraft.chatTimeLimit = Number(inferredSettings.chatTimeLimit);
+    }
+    if (Number.isFinite(Number(inferredSettings.totalPoints)) && Number(inferredSettings.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+      ui.teacherDraft.totalPoints = Number(inferredSettings.totalPoints);
+    }
     ui.notice = "";
     ui.aiAssistLoading = true;
     teacherAssistAbortController = new AbortController();
@@ -1952,15 +2068,7 @@ if (action === "toggle-full-rubric") {
   
 if (action === "sign-out") {
     await Auth.signOut();
-    currentProfile = null;
-    currentClasses = [];
-    currentClassId = null;
-    currentClassMembers = [];
-    state = createBlankState();
-    ui.selectedAssignmentId = null;
-    ui.selectedStudentAssignmentId = null;
-    ui.selectedReviewSubmissionId = null;
-    ui.selectedReviewStudentId = null;
+    resetAppShellState();
     appEl.innerHTML = '';
     setTimeout(() => renderAuthScreen(), 0);
     return;
@@ -2850,6 +2958,11 @@ function handlePaste(event) {
 
 function render() {
   document.title = PRODUCT_NAME;
+  if (!currentProfile) {
+    const params = new URLSearchParams(window.location.search);
+    renderAuthScreen(params.get("join"));
+    return;
+  }
   if (ui.role === "student") {
     hydrateSelections();
   }
@@ -3371,6 +3484,7 @@ function renderHero() {
 
 function renderTeacherWorkspace() {
   const assignments = state.assignments;
+  const classRoster = currentClassMembers.filter((member) => member?.id !== currentProfile?.id);
   const selectedAssignment = state.assignments.find(a => a.id === ui.selectedAssignmentId) || null;
   const submissions = state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId);
   const selectedSubmission = selectedAssignment && ui.teacherView === "grading"
@@ -3629,6 +3743,26 @@ function renderTeacherWorkspace() {
             <h2 class="panel-title">Assignments</h2>
           </div>
         </div>
+        <div class="teacher-ready-card" style="margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px;">
+            <div>
+              <p class="mini-label" style="margin-bottom:4px;">Class list</p>
+              <p class="subtle">Students currently enrolled in ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "this class")}.</p>
+            </div>
+            <span class="pill">${classRoster.length} student${classRoster.length === 1 ? "" : "s"}</span>
+          </div>
+          ${classRoster.length
+            ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
+                ${classRoster.map((member, index) => `
+                  <div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fbfdff;">
+                    <span class="subtle" style="display:block;font-size:0.74rem;margin-bottom:3px;">Student ${index + 1}</span>
+                    <strong>${escapeHtml(member.name || "Student")}</strong>
+                  </div>
+                `).join("")}
+              </div>`
+            : `<div class="empty-state compact-empty"><h3>No students yet</h3><p>Invite students to this class to start building the roster.</p></div>`
+          }
+        </div>
         ${
           !assignments.length
             ? `<div class="empty-state" style="padding:36px 28px;">
@@ -3646,7 +3780,7 @@ function renderTeacherWorkspace() {
                   const submittedCount = assignmentSubs.filter(s => s.status === "submitted").length;
                   const gradedCount = assignmentSubs.filter(s => s.teacherReview?.savedAt).length;
                   const pasteCount = assignmentSubs.filter(s => (s.writingEvents || []).some(e => e.flagged)).length;
-                  const totalStudents = currentClassMembers.length;
+                  const totalStudents = classRoster.length;
                   return `
                   <div class="assignment-card simple-card">
                     <div class="card-top" style="align-items:flex-start;">
@@ -4458,6 +4592,34 @@ async function saveTeacherAssignment() {
       }
     : normalizeTeacherDraft(ui.teacherDraft);
 
+  const inferredSettings = inferTeacherBriefSettings(ui.teacherDraft.brief);
+  if (inferredSettings.assignmentType) {
+    draft.assignmentType = inferredSettings.assignmentType;
+  }
+  if (inferredSettings.languageLevel) {
+    draft.languageLevel = inferredSettings.languageLevel;
+  }
+  if (Number.isFinite(Number(inferredSettings.feedbackRequestLimit)) && Number(inferredSettings.feedbackRequestLimit) >= 0) {
+    draft.feedbackRequestLimit = Number(inferredSettings.feedbackRequestLimit);
+  }
+  if (typeof inferredSettings.disableChatbot === "boolean") {
+    draft.disableChatbot = inferredSettings.disableChatbot;
+  }
+  if (draft.disableChatbot) {
+    draft.chatTimeLimit = -1;
+  } else if (Number.isFinite(Number(inferredSettings.chatTimeLimit)) && Number(inferredSettings.chatTimeLimit) >= 0) {
+    draft.chatTimeLimit = Number(inferredSettings.chatTimeLimit);
+  }
+  if (Number.isFinite(Number(inferredSettings.totalPoints)) && Number(inferredSettings.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+    draft.totalPoints = Number(inferredSettings.totalPoints);
+  }
+
+  ui.teacherDraft.assignmentType = draft.assignmentType;
+  ui.teacherDraft.languageLevel = draft.languageLevel;
+  ui.teacherDraft.feedbackRequestLimit = draft.feedbackRequestLimit;
+  ui.teacherDraft.disableChatbot = Boolean(draft.disableChatbot);
+  ui.teacherDraft.chatTimeLimit = Number(draft.chatTimeLimit ?? ui.teacherDraft.chatTimeLimit ?? 0);
+
   if (!draft.title || !draft.prompt) {
     ui.notice = "Add a student-facing title and prompt, or use Format With AI first.";
     render();
@@ -4506,7 +4668,7 @@ async function saveTeacherAssignment() {
     createdAt: new Date().toISOString(),
     status: "draft",
     deadline: ui.teacherDraft.deadline || "",
-    chatTimeLimit: draft.disableChatbot ? -1 : Number(ui.teacherDraft.chatTimeLimit || 0),
+    chatTimeLimit: draft.disableChatbot ? -1 : Number(draft.chatTimeLimit || 0),
     uploadedRubricText: ui.teacherDraft.uploadedRubricText || "",
     uploadedRubricName: ui.teacherDraft.uploadedRubricName || "",
     uploadedRubricData: ui.teacherDraft.uploadedRubricData || null,
@@ -4873,10 +5035,12 @@ function getAssignmentSubmissions(assignmentId) {
 
 function getReviewRoster(assignmentId = ui.selectedAssignmentId) {
   if (currentClassMembers.length) {
-    return currentClassMembers.map((member) => ({
-      id: member.id,
-      name: member.name || "Student",
-    }));
+    return currentClassMembers
+      .filter((member) => member?.id !== currentProfile?.id)
+      .map((member) => ({
+        id: member.id,
+        name: member.name || "Student",
+      }));
   }
 
   const seen = new Set();
@@ -6056,25 +6220,40 @@ function normalizeTeacherDraft(draft) {
 
 function applyAiSettingsToTeacherDraft(parsed = {}) {
   const allowedLevels = new Set(["A0", "A1", "A2", "B1", "B2", "C1", "C2"]);
+  const inferred = inferTeacherBriefSettings(ui.teacherDraft.brief);
 
-  if (parsed.assignmentType) {
+  if (inferred.assignmentType) {
+    ui.teacherDraft.assignmentType = inferred.assignmentType;
+  } else if (parsed.assignmentType) {
     ui.teacherDraft.assignmentType = parsed.assignmentType;
   }
-  if (allowedLevels.has(String(parsed.languageLevel || "").trim())) {
+  if (allowedLevels.has(String(inferred.languageLevel || "").trim())) {
+    ui.teacherDraft.languageLevel = String(inferred.languageLevel).trim();
+  } else if (allowedLevels.has(String(parsed.languageLevel || "").trim())) {
     ui.teacherDraft.languageLevel = String(parsed.languageLevel).trim();
   }
-  if (Number.isFinite(Number(parsed.feedbackRequestLimit)) && Number(parsed.feedbackRequestLimit) >= 0) {
+  if (Number.isFinite(Number(inferred.feedbackRequestLimit)) && Number(inferred.feedbackRequestLimit) >= 0) {
+    ui.teacherDraft.feedbackRequestLimit = Number(inferred.feedbackRequestLimit);
+  } else if (Number.isFinite(Number(parsed.feedbackRequestLimit)) && Number(parsed.feedbackRequestLimit) >= 0) {
     ui.teacherDraft.feedbackRequestLimit = Number(parsed.feedbackRequestLimit);
   }
-  if (typeof parsed.disableChatbot === "boolean") {
+  if (typeof inferred.disableChatbot === "boolean") {
+    ui.teacherDraft.disableChatbot = inferred.disableChatbot;
+  } else if (typeof parsed.disableChatbot === "boolean") {
     ui.teacherDraft.disableChatbot = parsed.disableChatbot;
   }
-  if (Number.isFinite(Number(parsed.chatTimeLimit)) && Number(parsed.chatTimeLimit) >= 0) {
-    ui.teacherDraft.chatTimeLimit = ui.teacherDraft.disableChatbot ? -1 : Number(parsed.chatTimeLimit);
+  if (ui.teacherDraft.disableChatbot) {
+    ui.teacherDraft.chatTimeLimit = -1;
+  } else if (Number.isFinite(Number(inferred.chatTimeLimit)) && Number(inferred.chatTimeLimit) >= 0) {
+    ui.teacherDraft.chatTimeLimit = Number(inferred.chatTimeLimit);
+  } else if (Number.isFinite(Number(parsed.chatTimeLimit)) && Number(parsed.chatTimeLimit) >= 0) {
+    ui.teacherDraft.chatTimeLimit = Number(parsed.chatTimeLimit);
   } else if (ui.teacherDraft.disableChatbot) {
     ui.teacherDraft.chatTimeLimit = -1;
   }
-  if (Number.isFinite(Number(parsed.totalPoints)) && Number(parsed.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+  if (Number.isFinite(Number(inferred.totalPoints)) && Number(inferred.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+    ui.teacherDraft.totalPoints = Number(inferred.totalPoints);
+  } else if (Number.isFinite(Number(parsed.totalPoints)) && Number(parsed.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
     ui.teacherDraft.totalPoints = Number(parsed.totalPoints);
   }
 
