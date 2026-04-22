@@ -41,6 +41,7 @@ const ui = {
   aiAssistLoading: false,
   selectedSavedRubricId: "",
   selectedAssignmentId: null,
+  expandedAssignmentBriefId: null,
   selectedStudentAssignmentId: null,
   selectedReviewSubmissionId: null,
   selectedReviewStudentId: null,
@@ -607,6 +608,32 @@ function renderRichTextHtml(text = "") {
     .replace(/\+\+([^+]+)\+\+/g, "<u>$1</u>")
     .replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
     .replace(/\n+/g, "<br>");
+}
+
+function stripPromptFormatting(text = "") {
+  return String(text || "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\+\+([^+]+)\+\+/g, "$1")
+    .replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, "$1$2");
+}
+
+function truncateText(text = "", maxLength = 140) {
+  const normalized = String(text || "").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength).trimEnd()}…`;
+}
+
+function focusChatInput() {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    const textarea = document.getElementById("chat-input");
+    if (!textarea) return;
+    textarea.focus();
+    const cursor = textarea.value.length;
+    if (typeof textarea.setSelectionRange === "function") {
+      textarea.setSelectionRange(cursor, cursor);
+    }
+  });
 }
 
 function applyPromptFormattingToTextarea(textarea, format) {
@@ -2271,6 +2298,13 @@ if (action === "sign-out") {
     return;
   }
 
+  if (action === "toggle-assignment-brief") {
+    const assignmentId = target.dataset.assignmentId || "";
+    ui.expandedAssignmentBriefId = ui.expandedAssignmentBriefId === assignmentId ? null : assignmentId;
+    render();
+    return;
+  }
+
  if (action === "save-assignment") {
     await saveTeacherAssignment();
     return;
@@ -2488,6 +2522,7 @@ if (action === "select-assignment") {
     persistState();
     scheduleSubmissionSync(900);
     render();
+    focusChatInput();
 
     // Scroll chat to bottom
     setTimeout(() => {
@@ -2511,6 +2546,7 @@ if (action === "select-assignment") {
         persistState();
         scheduleSubmissionSync(900);
         render();
+        focusChatInput();
         setTimeout(() => {
           const win = document.getElementById("chatbot-window");
           if (win) win.scrollTop = win.scrollHeight;
@@ -2523,6 +2559,7 @@ if (action === "select-assignment") {
         persistState();
         scheduleSubmissionSync(900);
         render();
+        focusChatInput();
       });
     return;
   }
@@ -3896,6 +3933,8 @@ function renderTeacherWorkspace() {
                   const gradedCount = assignmentSubs.filter(s => s.teacherReview?.savedAt).length;
                   const pasteCount = assignmentSubs.filter(s => (s.writingEvents || []).some(e => e.flagged)).length;
                   const totalStudents = classRoster.length;
+                  const isBriefExpanded = ui.expandedAssignmentBriefId === assignment.id;
+                  const promptPreview = truncateText(stripPromptFormatting(assignment.prompt), 140);
                   return `
                   <div class="assignment-card simple-card">
                     <div class="card-top" style="align-items:flex-start;">
@@ -3904,7 +3943,15 @@ function renderTeacherWorkspace() {
                           <h3 style="margin:0;">${escapeHtml(assignment.title)}</h3>
                           <span class="${assignment.status === "published" ? "pill" : "warning-pill"}" style="font-size:0.75rem;">${assignment.status === "published" ? "Published" : "Draft"}</span>
                         </div>
-                        <p style="margin:0 0 8px;color:var(--muted);font-size:0.88rem;">${escapeHtml(assignment.prompt.slice(0, 100))}${assignment.prompt.length > 100 ? "…" : ""}</p>
+                        ${isBriefExpanded
+                          ? `<div style="margin:0 0 8px;color:var(--muted);font-size:0.9rem;line-height:1.55;">${renderRichTextHtml(assignment.prompt)}</div>`
+                          : `<p style="margin:0 0 8px;color:var(--muted);font-size:0.88rem;">${escapeHtml(promptPreview)}</p>`
+                        }
+                        ${assignment.prompt && assignment.prompt.length > 140 ? `
+                          <button class="button-ghost" data-action="toggle-assignment-brief" data-assignment-id="${assignment.id}" style="font-size:0.78rem;padding:6px 10px;margin:0 0 10px;">
+                            ${isBriefExpanded ? "Hide brief" : "View full brief"}
+                          </button>
+                        ` : ""}
                         <div class="pill-row" style="flex-wrap:wrap;">
                           <span class="pill">${escapeHtml(titleCase(assignment.assignmentType || "writing"))}</span>
                           <span class="pill">${assignment.wordCountMin}–${assignment.wordCountMax} words</span>
@@ -5782,11 +5829,12 @@ RULES:
 6. Match your vocabulary to CEFR level ${assignment.languageLevel} — keep it simple and encouraging.
 7. Never repeat the same question twice in a conversation.
 8. After two or three useful student replies, briefly check whether they already have enough ideas to begin drafting. Ask a choice-style question such as: "Do you feel ready to draft now, or do you want one more planning question?"
-9. If the student seems ready, help them name their next drafting step instead of continuing the chat forever.
+9. If the student seems ready, tell them clearly to click the Next button to move into the draft area. Do not tell them to write sentences in the chat.
 10. Do not accept vague ideas too quickly. If the student gives something broad like "ask the teacher" or "do research", ask a follow-up such as "What exactly would you ask?" or "Why would that help?" before moving on.
 11. Before you move from one main idea or step to the next, ask whether the student feels satisfied with the current one or wants to develop it a little more.
 12. If the student gives a weak first step, ask them to make it more specific before you accept it. For example, turn "ask the teacher" into one concrete question they could ask.
 13. When the assignment is about process or steps, help the student improve each step before moving to the next one.
+14. Never say "share it here" or ask the student to draft their first sentence in chat. The chat is only for planning.
 
 Assignment title: "${assignment.title}"
 Task: "${assignment.prompt}"
