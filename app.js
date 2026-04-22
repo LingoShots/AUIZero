@@ -2150,7 +2150,8 @@ if (action === "switch-class") {
     ensureStudentSubmission();
     render();
     loadStudentAssignmentsForCurrentClass().then(async () => {
-      await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+      const loaded = await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+      ui.studentStep = getStudentStepForSubmission(loaded || getStudentSubmission());
       render();
     });
     return;
@@ -2590,6 +2591,19 @@ if (action === "select-assignment") {
     return;
   }
 
+  if (action === "scroll-editor-top" || action === "scroll-editor-bottom") {
+    const editor = document.getElementById(target.dataset.target || "");
+    if (!editor) return;
+    const toBottom = action === "scroll-editor-bottom";
+    editor.focus();
+    editor.scrollTop = toBottom ? editor.scrollHeight : 0;
+    const cursor = toBottom ? editor.value.length : 0;
+    if (typeof editor.setSelectionRange === "function") {
+      editor.setSelectionRange(cursor, cursor);
+    }
+    return;
+  }
+
   if (action === "send-chat-message") {
     const submission = getStudentSubmission();
     const assignment = getStudentAssignment();
@@ -3003,7 +3017,8 @@ if (target.id === "student-class-select") {
     ui.selectedStudentAssignmentId = target.value;
     ui.studentStep = 1;
     ensureStudentSubmission();
-    await loadStudentSubmissionForAssignment(target.value);
+    const loaded = await loadStudentSubmissionForAssignment(target.value);
+    ui.studentStep = getStudentStepForSubmission(loaded || getStudentSubmission());
     render();
     return;
   }
@@ -4289,7 +4304,7 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-                                                            <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+                                                            <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:260px;max-height:min(72vh,720px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
           </div>
 
           <div style="margin-bottom:16px;">
@@ -4461,6 +4476,7 @@ function renderTeacherGrading(assignment, submission) {
 
 function renderStudentWorkspace() {
   const assignments = getPublishedAssignments();
+  const assignmentBuckets = getStudentAssignmentBuckets();
   const student = getUserById(ui.activeUserId);
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
@@ -4518,11 +4534,29 @@ function renderStudentWorkspace() {
           <label for="student-assignment-select">Choose assignment</label>
           <select id="student-assignment-select" aria-label="Select assignment">
             ${assignments.length
-              ? assignments.map((item) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("")
+              ? `
+                ${assignmentBuckets.current.length ? `
+                  <optgroup label="Current work">
+                    ${assignmentBuckets.current.map(({ assignment: item }) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("")}
+                  </optgroup>
+                ` : ""}
+                ${assignmentBuckets.submitted.length ? `
+                  <optgroup label="Submitted work">
+                    ${assignmentBuckets.submitted.map(({ assignment: item, isGraded }) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}${isGraded ? " — Graded" : " — Awaiting review"}</option>`).join("")}
+                  </optgroup>
+                ` : ""}
+              `
               : `<option value="">No assignments published yet</option>`
             }
           </select>
         </div>
+        ${assignments.length ? `
+          <div class="pill-row" style="margin-top:-4px;">
+            <span class="pill">${assignmentBuckets.current.length} current</span>
+            <span class="pill">${assignmentBuckets.submitted.length} submitted</span>
+            ${assignmentBuckets.submitted.some(({ isGraded }) => isGraded) ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded work available</span>` : ""}
+          </div>
+        ` : ""}
         ${
           !assignments.length
             ? `<div class="empty-state"><h3>Nothing here yet</h3><p>Your teacher hasn't published any assignments yet.</p></div>`
@@ -4668,6 +4702,10 @@ function renderStudentDraftStep(assignment, submission) {
           <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
         </div>
       </div>
+      <div class="pill-row" style="margin-bottom:8px;">
+        <button class="button-ghost" data-action="scroll-editor-top" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
+        <button class="button-ghost" data-action="scroll-editor-bottom" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
+      </div>
       <textarea id="draft-editor" class="draft-editor" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
       <div class="pill-row">
         <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
@@ -4719,6 +4757,10 @@ function renderStudentFinalStep(assignment, submission) {
           ? `<div style="font-size:0.82rem;color:var(--danger);font-weight:600;text-align:right;">Deadline passed</div>`
           : ``
         }
+      </div>
+      <div class="pill-row" style="margin-bottom:8px;">
+        <button class="button-ghost" data-action="scroll-editor-top" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
+        <button class="button-ghost" data-action="scroll-editor-bottom" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
       </div>
       <textarea id="final-editor" class="final-editor" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
       <div class="pill-row">
@@ -4775,7 +4817,7 @@ function renderStudentFinalStep(assignment, submission) {
             ${submission.teacherReview.annotations?.length ? `
               <div style="margin-top:12px;">
                 <p class="mini-label">Marked copy</p>
-                <div id="student-feedback-text" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;">
+                <div id="student-feedback-text" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:220px;max-height:min(72vh,720px);overflow-y:auto;">
                   ${renderAnnotatedText(submission)}
                 </div>
                 <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
@@ -5310,6 +5352,36 @@ function getStudentAssignment() {
   ) || null;
 }
 
+function getStudentSubmissionForAssignment(assignmentId, studentId = ui.activeUserId) {
+  if (!assignmentId || !studentId) return null;
+  return state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === studentId) || null;
+}
+
+function getStudentAssignmentBuckets() {
+  const publishedAssignments = getPublishedAssignments();
+  const current = [];
+  const submitted = [];
+
+  publishedAssignments.forEach((assignment) => {
+    const submission = getStudentSubmissionForAssignment(assignment.id);
+    const status = submission?.status || "draft";
+    const hasSubmitted = Boolean(submission?.submittedAt) || ["submitted", "graded", "late", "missing"].includes(status);
+    const bucketItem = {
+      assignment,
+      submission,
+      status,
+      isGraded: Boolean(submission?.teacherReview?.savedAt),
+    };
+    if (hasSubmitted) {
+      submitted.push(bucketItem);
+    } else {
+      current.push(bucketItem);
+    }
+  });
+
+  return { current, submitted };
+}
+
 function getAssignmentSubmissions(assignmentId) {
   return state.submissions.filter((submission) => submission.assignmentId === assignmentId);
 }
@@ -5379,6 +5451,11 @@ function getStudentSubmission() {
   return state.submissions.find((submission) => submission.assignmentId === ui.selectedStudentAssignmentId && submission.studentId === ui.activeUserId) || null;
 }
 
+function getStudentStepForSubmission(submission) {
+  if (submission?.status === "submitted" || submission?.submittedAt) return 3;
+  return 1;
+}
+
 function ensureStudentSubmission() {
   const existing = getStudentSubmission();
   if (existing) {
@@ -5406,7 +5483,10 @@ function hydrateSelections() {
   }
 
   ui.studentStep = clamp(ui.studentStep, 1, 3);
-  ensureStudentSubmission();
+  const studentSubmission = ensureStudentSubmission();
+  if (studentSubmission) {
+    ui.studentStep = Math.max(ui.studentStep, getStudentStepForSubmission(studentSubmission));
+  }
 
   const reviewRoster = getReviewRoster(ui.selectedAssignmentId);
   if (!reviewRoster.some((student) => student.id === ui.selectedReviewStudentId)) {
@@ -5953,18 +6033,28 @@ function generateFeedback(assignment, submission) {
   ];
 
   // Collect all items already given in previous feedback rounds
-  const previousItems = new Set(submission.feedbackHistory.flatMap((entry) => entry.items));
+  const normalizeFeedbackItem = (item) => String(item || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const previousItems = new Set(submission.feedbackHistory.flatMap((entry) => safeArray(entry.items).map(normalizeFeedbackItem)));
 
   // Filter each pool to only items not already given
-  const freshPrimary = primaryPool.filter((item) => !previousItems.has(item));
-  const freshSecondary = secondaryPool.filter((item) => !previousItems.has(item));
+  const dedupeFeedbackList = (items) => {
+    const seen = new Set();
+    return items.filter((item) => {
+      const key = normalizeFeedbackItem(item);
+      if (!key || previousItems.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const freshPrimary = dedupeFeedbackList(primaryPool);
+  const freshSecondary = dedupeFeedbackList(secondaryPool);
 
   const combined = [...freshPrimary, ...freshSecondary];
 
   if (!combined.length) {
     return [
-      "You have worked through all the main checks. Read the full piece once more and look for any word that feels wrong.",
-      "Ask yourself: does every sentence belong here? Remove anything that does not help your main idea.",
+      "You have already used the main AI checks for this draft. Revise the issues you already found, then ask your teacher if you need more help.",
+      "Read the whole draft once aloud and correct any sentence that still sounds awkward, unclear, or incomplete.",
     ];
   }
 
