@@ -604,7 +604,41 @@ function levelTheme(label = "") {
 function renderRichTextHtml(text = "") {
   return escapeHtml(String(text || ""))
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\+\+([^+]+)\+\+/g, "<u>$1</u>")
+    .replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
     .replace(/\n+/g, "<br>");
+}
+
+function applyPromptFormattingToTextarea(textarea, format) {
+  if (!textarea) return;
+  const wrappers = {
+    bold: ["**", "**"],
+    italic: ["*", "*"],
+    underline: ["++", "++"],
+  };
+  const [open, close] = wrappers[format] || ["", ""];
+  if (!open) return;
+
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  const selected = textarea.value.slice(start, end);
+  const nextValue = `${textarea.value.slice(0, start)}${open}${selected}${close}${textarea.value.slice(end)}`;
+  textarea.value = nextValue;
+  const cursorStart = start + open.length;
+  const cursorEnd = cursorStart + selected.length;
+  textarea.focus();
+  textarea.setSelectionRange(cursorStart, cursorEnd);
+}
+
+function renderPromptFormattingToolbar(targetId) {
+  return `
+    <div class="pill-row" style="margin-bottom:8px;gap:8px;">
+      <span class="mini-label" style="margin:0;align-self:center;">Formatting</span>
+      <button class="button-ghost" type="button" data-action="format-prompt-text" data-target-id="${targetId}" data-format="bold" style="min-height:34px;padding:0 12px;"><strong>B</strong></button>
+      <button class="button-ghost" type="button" data-action="format-prompt-text" data-target-id="${targetId}" data-format="italic" style="min-height:34px;padding:0 12px;"><em>I</em></button>
+      <button class="button-ghost" type="button" data-action="format-prompt-text" data-target-id="${targetId}" data-format="underline" style="min-height:34px;padding:0 12px;"><u>U</u></button>
+    </div>
+  `;
 }
 
 function renderRubricSchemaLayout(schemaInput, options = {}) {
@@ -925,8 +959,8 @@ function hasLowSentenceVariety(sentences = []) {
 }
 
 function scrollToNextRubricCriterionMobile(criterionId) {
-  if (!criterionId || typeof window === "undefined" || window.innerWidth > 760) return;
-  window.requestAnimationFrame(() => {
+  if (!criterionId || typeof window === "undefined" || !window.matchMedia("(max-width: 760px)").matches) return;
+  window.setTimeout(() => {
     const sections = Array.from(document.querySelectorAll("[data-rubric-criterion-id]"));
     const currentIndex = sections.findIndex((section) => section.dataset.rubricCriterionId === criterionId);
     if (currentIndex === -1) return;
@@ -934,7 +968,7 @@ function scrollToNextRubricCriterionMobile(criterionId) {
     if (nextSection) {
       nextSection.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  });
+  }, 90);
 }
 
 function isChatSessionExpired(assignment, submission) {
@@ -1290,6 +1324,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   const profile = await Auth.restoreSession();
   if (!profile) {
+    resetAppShellState();
     setTimeout(() => renderAuthScreen(joinClassId, inviteInfo), 0);
     return;
   }
@@ -1316,7 +1351,6 @@ function resetAppShellState() {
   ui.showDraftFeedbackPrompt = false;
   ui.notice = "";
 }
-
 async function bootApp(profile) {
   ui.teacherDraft = createBlankTeacherDraft();
   currentProfile = profile;
@@ -1617,8 +1651,7 @@ function bindLifecycleEvents() {
   window.addEventListener("beforeunload", () => {
     pauseActiveChatSession();
   });
-  window.addEventListener("pageshow", async (event) => {
-    if (!event.persisted) return;
+  window.addEventListener("pageshow", async () => {
     const params = new URLSearchParams(window.location.search);
     const joinClassId = params.get('join');
     const inviteInfo = joinClassId ? await Auth.getInviteInfo(joinClassId) : null;
@@ -1743,14 +1776,19 @@ ${deadlineLine}
 ${rubricLine}
 
 Rules:
-- Keep the student prompt short and sweet: aim for 3 short paragraphs or fewer.
+- Keep the student prompt short and teacher-like: 2 to 4 short sentences plus one final reminder line at most.
 - Choose the assignmentType that best matches the teacher brief. Use one of: argument, narrative, informational, process, definition, compare, response, other.
 - If no rubric is uploaded, make the rubric specific to the chosen writing type instead of generic.
 - Keep exactly 4 rubric criteria when no rubric is uploaded.
 ${rubricGuidanceLine}
 - Keep rubric criterion names short (2-4 words).
 - Rubric descriptions must be one clear sentence a student at CEFR ${d.languageLevel} can understand.
-- The student prompt should be encouraging and clear, not academic in tone.
+- The student prompt should sound like a clear teacher instruction, not an AI coach.
+- Do not use markdown, emojis, or motivational filler.
+- Do not explain how to answer the prompt in detail or model the response.
+- Do not include lines like "start with" or "then write" unless the teacher explicitly asked for that structure.
+- If a deadline exists, mention it briefly as a reminder line: "Deadline: ...".
+- If feedback checks are limited, mention them in one short reminder line only.
 
 Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, process, definition, compare, response, other), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of exactly 4 objects each with "name", "description", "points"), "feedbackRequestLimit" (number), "chatTimeLimit" (number, 0 if unlimited), "disableChatbot" (boolean), "languageLevel" (one of: A0, A1, A2, B1, B2, C1, C2), "totalPoints" (number), "deadlineDate" (string in YYYY-MM-DD format or empty string), "deadlineTime" (string in HH:MM 24-hour format or empty string).`;
 }
@@ -2112,6 +2150,18 @@ if (action === "switch-class") {
 if (action === "toggle-full-rubric") {
     ui.showFullRubric = !ui.showFullRubric;
     render();
+    return;
+  }
+
+  if (action === "format-prompt-text") {
+    const textarea = document.getElementById(target.dataset.targetId);
+    applyPromptFormattingToTextarea(textarea, target.dataset.format);
+    if (textarea?.dataset.assistField && ui.teacherAssist) {
+      ui.teacherAssist[textarea.dataset.assistField] = textarea.value;
+    }
+    if (textarea?.dataset.teacherField) {
+      ui.teacherDraft[textarea.dataset.teacherField] = textarea.value;
+    }
     return;
   }
   
@@ -3549,7 +3599,7 @@ function renderTeacherWorkspace() {
   const hasUploadedRubricPreview = Boolean(
     ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length
   );
-  const sharedSettingsFields = `
+  const rubricUploadField = `
     <div class="field">
       <label>Rubric (optional — drag and drop or click to upload)</label>
       <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:24px 18px;min-height:104px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;display:grid;place-items:center;"
@@ -3588,6 +3638,8 @@ function renderTeacherWorkspace() {
         </div>
       ` : ""}
     </div>
+  `;
+  const assignmentSettingsFields = `
     <div class="field-grid compact-grid">
       <div class="field">
         <label for="teacher-feedback-limit">Feedback checks</label>
@@ -3645,15 +3697,15 @@ function renderTeacherWorkspace() {
           </div>
         </div>
         <div class="field-stack">
-          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+          <div id="teacher-rubric-upload" class="teacher-ready-card" style="padding:16px;">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
               <div>
-                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
+                <p class="mini-label" style="margin-bottom:4px;">Rubric</p>
+                <p class="subtle">Upload or reuse a rubric before you generate the assignment.</p>
               </div>
               <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
             </div>
-            ${sharedSettingsFields}
+            ${rubricUploadField}
           </div>
           <div class="field">
             <label for="teacher-brief">Teacher brief</label>
@@ -3670,6 +3722,16 @@ function renderTeacherWorkspace() {
               </div>
             </div>
           ` : ""}
+          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
+                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
+              </div>
+              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
+            </div>
+            ${assignmentSettingsFields}
+          </div>
         </div>
         ${
           ui.teacherAssist
@@ -3685,7 +3747,8 @@ function renderTeacherWorkspace() {
                   <p class="mini-label">Student instructions</p>
                   <div class="field" style="margin-bottom:10px;">
                     <label>Task prompt</label>
-                    <textarea data-assist-field="prompt">${escapeHtml(ui.teacherAssist.prompt)}</textarea>
+                    ${renderPromptFormattingToolbar("teacher-assist-prompt")}
+                    <textarea id="teacher-assist-prompt" data-assist-field="prompt">${escapeHtml(ui.teacherAssist.prompt)}</textarea>
                   </div>
                   <div class="field-grid" style="margin-bottom:10px;">
                     <div class="field">
@@ -3757,6 +3820,7 @@ function renderTeacherWorkspace() {
                     </div>
                     <div class="field" style="margin-bottom:10px;">
                       <label for="teacher-prompt">Task prompt</label>
+                      ${renderPromptFormattingToolbar("teacher-prompt")}
                       <textarea id="teacher-prompt" data-teacher-field="prompt" placeholder="Write the instructions students will see.">${escapeHtml(ui.teacherDraft.prompt)}</textarea>
                     </div>
                     <div class="field-grid" style="margin-bottom:10px;">
@@ -4326,7 +4390,7 @@ function renderStudentWorkspace() {
                 <div class="student-card">
                   <p class="mini-label">Your task</p>
                   <h3>${escapeHtml(assignment.title)}</h3>
-                  <p class="student-task">${escapeHtml(assignment.prompt)}</p>
+                  <div class="student-task">${renderRichTextHtml(assignment.prompt)}</div>
                   <div class="pill-row">
                     <span class="pill">${assignment.wordCountMin}-${assignment.wordCountMax} words</span>
                     <span class="pill">${submission.feedbackHistory.length}/${assignment.feedbackRequestLimit} feedback checks</span>

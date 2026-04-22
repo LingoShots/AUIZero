@@ -89,6 +89,7 @@ const Auth = (() => {
       const data = await fetch('/api/auth/me', { headers: authHeaders() }).then(r => r.json());
       if (data.error) {
         session = null;
+        profile = null;
         localStorage.removeItem('auizero_session');
         sessionStorage.removeItem('auizero_session');
         return null;
