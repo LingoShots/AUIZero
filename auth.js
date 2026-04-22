@@ -97,6 +97,10 @@ const Auth = (() => {
       profile = data.profile;
       return profile;
     } catch {
+      session = null;
+      profile = null;
+      localStorage.removeItem('auizero_session');
+      sessionStorage.removeItem('auizero_session');
       return null;
     }
   }
