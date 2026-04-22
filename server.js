@@ -793,6 +793,45 @@ function sanitizeSubmissionPayload(payload = {}) {
   return sanitizePayload(payload, SUBMISSION_ALLOWED_FIELDS);
 }
 
+async function queryAssignmentsForClass(req, classId, accessRole) {
+  const requestScopedSupabase = getRequestScopedSupabase(req);
+  const candidates = [];
+  if (requestScopedSupabase && requestScopedSupabase !== supabase) {
+    candidates.push(requestScopedSupabase);
+  }
+  candidates.push(supabase);
+
+  let lastError = null;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const client = candidates[index];
+    let query = client
+      .from('assignments')
+      .select('*')
+      .eq('class_id', classId)
+      .order('created_at', { ascending: false });
+    if (accessRole === 'student') {
+      query = query.eq('status', 'published');
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      lastError = error;
+      continue;
+    }
+
+    if (Array.isArray(data) && data.length > 0) {
+      return { data, error: null };
+    }
+
+    const isLastCandidate = index === candidates.length - 1;
+    if (accessRole !== 'teacher' || isLastCandidate) {
+      return { data: data || [], error: null };
+    }
+  }
+
+  return { data: [], error: lastError };
+}
+
 // Get assignments for a class
 app.get('/api/classes/:classId/assignments', async (req, res) => {
   try {
@@ -800,15 +839,7 @@ app.get('/api/classes/:classId/assignments', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
     const access = await ensureUserCanAccessClass(req.params.classId, user.id);
     if (!access) return res.status(403).json({ error: 'You do not have access to this class.' });
-    let query = supabase
-      .from('assignments')
-      .select('*')
-      .eq('class_id', req.params.classId)
-      .order('created_at', { ascending: false });
-    if (access.role === 'student') {
-      query = query.eq('status', 'published');
-    }
-    const { data, error } = await query;
+    const { data, error } = await queryAssignmentsForClass(req, req.params.classId, access.role);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ assignments: data });
   } catch (error) {

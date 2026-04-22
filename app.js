@@ -1573,11 +1573,11 @@ async function bootApp(profile) {
 }
 
 async function loadTeacherClassContext(classId) {
+  const previousAssignments = safeArray(state.assignments).slice();
+  const previousSubmissions = safeArray(state.submissions).slice();
+  const previousMembers = safeArray(currentClassMembers).slice();
   currentClassId = classId || null;
   saveActiveClassId(currentProfile, currentClassId);
-  currentClassMembers = [];
-  state.assignments = [];
-  state.submissions = [];
   ui.selectedAssignmentId = null;
   ui.selectedReviewSubmissionId = null;
   ui.selectedReviewStudentId = null;
@@ -1588,8 +1588,19 @@ async function loadTeacherClassContext(classId) {
     Auth.apiFetch(`/api/classes/${currentClassId}/members`),
     Auth.apiFetch(`/api/classes/${currentClassId}/assignments`)
   ]);
+
+  if (membersData?.error || assignData?.error) {
+    currentClassMembers = previousMembers;
+    state.assignments = previousAssignments;
+    state.submissions = previousSubmissions;
+    ui.notice = assignData?.error || membersData?.error || "We couldn't load this class right now.";
+    persistState();
+    return;
+  }
+
   currentClassMembers = membersData.members || [];
-  const raw = assignData.assignments || [];
+  const raw = safeArray(assignData.assignments);
+  state.submissions = [];
   state.assignments = raw.map((a) => normalizeAssignment({
     id: a.id,
     title: a.title || '',
@@ -1612,6 +1623,7 @@ async function loadTeacherClassContext(classId) {
     classId: a.class_id || currentClassId,
       ideaRequestLimit: 3,
   }));
+  ui.notice = "";
   persistState();
 }
 
@@ -1642,10 +1654,11 @@ async function loadStudentAssignmentsForCurrentClass() {
     const successfulResults = results
       .filter((result) => result.status === "fulfilled")
       .map((result) => result.value);
-    if (!successfulResults.length) {
+    const resultsWithAssignments = successfulResults.filter((result) => !result?.error);
+    if (!resultsWithAssignments.length) {
       throw new Error("No class assignment requests succeeded");
     }
-    const rawAssignments = successfulResults.flatMap((result) => safeArray(result?.assignments));
+    const rawAssignments = resultsWithAssignments.flatMap((result) => safeArray(result?.assignments));
 
     state.assignments = rawAssignments
       .filter((a) => a.status === 'published')
@@ -1674,9 +1687,11 @@ async function loadStudentAssignmentsForCurrentClass() {
     recoverStudentActiveClass(currentProfile);
     const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
     state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
+    ui.notice = "";
     persistState();
   } catch (error) {
     console.error("Could not load student assignments:", error.message, error);
+    ui.notice = "We couldn't load assignments from the server just now.";
   }
 }
 
