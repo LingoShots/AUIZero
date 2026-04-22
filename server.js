@@ -455,11 +455,53 @@ app.get('/api/classes/:classId/members', async (req, res) => {
 
 // ── Assignments endpoints ────────────────────────────────────
 
+const ASSIGNMENT_ALLOWED_FIELDS = new Set([
+  'title',
+  'prompt',
+  'brief',
+  'focus',
+  'assignment_type',
+  'language_level',
+  'word_count_min',
+  'word_count_max',
+  'idea_request_limit',
+  'feedback_request_limit',
+  'chat_time_limit',
+  'student_focus',
+  'rubric',
+  'status',
+  'deadline',
+  'uploaded_rubric_text',
+]);
+
+const SUBMISSION_ALLOWED_FIELDS = new Set([
+  'draft_text',
+  'final_text',
+  'reflections',
+  'chat_history',
+  'writing_events',
+  'feedback_history',
+  'focus_annotations',
+  'teacher_review',
+  'self_assessment',
+  'status',
+  'chat_started_at',
+  'started_at',
+  'submitted_at',
+]);
+
+function sanitizePayload(payload = {}, allowedFields = new Set()) {
+  return Object.fromEntries(
+    Object.entries(payload || {}).filter(([key, value]) => allowedFields.has(key) && value !== undefined)
+  );
+}
+
 function sanitizeAssignmentPayload(payload = {}) {
-  const next = { ...payload };
-  delete next.uploaded_rubric_name;
-  delete next.uploadedRubricName;
-  return next;
+  return sanitizePayload(payload, ASSIGNMENT_ALLOWED_FIELDS);
+}
+
+function sanitizeSubmissionPayload(payload = {}) {
+  return sanitizePayload(payload, SUBMISSION_ALLOWED_FIELDS);
 }
 
 // Get assignments for a class
@@ -620,7 +662,7 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only review submissions for your own assignments.' });
     const enrolledStudent = await ensureStudentBelongsToClass(ownedAssignment.class_id, studentId);
     if (!enrolledStudent) return res.status(400).json({ error: 'That student is not enrolled in this class.' });
-    const payload = { ...req.body, updated_at: new Date().toISOString() };
+    const payload = { ...sanitizeSubmissionPayload(req.body), updated_at: new Date().toISOString() };
 
     let { data, error } = await supabase
       .from('submissions')
@@ -675,7 +717,7 @@ app.patch('/api/submissions/:id', async (req, res) => {
     }
     const { data, error } = await supabase
       .from('submissions')
-      .update({ ...req.body, updated_at: new Date().toISOString() })
+      .update({ ...sanitizeSubmissionPayload(req.body), updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select('*, profiles(id, name)')
       .single();

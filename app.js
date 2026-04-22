@@ -287,6 +287,44 @@ function matrixRubricToSchema(source, fallbackName = "Uploaded rubric") {
   }, fallbackName);
 }
 
+function simpleRubricRowsToSchema(source, fallbackName = "Rubric") {
+  const rows = safeArray(source)
+    .filter((row) => row && typeof row === "object")
+    .map((row, rowIndex) => {
+      const rowPoints = Math.max(0, Number(row?.points || 0));
+      const rawLevels = safeArray(row?.bands).length
+        ? safeArray(row.bands)
+        : (safeArray(row?.levels).length ? safeArray(row.levels) : []);
+      const levels = rawLevels
+        .map((level, levelIndex) => ({
+          id: level?.id || `${slugifyRubricId(row?.id || row?.name || `criterion-${rowIndex + 1}`, `criterion-${rowIndex + 1}`)}-level-${levelIndex + 1}`,
+          label: String(level?.label || `Level ${levelIndex + 1}`).trim(),
+          score: Number(level?.score ?? level?.points ?? 0),
+          description: String(level?.description || "").trim(),
+        }))
+        .filter((level) => level.label || level.description || Number.isFinite(level.score));
+
+      if (!String(row?.name || "").trim() || !levels.length) return null;
+
+      return {
+        id: String(row?.id || slugifyRubricId(row.name, `criterion-${rowIndex + 1}`)).trim(),
+        name: String(row.name).trim(),
+        minScore: Math.min(...levels.map((level) => Number(level.score || 0)), rowPoints || 0),
+        maxScore: rowPoints || Math.max(...levels.map((level) => Number(level.score || 0)), 0),
+        levels: levels.sort((a, b) => Number(b.score || 0) - Number(a.score || 0)),
+      };
+    })
+    .filter(Boolean);
+
+  if (!rows.length) return null;
+
+  return normalizeRubricSchema({
+    title: fallbackName,
+    totalPoints: rows.reduce((sum, row) => sum + Number(row.maxScore || 0), 0),
+    criteria: rows,
+  }, fallbackName);
+}
+
 function getMatrixRubricData(source) {
   if (source?.headers && safeArray(source?.rows).length) {
     return {
@@ -333,6 +371,9 @@ function getRubricSchema(source, fallbackName = "Uploaded rubric") {
 
   const matrix = getMatrixRubricData(source);
   if (matrix) return matrixRubricToSchema(matrix, fallbackName);
+
+  const simpleSchema = simpleRubricRowsToSchema(source, fallbackName);
+  if (simpleSchema) return simpleSchema;
 
   return null;
 }
@@ -1151,7 +1192,7 @@ async function bootApp(profile) {
   // Auto-join class if arriving via invite link
   try { await Auth.joinClassIfInvited(); } catch(e) { console.warn("Join class skipped:", e.message); }
 
-    if (profile.role === 'teacher') {
+  if (profile.role === 'teacher') {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
     currentClassId = currentClasses[0]?.id || null;
@@ -1159,9 +1200,7 @@ async function bootApp(profile) {
       await loadTeacherClassContext(currentClassId);
     }
   } else {
-    const data = await Auth.apiFetch('/api/student/classes');
-    currentClasses = data.classes || [];
-    currentClassId = currentClasses[0]?.id || null;
+    await refreshStudentClasses();
     state.assignments = [];
     state.submissions = [];
     await loadStudentAssignmentsForCurrentClass();
@@ -1215,8 +1254,20 @@ async function loadTeacherClassContext(classId) {
   persistState();
 }
 
+async function refreshStudentClasses(preferredClassId = currentClassId) {
+  const data = await Auth.apiFetch('/api/student/classes');
+  currentClasses = data.classes || [];
+  if (preferredClassId && currentClasses.some((cls) => cls.id === preferredClassId)) {
+    currentClassId = preferredClassId;
+  } else {
+    currentClassId = currentClasses[0]?.id || null;
+  }
+  return currentClasses;
+}
+
 async function loadStudentAssignmentsForCurrentClass() {
-  if (!currentClassId) {
+  const classIds = currentClasses.map((cls) => cls.id).filter(Boolean);
+  if (!classIds.length) {
     state.assignments = [];
     state.submissions = [];
     persistState();
@@ -1224,11 +1275,13 @@ async function loadStudentAssignmentsForCurrentClass() {
   }
 
   try {
-    const assignData = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`);
-    const raw = assignData.assignments || [];
+    const results = await Promise.all(
+      classIds.map((classId) => Auth.apiFetch(`/api/classes/${classId}/assignments`))
+    );
+    const rawAssignments = results.flatMap((result) => safeArray(result?.assignments));
 
-    state.assignments = raw
-      .filter(a => a.status === 'published')
+    state.assignments = rawAssignments
+      .filter((a) => a.status === 'published')
       .map((a) => normalizeAssignment({
         id: a.id,
         title: a.title || '',
@@ -1726,6 +1779,10 @@ if (action === "generate-teacher-assist") {
   if (action === "save-draft") {
     const submission = getStudentSubmission();
     if (!submission) return;
+    const draftEditor = document.getElementById("draft-editor");
+    if (draftEditor) {
+      submission.draftText = draftEditor.value;
+    }
     submission.updatedAt = new Date().toISOString();
     persistState();
     await syncSubmissionToServer(submission);
@@ -1736,21 +1793,29 @@ if (action === "generate-teacher-assist") {
   }
 
 if (action === "switch-class") {
+    pauseActiveChatSession();
     currentClassId = target.dataset.classId;
     ui.selectedStudentAssignmentId = null;
-    await loadStudentAssignmentsForCurrentClass();
     hydrateSelections();
     render();
+    loadStudentAssignmentsForCurrentClass().then(() => {
+      hydrateSelections();
+      render();
+    });
     return;
   }
 
   if (action === "open-assignment") {
+    pauseActiveChatSession();
     currentClassId = target.dataset.classId;
-    await loadStudentAssignmentsForCurrentClass();
     ui.selectedStudentAssignmentId = target.dataset.assignmentId;
     ui.studentStep = 1;
     ensureStudentSubmission();
     render();
+    loadStudentAssignmentsForCurrentClass().then(async () => {
+      await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+      render();
+    });
     return;
   }
 
@@ -2098,6 +2163,9 @@ if (action === "select-assignment") {
       }
     }
     if (canAdvanceToStep(nextStep)) {
+      if (ui.studentStep === 1 && nextStep !== 1) {
+        pauseActiveChatSession();
+      }
       ui.studentStep = nextStep;
       ui.notice = "";
     } else {
@@ -2111,6 +2179,7 @@ if (action === "select-assignment") {
     const submission = getStudentSubmission();
     if (!submission) return;
     const notes = document.getElementById("chat-skip-notes");
+    pauseActiveChatSession();
     submission.chatSkippedAt = new Date().toISOString();
     if (notes) {
       submission.outline.partOne = notes.value.trim();
@@ -2124,6 +2193,9 @@ if (action === "select-assignment") {
   }
 
   if (action === "student-prev-step") {
+    if (ui.studentStep === 1 && Number(target.dataset.step) !== 1) {
+      pauseActiveChatSession();
+    }
     ui.studentStep = Number(target.dataset.step);
     ui.notice = "";
     render();
@@ -2496,14 +2568,18 @@ if (target.id === "playback-speed") {
   }
 
 if (target.id === "student-class-select") {
+    pauseActiveChatSession();
     currentClassId = target.value;
     ui.selectedStudentAssignmentId = null;
-    await loadStudentAssignmentsForCurrentClass();
     hydrateSelections();
-    if (ui.selectedStudentAssignmentId) {
-      await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
-    }
     render();
+    loadStudentAssignmentsForCurrentClass().then(async () => {
+      hydrateSelections();
+      if (ui.selectedStudentAssignmentId) {
+        await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+      }
+      render();
+    });
     return;
   }
 
@@ -4323,6 +4399,10 @@ function applyTeacherAssistToDraft() {
 async function saveTeacherAssignment() {
   // Use the editable AI draft if present, otherwise fall back to teacherDraft
   const source = ui.teacherAssist || ui.teacherDraft;
+  const classSelect = document.getElementById("class-select");
+  const selectedClassId = classSelect?.value && classSelect.value !== "__new__"
+    ? classSelect.value
+    : currentClassId;
   const draft = ui.teacherAssist
     ? {
         title: (ui.teacherAssist.title || "").trim(),
@@ -4397,13 +4477,14 @@ async function saveTeacherAssignment() {
     uploadedRubricSchema: ui.teacherDraft.uploadedRubricSchema || null,
   };
 
-  if (!currentClassId) {
+  if (!selectedClassId) {
     ui.notice = "Please select or create a class before saving an assignment.";
     render();
     return;
   }
+  currentClassId = selectedClassId;
 
-  const data = await Auth.apiFetch(`/api/classes/${currentClassId}/assignments`, {
+  const data = await Auth.apiFetch(`/api/classes/${selectedClassId}/assignments`, {
     method: 'POST',
     body: JSON.stringify({
       title: assignment.title,
@@ -4430,7 +4511,7 @@ async function saveTeacherAssignment() {
   }
 
   const savedAssignmentId = data.assignment?.id || null;
-  await loadTeacherClassContext(currentClassId);
+  await loadTeacherClassContext(selectedClassId);
   ui.selectedAssignmentId = savedAssignmentId || state.assignments[0]?.id || null;
   ui.selectedReviewSubmissionId = null;
   ui.teacherDraft = createBlankTeacherDraft();
@@ -6332,14 +6413,10 @@ async function syncSubmissionToServer(submission) {
     const serverId = existing.submission?.id;
     if (!serverId) return;
     const payload = {
-      idea_responses: submission.ideaResponses || [],
       draft_text: submission.draftText || "",
       final_text: submission.finalText || "",
       reflections: submission.reflections || { improved: "" },
-      outline: submission.outline || { partOne: "", partTwo: "", partThree: "" },
       chat_history: submission.chatHistory || [],
-      chat_skipped_at: submission.chatSkippedAt || null,
-      chat_expired_at: submission.chatExpiredAt || null,
       writing_events: submission.writingEvents || [],
       feedback_history: submission.feedbackHistory || [],
       focus_annotations: submission.focusAnnotations || [],
@@ -6349,14 +6426,20 @@ async function syncSubmissionToServer(submission) {
       started_at: submission.startedAt || null,
       submitted_at: submission.submittedAt || null,
     };
-    await Auth.apiFetch(`/api/submissions/${serverId}`, {
+    const result = await Auth.apiFetch(`/api/submissions/${serverId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload)
     });
+    if (result?.error) {
+      throw new Error(result.error);
+    }
     // Update local submission ID to match server
     submission.id = serverId;
+    return true;
   } catch (e) {
     console.error("Could not sync submission to server:", e.message, e);
+    ui.notice = "We couldn't save to the server just now. Your work is still on this device.";
+    return false;
   }
 }
 
