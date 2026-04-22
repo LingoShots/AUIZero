@@ -55,6 +55,7 @@ const ui = {
     index: 0,
     timerId: null,
   },
+  lastAnnotationSelection: "",
   pendingPaste: null,
   notice: "",
   expandedContextCol: null,
@@ -715,10 +716,10 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
         </div>
       ` : ""}
       ${schema.criteria[0]?.levels?.length ? `
-        <div class="rubric-level-legend" style="grid-template-columns:repeat(auto-fit, minmax(${previewMode ? 150 : 170}px, 1fr));">
+        <div class="rubric-level-legend" style="grid-template-columns:repeat(auto-fit, minmax(${previewMode ? 170 : 180}px, 1fr));">
           ${schema.criteria[0].levels.map((level) => {
             const theme = levelTheme(level.label);
-            return `<span class="rubric-level-legend-chip" style="background:${theme.badge};color:${theme.text};">${escapeHtml(level.label)} — ${level.score} pts</span>`;
+            return `<span class="rubric-level-legend-chip" style="background:${theme.badge};color:${theme.text};display:flex;align-items:center;justify-content:center;text-align:center;white-space:normal;line-height:1.35;min-height:56px;padding:10px 12px;">${escapeHtml(level.label)} — ${level.score} pts</span>`;
           }).join("")}
         </div>
       ` : ""}
@@ -1018,16 +1019,16 @@ function hasLowSentenceVariety(sentences = []) {
 }
 
 function scrollToNextRubricCriterionMobile(criterionId) {
-  if (!criterionId || typeof window === "undefined" || !window.matchMedia("(max-width: 760px)").matches) return;
+  if (!criterionId || typeof window === "undefined" || !window.matchMedia("(max-width: 900px)").matches) return;
   window.setTimeout(() => {
     const sections = Array.from(document.querySelectorAll("[data-rubric-criterion-id]"));
     const currentIndex = sections.findIndex((section) => section.dataset.rubricCriterionId === criterionId);
     if (currentIndex === -1) return;
     const nextSection = sections[currentIndex + 1];
     if (nextSection) {
-      nextSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      nextSection.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, 90);
+  }, 140);
 }
 
 function isChatSessionExpired(assignment, submission) {
@@ -2064,7 +2065,8 @@ if (action === "generate-teacher-assist") {
     const code = target.dataset.code;
     const selection = window.getSelection();
     const selectedText = selection ? selection.toString().trim() : "";
-    if (!selectedText) {
+    const annotationText = selectedText || ui.lastAnnotationSelection || "";
+    if (!annotationText) {
       alert("Please select some text in the student text box first, then click a code.");
       return;
     }
@@ -2075,7 +2077,8 @@ if (action === "generate-teacher-assist") {
     }
     submission.teacherReview = submission.teacherReview || {};
     submission.teacherReview.annotations = submission.teacherReview.annotations || [];
-    submission.teacherReview.annotations.push({ id: uid("ann"), code, selectedText, note });
+    submission.teacherReview.annotations.push({ id: uid("ann"), code, selectedText: annotationText, note });
+    ui.lastAnnotationSelection = annotationText;
     persistState();
     render();
     return;
@@ -2133,6 +2136,7 @@ if (action === "switch-class") {
     pauseActiveChatSession();
     currentClassId = target.dataset.classId;
     ui.selectedStudentAssignmentId = null;
+    ui.notice = "";
     hydrateSelections();
     render();
     loadStudentAssignmentsForCurrentClass().then(() => {
@@ -2147,6 +2151,7 @@ if (action === "switch-class") {
     currentClassId = target.dataset.classId;
     ui.selectedStudentAssignmentId = target.dataset.assignmentId;
     ui.studentStep = 1;
+    ui.notice = "";
     ensureStudentSubmission();
     render();
     loadStudentAssignmentsForCurrentClass().then(async () => {
@@ -2754,6 +2759,9 @@ if (action === "select-assignment") {
     ui.notice = "Suggested grading is ready to review.";
     persistState();
     render();
+    window.requestAnimationFrame(() => {
+      document.getElementById("suggested-grade-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     return;
   }
 
@@ -2960,6 +2968,7 @@ if (target.id === "student-class-select") {
     pauseActiveChatSession();
     currentClassId = target.value;
     ui.selectedStudentAssignmentId = null;
+    ui.notice = "";
     hydrateSelections();
     render();
     loadStudentAssignmentsForCurrentClass().then(async () => {
@@ -3016,6 +3025,7 @@ if (target.id === "student-class-select") {
   if (target.id === "student-assignment-select") {
     ui.selectedStudentAssignmentId = target.value;
     ui.studentStep = 1;
+    ui.notice = "";
     ensureStudentSubmission();
     const loaded = await loadStudentSubmissionForAssignment(target.value);
     ui.studentStep = getStudentStepForSubmission(loaded || getStudentSubmission());
@@ -3754,7 +3764,7 @@ function renderTeacherWorkspace() {
   const rubricUploadField = `
     <div class="field">
       <label>Rubric (optional — drag and drop or click to upload)</label>
-      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:24px 18px;min-height:104px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;display:grid;place-items:center;"
+      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:28px 18px;min-height:124px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;display:grid;place-items:center;"
         ondragover="event.preventDefault();this.style.borderColor='var(--accent)';"
         ondragleave="this.style.borderColor='var(--line)';"
         ondrop="handleRubricDrop(event);"
@@ -3865,6 +3875,16 @@ function renderTeacherWorkspace() {
             <label for="teacher-brief">Teacher brief</label>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
+          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
+                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
+              </div>
+              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
+            </div>
+            ${assignmentSettingsFields}
+          </div>
           ${ui.aiAssistLoading ? `
             <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
               <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
@@ -3876,16 +3896,6 @@ function renderTeacherWorkspace() {
               </div>
             </div>
           ` : ""}
-          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
-            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
-              <div>
-                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
-              </div>
-              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
-            </div>
-            ${assignmentSettingsFields}
-          </div>
         </div>
         ${
           ui.teacherAssist
@@ -4265,6 +4275,7 @@ function renderTeacherGrading(assignment, submission) {
   const deadlinePassed = canMarkLateOrMissing(assignment);
   const currentStatus = submission.status || submission.teacherReview?.status || "not_started";
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.uploadedRubricData || assignment.rubric, assignment.uploadedRubricName || assignment.title);
+  const playback = getPlaybackState(submission);
 
   return `
     <section class="panel review-shell">
@@ -4304,7 +4315,7 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-                                                            <div id="student-text-annotate" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:260px;max-height:min(72vh,720px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+            <div id="student-text-annotate" onmouseup="captureAnnotationSelection()" onkeyup="captureAnnotationSelection()" ontouchend="captureAnnotationSelection()" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:320px;max-height:min(78vh,900px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
           </div>
 
           <div style="margin-bottom:16px;">
@@ -4342,6 +4353,26 @@ function renderTeacherGrading(assignment, submission) {
           </details>
 
           <details style="margin-bottom:16px;">
+            <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Letter-by-letter playback</summary>
+            <div style="margin-top:10px;">
+              <div class="pill-row" style="margin-bottom:10px;">
+                <button class="button-ghost" data-action="playback-step" data-direction="-1" ${playback.frames.length <= 1 ? "disabled" : ""}>← Back</button>
+                <button class="button-ghost" data-action="playback-toggle" ${playback.frames.length <= 1 ? "disabled" : ""}>${ui.playback.isPlaying ? "Pause" : "Play"}</button>
+                <button class="button-ghost" data-action="playback-step" data-direction="1" ${playback.frames.length <= 1 ? "disabled" : ""}>Next →</button>
+                <label class="subtle" style="display:flex;align-items:center;gap:8px;">Speed
+                  <select id="playback-speed">
+                    ${[0.5, 1, 1.5, 2, 3].map((speed) => `<option value="${speed}" ${Number(ui.playback.speed) === Number(speed) ? "selected" : ""}>${speed}×</option>`).join("")}
+                  </select>
+                </label>
+                <span id="playback-meta" class="pill">${escapeHtml(`Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}`)}</span>
+              </div>
+              <input id="playback-slider" type="range" min="0" max="${Math.max(playback.frames.length - 1, 0)}" value="${playback.index}" style="width:100%;margin-bottom:10px;" ${playback.frames.length <= 1 ? "disabled" : ""} />
+              <div id="playback-label" class="subtle" style="margin-bottom:8px;">${escapeHtml(playback.label)}</div>
+              <div id="playback-screen" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:180px;max-height:380px;overflow:auto;"><pre style="margin:0;white-space:pre-wrap;word-break:break-word;">${escapeHtml(playback.text)}</pre></div>
+            </div>
+          </details>
+
+          <details style="margin-bottom:16px;">
             <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Coaching chat (${(submission.chatHistory || []).filter(m => m.role === "user").length} student messages)</summary>
             <div style="margin-top:10px;max-height:200px;overflow-y:auto;display:grid;gap:6px;">
               ${(submission.chatHistory || []).map(m => `
@@ -4351,6 +4382,10 @@ function renderTeacherGrading(assignment, submission) {
                 </div>
               `).join("")}
             </div>
+            <div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:#f8fbff;border:1px solid var(--line);">
+              <strong style="display:block;font-size:0.8rem;margin-bottom:4px;color:var(--muted);">Reflection — what I improved</strong>
+              <p style="margin:0;white-space:pre-wrap;line-height:1.6;">${escapeHtml(submission.reflections?.improved || "No reflection written yet.")}</p>
+            </div>
           </details>
 
         </div>
@@ -4358,7 +4393,7 @@ function renderTeacherGrading(assignment, submission) {
         <div class="review-card">
 
           ${submission.teacherReview?.suggestedGrade ? `
-            <div style="margin-bottom:16px;padding:14px;background:#f4efe6;border-radius:12px;border:1px solid var(--line);">
+            <div id="suggested-grade-panel" style="margin-bottom:16px;padding:14px;background:#f4efe6;border-radius:12px;border:1px solid var(--line);">
               <p class="mini-label" style="margin-bottom:6px;">AI suggested grade</p>
               <div style="font-size:1.2rem;font-weight:700;margin-bottom:6px;">${submission.teacherReview.suggestedGrade.totalScore}/${submission.teacherReview.suggestedGrade.maxScore}</div>
               <p style="font-size:0.85rem;color:var(--muted);margin:0 0 10px;">${escapeHtml(submission.teacherReview.suggestedGrade.justification)}</p>
@@ -4557,6 +4592,7 @@ function renderStudentWorkspace() {
             ${assignmentBuckets.submitted.some(({ isGraded }) => isGraded) ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded work available</span>` : ""}
           </div>
         ` : ""}
+        ${assignmentBuckets.submitted.some(({ isGraded }) => isGraded) ? `<p class="subtle" style="margin-top:8px;font-size:0.84rem;">Open any assignment marked <strong>Graded</strong> to view your teacher’s notes, rubric breakdown, and marked copy.</p>` : ""}
         ${
           !assignments.length
             ? `<div class="empty-state"><h3>Nothing here yet</h3><p>Your teacher hasn't published any assignments yet.</p></div>`
@@ -4805,7 +4841,13 @@ function renderStudentFinalStep(assignment, submission) {
         </div>
         ${submission.teacherReview?.savedAt ? `
           <div class="teacher-ready-card" style="margin-top:14px;border-left:4px solid var(--accent);">
-            <p class="mini-label">Teacher feedback</p>
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+              <div>
+                <p class="mini-label">Teacher feedback</p>
+                <p class="subtle" style="margin:4px 0 0;">Your teacher’s score, comments, rubric breakdown, and marked copy are below.</p>
+              </div>
+              <button class="button-ghost" data-action="download-work" style="font-size:0.82rem;">⬇ Download graded report</button>
+            </div>
             ${submission.teacherReview.finalScore !== "" ? `
               <div style="font-size:1.3rem;font-weight:700;margin-bottom:8px;">
                 Score: ${escapeHtml(String(submission.teacherReview.finalScore))}
@@ -4813,6 +4855,19 @@ function renderStudentFinalStep(assignment, submission) {
             ` : ""}
             ${submission.teacherReview.finalNotes ? `
               <p style="white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.teacherReview.finalNotes)}</p>
+            ` : ""}
+            ${getTeacherReviewRowsForExport(assignment, submission).length ? `
+              <div style="display:grid;gap:8px;margin:12px 0 14px;">
+                ${getTeacherReviewRowsForExport(assignment, submission).map((row) => `
+                  <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fbfdff;">
+                    <div style="min-width:0;">
+                      <strong style="display:block;margin-bottom:4px;">${escapeHtml(row.criterion)}</strong>
+                      <span class="subtle" style="font-size:0.82rem;">${escapeHtml(row.selectedLabel || "Not scored")}</span>
+                    </div>
+                    <strong style="white-space:nowrap;">${row.selectedPoints}/${row.maxPoints}</strong>
+                  </div>
+                `).join("")}
+              </div>
             ` : ""}
             ${submission.teacherReview.annotations?.length ? `
               <div style="margin-top:12px;">
@@ -5131,7 +5186,7 @@ function handleSubmission() {
   syncSubmissionToServer(submission)
   .then((result) => {
     console.log("Sync result:", result);
-    ui.notice = "Final work submitted. Your teacher will review it soon.";
+    ui.notice = "";
     render();
     window.requestAnimationFrame(() => {
       document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -6117,6 +6172,19 @@ function scrollToComment(annotationId) {
   flashScrollTarget(document.getElementById(`comment-${annotationId}`));
 }
 
+function captureAnnotationSelection() {
+  const container = document.getElementById("student-text-annotate");
+  const selection = window.getSelection();
+  if (!container || !selection || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  const selectedText = selection.toString().trim();
+  if (!selectedText) return;
+  const commonNode = range.commonAncestorContainer;
+  if (container.contains(commonNode)) {
+    ui.lastAnnotationSelection = selectedText;
+  }
+}
+
 function renderAnnotatedText(submission) {
   const text = submission?.finalText || submission?.draftText || "No text submitted yet.";
   const annotations = submission?.teacherReview?.annotations || [];
@@ -6125,28 +6193,41 @@ function renderAnnotatedText(submission) {
   );
 
   const highlights = [];
+  const pasteRanges = [];
+  const searchStarts = new Map();
+
+  const findNextSequentialIndex = (needle) => {
+    if (!needle) return -1;
+    const start = Number(searchStarts.get(needle) || 0);
+    let idx = text.indexOf(needle, start);
+    if (idx === -1 && start > 0) {
+      idx = text.indexOf(needle);
+    }
+    if (idx !== -1) {
+      searchStarts.set(needle, idx + Math.max(needle.length, 1));
+    }
+    return idx;
+  };
 
   for (const paste of flaggedPastes) {
-    const idx = text.indexOf(paste.insertedText);
+    const idx = findNextSequentialIndex(paste.insertedText);
     if (idx !== -1) {
+      const end = idx + paste.insertedText.length;
+      pasteRanges.push({ start: idx, end });
       highlights.push({
         start: idx,
-        end: idx + paste.insertedText.length,
+        end,
         type: "paste",
       });
     }
   }
 
+  searchStarts.clear();
   for (const ann of annotations) {
-    const idx = text.indexOf(ann.selectedText);
+    const idx = findNextSequentialIndex(ann.selectedText);
     if (idx !== -1) {
       const end = idx + ann.selectedText.length;
-      const overlapsPaste = flaggedPastes.some((paste) => {
-        const pasteIdx = text.indexOf(paste.insertedText);
-        if (pasteIdx === -1) return false;
-        const pasteEnd = pasteIdx + paste.insertedText.length;
-        return idx < pasteEnd && end > pasteIdx;
-      });
+      const overlapsPaste = pasteRanges.some((range) => idx < range.end && end > range.start);
 
       highlights.push({
         start: idx,
@@ -6304,13 +6385,8 @@ ${(submission.teacherReview?.annotations?.length) ? `
   </tbody>
 </table>` : ""}
 
-<h2>Guided outline</h2>
-<p><strong>Part 1:</strong> ${escapeHtml(submission.outline?.partOne || "—")}</p>
-<p><strong>Part 2:</strong> ${escapeHtml(submission.outline?.partTwo || "—")}</p>
-<p><strong>Part 3:</strong> ${escapeHtml(submission.outline?.partThree || "—")}</p>
-
-<h2>Reflection — what I improved</h2>
-<p>${escapeHtml(submission.reflections?.improved || "—")}</p>
+  <h2>Reflection — what I improved</h2>
+  <p>${escapeHtml(submission.reflections?.improved || "—")}</p>
 
 </body>
 </html>`;
