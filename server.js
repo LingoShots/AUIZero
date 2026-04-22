@@ -11,16 +11,47 @@ app.use(express.static(__dirname));
 app.use(express.json());
 
 // Supabase admin client (service role — server only)
+const SUPABASE_SERVER_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_KEY;
+const SUPABASE_BROWSER_KEY =
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.SUPABASE_PUBLIC_KEY;
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  SUPABASE_SERVER_KEY
 );
+
+if (!process.env.SUPABASE_URL || !SUPABASE_SERVER_KEY) {
+  console.warn('Supabase server client is missing SUPABASE_URL or a service-role key.');
+}
+
+function getBearerToken(req) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  return auth.slice(7);
+}
+
+function getRequestScopedSupabase(req) {
+  const token = getBearerToken(req);
+  if (!process.env.SUPABASE_URL || !SUPABASE_BROWSER_KEY || !token) {
+    return supabase;
+  }
+  return createClient(process.env.SUPABASE_URL, SUPABASE_BROWSER_KEY, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+}
 
 // Helper to get authenticated user from request
 async function getUser(req) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7);
+  const token = getBearerToken(req);
+  if (!token) return null;
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) return null;
   return user;
@@ -447,7 +478,11 @@ app.get('/api/classes/:classId/members', async (req, res) => {
       .select('student_id, profiles(id, name)')
       .eq('class_id', req.params.classId);
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ members: data.map(d => d.profiles) });
+    res.json({
+      members: data
+        .filter((entry) => entry.student_id !== user.id && entry.profiles)
+        .map((entry) => entry.profiles),
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -535,12 +570,22 @@ app.post('/api/classes/:classId/assignments', async (req, res) => {
     const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
     if (!ownedClass) return res.status(403).json({ error: 'You can only add assignments to your own classes.' });
     const payload = sanitizeAssignmentPayload(req.body);
-    const { data, error } = await supabase
+    const assignmentClient = getRequestScopedSupabase(req);
+    const { data, error } = await assignmentClient
       .from('assignments')
       .insert({ ...payload, class_id: req.params.classId })
       .select()
       .single();
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      if (/row-level security policy/i.test(error.message || "")) {
+        return res.status(400).json({
+          error: SUPABASE_BROWSER_KEY
+            ? 'Assignment save is blocked by Supabase RLS for this teacher account. Please check the assignments insert policy in Supabase.'
+            : 'Assignment save is blocked by Supabase RLS. Check that the server deploy is using SUPABASE_SERVICE_ROLE_KEY (or set SUPABASE_ANON_KEY so the server can write with the teacher session).'
+        });
+      }
+      return res.status(400).json({ error: error.message });
+    }
     res.json({ assignment: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -555,7 +600,8 @@ app.patch('/api/assignments/:id', async (req, res) => {
     const ownedAssignment = await ensureTeacherOwnsAssignment(req.params.id, user.id);
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only update assignments in your own classes.' });
     const payload = sanitizeAssignmentPayload(req.body);
-    const { data, error } = await supabase
+    const assignmentClient = getRequestScopedSupabase(req);
+    const { data, error } = await assignmentClient
       .from('assignments')
       .update(payload)
       .eq('id', req.params.id)
