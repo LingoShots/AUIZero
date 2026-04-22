@@ -66,6 +66,83 @@ function getRequestBaseUrl(req) {
   return 'http://localhost:3000';
 }
 
+async function maybeSendAssignmentPublishedEmails(req, assignmentRecord) {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.NOTIFY_FROM_EMAIL || process.env.RESEND_FROM_EMAIL;
+  if (!resendApiKey || !fromEmail || !assignmentRecord?.class_id) {
+    return { sent: 0, skipped: true };
+  }
+
+  const [{ data: classRecord, error: classError }, { data: members, error: memberError }] = await Promise.all([
+    supabase.from('classes').select('name').eq('id', assignmentRecord.class_id).maybeSingle(),
+    supabase.from('class_members').select('student_id').eq('class_id', assignmentRecord.class_id),
+  ]);
+  if (classError) throw classError;
+  if (memberError) throw memberError;
+
+  const recipientIds = [...new Set((members || []).map((member) => member.student_id).filter(Boolean))];
+  if (!recipientIds.length) {
+    return { sent: 0, skipped: true };
+  }
+
+  const { data: authUsers, error: authUsersError } = await supabase.auth.admin.listUsers();
+  if (authUsersError) throw authUsersError;
+  const recipients = authUsers.users
+    .filter((user) => recipientIds.includes(user.id) && user.email)
+    .map((user) => user.email.trim())
+    .filter(Boolean);
+
+  if (!recipients.length) {
+    return { sent: 0, skipped: true };
+  }
+
+  const className = classRecord?.name || "your class";
+  const appUrl = getRequestBaseUrl(req);
+  const deadlineText = assignmentRecord.deadline
+    ? `Deadline: ${new Date(assignmentRecord.deadline).toLocaleString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })}`
+    : 'No deadline has been set yet.';
+
+  let sentCount = 0;
+  for (const email of recipients) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${resendApiKey}`,
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: [email],
+        subject: `New assignment in ${className}: ${assignmentRecord.title}`,
+        text: `A new assignment has been published in ${className} on praxis.\n\nAssignment: ${assignmentRecord.title}\n${deadlineText}\n\nOpen praxis to view it:\n${appUrl}`,
+        html: `
+          <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#22304a;">
+            <p style="margin:0 0 12px;">A new assignment has been published in <strong>${className}</strong> on <strong>praxis</strong>.</p>
+            <p style="margin:0 0 12px;"><strong>${assignmentRecord.title}</strong></p>
+            <p style="margin:0 0 16px;">${deadlineText}</p>
+            <p style="margin:0;"><a href="${appUrl}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#5f87ff;color:#fff;text-decoration:none;font-weight:600;">Open praxis</a></p>
+          </div>
+        `,
+      }),
+    });
+
+    if (response.ok) {
+      sentCount += 1;
+    } else {
+      const errorText = await response.text();
+      console.error(`Could not send assignment notification to ${email}:`, errorText);
+    }
+  }
+
+  return { sent: sentCount, skipped: false };
+}
+
 async function requireTeacherProfile(req) {
   const user = await getUser(req);
   if (!user) return { user: null, profile: null, error: 'Not authenticated', status: 401 };
@@ -562,6 +639,11 @@ app.patch('/api/assignments/:id', async (req, res) => {
       .select()
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    if (ownedAssignment.status !== 'published' && data?.status === 'published') {
+      maybeSendAssignmentPublishedEmails(req, data).catch((mailError) => {
+        console.error('Could not send assignment published emails:', mailError);
+      });
+    }
     res.json({ assignment: data });
   } catch (error) {
     res.status(500).json({ error: error.message });

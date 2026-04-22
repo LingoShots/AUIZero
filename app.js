@@ -817,6 +817,68 @@ function createBlankTeacherDraft() {
   };
 }
 
+function inferTeacherBriefSettings(text = "") {
+  const brief = String(text || "");
+  const inferred = {};
+
+  const explicitLevel = brief.match(/\b(?:CEFR\s*)?(A0|A1|A2|B1|B2|C1|C2)\b/i);
+  if (explicitLevel) {
+    inferred.languageLevel = explicitLevel[1].toUpperCase();
+  } else {
+    const levelKeywords = [
+      { pattern: /\bbeginner\b/i, level: "A1" },
+      { pattern: /\belementary\b/i, level: "A2" },
+      { pattern: /\bpre-?intermediate\b/i, level: "A2" },
+      { pattern: /\bintermediate\b/i, level: "B1" },
+      { pattern: /\bupper-?intermediate\b/i, level: "B2" },
+      { pattern: /\badvanced\b/i, level: "C1" },
+    ];
+    const matchedLevel = levelKeywords.find(({ pattern }) => pattern.test(brief));
+    if (matchedLevel) {
+      inferred.languageLevel = matchedLevel.level;
+    }
+  }
+
+  if (/\b(?:disable|turn off|switch off|skip|no|without)\s+(?:the\s+)?(?:chatbot|chat|coach)\b/i.test(brief)) {
+    inferred.disableChatbot = true;
+    inferred.chatTimeLimit = -1;
+  } else {
+    const unlimitedChatPattern = /\b(?:chat|chatbot|coach)\b[\s\S]{0,30}\b(?:unlimited|no limit)\b|\b(?:unlimited|no limit)\b[\s\S]{0,30}\b(?:chat|chatbot|coach)\b/i;
+    if (unlimitedChatPattern.test(brief)) {
+      inferred.chatTimeLimit = 0;
+    } else {
+      const chatPatterns = [
+        /\b(?:chat(?:bot)?|coach)(?:\s+(?:time|session))?(?:\s+limit)?(?:\s+(?:of|for|to|at|around))?[^0-9]{0,10}(\d{1,3})\s*(?:min|mins|minutes)\b/i,
+        /\b(\d{1,3})\s*(?:min|mins|minutes)\s*(?:of\s+)?(?:chat|chatbot|coach)\b/i,
+        /\bchat\s*time\s*limit[^0-9]{0,10}(\d{1,3})\b/i,
+      ];
+      for (const pattern of chatPatterns) {
+        const match = brief.match(pattern);
+        if (match) {
+          inferred.chatTimeLimit = Number(match[1]);
+          break;
+        }
+      }
+    }
+  }
+
+  const feedbackMatch = brief.match(/\b(\d+)\s*(?:feedback checks?|feedbacks?|draft checks?)\b/i);
+  if (feedbackMatch) {
+    inferred.feedbackRequestLimit = Number(feedbackMatch[1]);
+  }
+
+  const totalPointsMatch = brief.match(/\b(\d+)\s*(?:total\s*)?(?:pts|points)\b/i);
+  if (totalPointsMatch) {
+    inferred.totalPoints = Number(totalPointsMatch[1]);
+  }
+
+  const detectedType = detectAssignmentType(brief);
+  if (detectedType !== "response" || /\bresponse\b/i.test(brief)) {
+    inferred.assignmentType = detectedType;
+  }
+  return inferred;
+}
+
 function isChatDisabled(config = {}) {
   return Boolean(config?.disableChatbot) || Number(config?.chatTimeLimit ?? 0) < 0;
 }
@@ -1270,6 +1332,22 @@ async function refreshStudentClasses(preferredClassId = currentClassId) {
   return currentClasses;
 }
 
+async function refreshStudentWorkspace(preferredClassId = currentClassId, preferredAssignmentId = null) {
+  pauseActiveChatSession();
+  await refreshStudentClasses(preferredClassId);
+  await loadStudentAssignmentsForCurrentClass();
+  ui.selectedStudentAssignmentId = preferredAssignmentId;
+  hydrateSelections();
+  if (ui.selectedStudentAssignmentId) {
+    await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+  }
+  const refreshedSubmission = getStudentSubmission();
+  if (refreshedSubmission?.status === "submitted") {
+    ui.studentStep = 3;
+  }
+  render();
+}
+
 async function loadStudentAssignmentsForCurrentClass() {
   const classIds = currentClasses.map((cls) => cls.id).filter(Boolean);
   if (!classIds.length) {
@@ -1601,6 +1679,8 @@ ${rubricLine}
 Rules:
 - Keep the student prompt short and sweet: aim for 3 short paragraphs or fewer.
 - Choose the assignmentType that best matches the teacher brief. Use one of: argument, narrative, informational, process, definition, compare, response, other.
+- If the teacher brief explicitly mentions a CEFR level, feedback limit, chat time limit, chatbot on/off, total points, or deadline, return those exact settings in the JSON.
+- Prefer extracting concrete settings from the teacher brief over inventing defaults.
 - If no rubric is uploaded, make the rubric specific to the chosen writing type instead of generic.
 - Keep exactly 4 rubric criteria when no rubric is uploaded.
 ${rubricGuidanceLine}
@@ -1822,29 +1902,16 @@ if (action === "generate-teacher-assist") {
   }
 
 if (action === "switch-class") {
-    pauseActiveChatSession();
-    currentClassId = target.dataset.classId;
-    ui.selectedStudentAssignmentId = null;
-    hydrateSelections();
-    render();
-    loadStudentAssignmentsForCurrentClass().then(() => {
-      hydrateSelections();
-      render();
-    });
+    await refreshStudentWorkspace(target.dataset.classId, null);
     return;
   }
 
   if (action === "open-assignment") {
-    pauseActiveChatSession();
-    currentClassId = target.dataset.classId;
-    ui.selectedStudentAssignmentId = target.dataset.assignmentId;
-    ui.studentStep = 1;
-    ensureStudentSubmission();
-    render();
-    loadStudentAssignmentsForCurrentClass().then(async () => {
-      await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
-      render();
-    });
+    const existingSubmission = state.submissions.find((submission) =>
+      submission.assignmentId === target.dataset.assignmentId && submission.studentId === ui.activeUserId
+    ) || null;
+    ui.studentStep = existingSubmission?.status === "submitted" ? 3 : 1;
+    await refreshStudentWorkspace(target.dataset.classId, target.dataset.assignmentId);
     return;
   }
 
@@ -2597,18 +2664,7 @@ if (target.id === "playback-speed") {
   }
 
 if (target.id === "student-class-select") {
-    pauseActiveChatSession();
-    currentClassId = target.value;
-    ui.selectedStudentAssignmentId = null;
-    hydrateSelections();
-    render();
-    loadStudentAssignmentsForCurrentClass().then(async () => {
-      hydrateSelections();
-      if (ui.selectedStudentAssignmentId) {
-        await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
-      }
-      render();
-    });
+    await refreshStudentWorkspace(target.value, null);
     return;
   }
 
@@ -3379,10 +3435,10 @@ function renderTeacherWorkspace() {
   const hasUploadedRubricPreview = Boolean(
     ui.teacherDraft.uploadedRubricText || ui.teacherDraft.uploadedRubricSchema?.criteria?.length || ui.teacherDraft.uploadedRubricData?.rows?.length
   );
-  const sharedSettingsFields = `
+  const rubricUploadField = `
     <div class="field">
       <label>Rubric (optional — drag and drop or click to upload)</label>
-      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
+      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:24px;min-height:120px;display:flex;flex-direction:column;justify-content:center;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
         ondragover="event.preventDefault();this.style.borderColor='var(--accent)';"
         ondragleave="this.style.borderColor='var(--line)';"
         ondrop="handleRubricDrop(event);"
@@ -3418,6 +3474,9 @@ function renderTeacherWorkspace() {
         </div>
       ` : ""}
     </div>
+  `;
+
+  const sharedSettingsFields = `
     <div class="field-grid compact-grid">
       <div class="field">
         <label for="teacher-feedback-limit">Feedback checks</label>
@@ -3475,6 +3534,7 @@ function renderTeacherWorkspace() {
           </div>
         </div>
         <div class="field-stack">
+          ${rubricUploadField}
          <div class="field">
             <label for="teacher-brief">Teacher brief</label>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
@@ -4061,6 +4121,19 @@ function renderStudentWorkspace() {
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
   const currentClass = currentClasses.find(c => c.id === currentClassId);
+  const assignmentEntries = assignments.map((item) => {
+    const itemSubmission = state.submissions.find((entry) => entry.assignmentId === item.id && entry.studentId === ui.activeUserId) || null;
+    const isSubmitted = itemSubmission?.status === "submitted";
+    const isGraded = Boolean(itemSubmission?.teacherReview?.savedAt);
+    return {
+      assignment: item,
+      submission: itemSubmission,
+      isSubmitted,
+      isGraded,
+    };
+  });
+  const currentEntries = assignmentEntries.filter((entry) => !entry.isSubmitted);
+  const submittedEntries = assignmentEntries.filter((entry) => entry.isSubmitted);
 
   return `
     <section class="student-shell">
@@ -4085,45 +4158,62 @@ function renderStudentWorkspace() {
             <span><strong>${escapeHtml(currentClass.name)}</strong>${currentClass.teacher_name ? ` · ${escapeHtml(currentClass.teacher_name)}` : ""}</span>
           </div>
         ` : ""}
-        ${currentClasses.length > 0 && !assignment ? `
-          <div class="upcoming-section">
-            <p class="mini-label" style="margin-bottom:10px;">Your classes & assignments</p>
-            ${currentClasses.map(cls => {
-              const clsAssignments = state.assignments.filter(a => a.status === "published" && a.classId === cls.id);
-              return `
-                <div class="upcoming-class-block">
-                  <div class="upcoming-class-header">
-                    <strong>${escapeHtml(cls.name)}</strong>
-                    ${cls.id !== currentClassId ? `<button class="button-ghost" style="font-size:0.8rem;min-height:30px;padding:0 10px;" data-action="switch-class" data-class-id="${cls.id}">Open</button>` : `<span class="pill">Current</span>`}
-                  </div>
-                  ${clsAssignments.length ? clsAssignments.map(a => `
-                    <div class="upcoming-assignment-row">
-                      <span>${escapeHtml(a.title)}</span>
-                      <span style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
-                        ${a.deadline ? `<span class="${new Date(a.deadline) < new Date() ? "warning-pill" : "pill"}" style="font-size:0.75rem;">Due ${new Date(a.deadline).toLocaleDateString(undefined,{day:"numeric",month:"short"})}</span>` : ""}
-                        <button class="button-ghost" style="font-size:0.8rem;min-height:30px;padding:0 10px;" data-action="open-assignment" data-class-id="${cls.id}" data-assignment-id="${a.id}">Start</button>
-                      </span>
-                    </div>
-                  `).join("") : `<p class="subtle" style="font-size:0.85rem;margin:6px 0;">No published assignments yet.</p>`}
-                </div>
-              `;
-            }).join("")}
+        ${assignments.length ? `
+        <div class="teacher-ready-card" style="margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <p class="mini-label" style="margin-bottom:4px;">Current work</p>
+              <p class="subtle">Open the assignment you are working on in this class.</p>
+            </div>
+            <span class="pill">${currentEntries.length} active</span>
           </div>
-        ` : ""}
-        <div class="field">
-          <label for="student-assignment-select">Choose assignment</label>
-          <select id="student-assignment-select" aria-label="Select assignment">
-            ${assignments.length
-              ? assignments.map((item) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("")
-              : `<option value="">No assignments published yet</option>`
-            }
-          </select>
+          ${currentEntries.length ? `
+            <div style="display:grid;gap:10px;">
+              ${currentEntries.map((entry) => `
+                <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;border:1px solid ${entry.assignment.id === ui.selectedStudentAssignmentId ? "var(--accent)" : "var(--line)"};border-radius:14px;background:${entry.assignment.id === ui.selectedStudentAssignmentId ? "rgba(95,135,255,0.06)" : "var(--surface)"};">
+                  <div style="min-width:0;">
+                    <strong style="display:block;margin-bottom:4px;">${escapeHtml(entry.assignment.title)}</strong>
+                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                      ${entry.assignment.deadline ? `<span class="${new Date(entry.assignment.deadline) < new Date() ? "warning-pill" : "pill"}" style="font-size:0.75rem;">Due ${new Date(entry.assignment.deadline).toLocaleDateString(undefined,{day:"numeric",month:"short"})}</span>` : ""}
+                      ${entry.assignment.chatTimeLimit > 0 ? `<span class="pill" style="font-size:0.75rem;">⏱ ${entry.assignment.chatTimeLimit} min chat</span>` : ""}
+                    </div>
+                  </div>
+                  <button class="button-ghost" style="font-size:0.8rem;min-height:34px;padding:0 12px;flex-shrink:0;" data-action="open-assignment" data-class-id="${currentClassId}" data-assignment-id="${entry.assignment.id}">
+                    ${entry.submission?.draftText?.trim() || entry.submission?.chatHistory?.length || entry.submission?.writingEvents?.length ? "Continue" : "Start"}
+                  </button>
+                </div>
+              `).join("")}
+            </div>
+          ` : `<p class="subtle" style="margin:0;">No current assignments in this class.</p>`}
+          <details style="margin-top:14px;" ${submittedEntries.length ? "" : "hidden"}>
+            <summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+              <span style="font-weight:700;">Submitted work</span>
+              <span class="pill">${submittedEntries.length}</span>
+            </summary>
+            <div style="display:grid;gap:10px;margin-top:10px;">
+              ${submittedEntries.map((entry) => `
+                <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;border:1px solid ${entry.assignment.id === ui.selectedStudentAssignmentId ? "var(--accent)" : "var(--line)"};border-radius:14px;background:${entry.assignment.id === ui.selectedStudentAssignmentId ? "rgba(95,135,255,0.06)" : "var(--surface)"};">
+                  <div style="min-width:0;">
+                    <strong style="display:block;margin-bottom:4px;">${escapeHtml(entry.assignment.title)}</strong>
+                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                      <span class="pill" style="font-size:0.75rem;">${entry.isGraded ? "Graded" : "Awaiting review"}</span>
+                      ${entry.submission?.submittedAt ? `<span class="pill" style="font-size:0.75rem;">Submitted ${escapeHtml(new Date(entry.submission.submittedAt).toLocaleDateString(undefined,{day:"numeric",month:"short"}))}</span>` : ""}
+                    </div>
+                  </div>
+                  <button class="button-ghost" style="font-size:0.8rem;min-height:34px;padding:0 12px;flex-shrink:0;" data-action="open-assignment" data-class-id="${currentClassId}" data-assignment-id="${entry.assignment.id}">
+                    ${entry.isGraded ? "View feedback" : "View"}
+                  </button>
+                </div>
+              `).join("")}
+            </div>
+          </details>
         </div>
+        ` : ""}
         ${
           !assignments.length
             ? `<div class="empty-state"><h3>Nothing here yet</h3><p>Your teacher hasn't published any assignments yet.</p></div>`
             : !assignment || !submission
-              ? `<div class="empty-state"><h3>No assignment yet</h3><p>Choose an assignment from the dropdown above to get started.</p></div>`
+              ? `<div class="empty-state"><h3>No assignment yet</h3><p>Open one of the assignments above to get started.</p></div>`
               : `
                 <div class="student-progress">
                   ${[1, 2, 3].map((step) => `
@@ -4292,7 +4382,7 @@ function renderStudentDraftStep(assignment, submission) {
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="1">Back</button>
         <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
-        <button class="button" data-action="student-next-step" data-step="3">Next: Finish</button>
+        <button class="button" data-action="student-next-step" data-step="3">Next</button>
       </div>
     </div>
   `;
@@ -4851,6 +4941,11 @@ function getStudentAssignment() {
   ) || null;
 }
 
+function getStudentSubmissionForAssignment(assignmentId, studentId = ui.activeUserId) {
+  if (!assignmentId || !studentId) return null;
+  return state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === studentId) || null;
+}
+
 function getAssignmentSubmissions(assignmentId) {
   return state.submissions.filter((submission) => submission.assignmentId === assignmentId);
 }
@@ -4911,11 +5006,7 @@ function getSelectedReviewSubmission() {
 }
 
 function getStudentSubmission() {
-  if (!ui.selectedStudentAssignmentId || !ui.activeUserId) {
-    return null;
-  }
-
-  return state.submissions.find((submission) => submission.assignmentId === ui.selectedStudentAssignmentId && submission.studentId === ui.activeUserId) || null;
+  return getStudentSubmissionForAssignment(ui.selectedStudentAssignmentId, ui.activeUserId);
 }
 
 function ensureStudentSubmission() {
@@ -4941,7 +5032,8 @@ function hydrateSelections() {
 
   const published = getPublishedAssignments();
   if (!published.some((assignment) => assignment.id === ui.selectedStudentAssignmentId)) {
-    ui.selectedStudentAssignmentId = published[0]?.id || null;
+    const preferredCurrent = published.find((assignment) => getStudentSubmissionForAssignment(assignment.id)?.status !== "submitted");
+    ui.selectedStudentAssignmentId = preferredCurrent?.id || published[0]?.id || null;
   }
 
   ui.studentStep = clamp(ui.studentStep, 1, 3);
@@ -6040,25 +6132,40 @@ function normalizeTeacherDraft(draft) {
 
 function applyAiSettingsToTeacherDraft(parsed = {}) {
   const allowedLevels = new Set(["A0", "A1", "A2", "B1", "B2", "C1", "C2"]);
+  const inferred = inferTeacherBriefSettings(ui.teacherDraft.brief);
 
-  if (parsed.assignmentType) {
+  if (inferred.assignmentType) {
+    ui.teacherDraft.assignmentType = inferred.assignmentType;
+  } else if (parsed.assignmentType) {
     ui.teacherDraft.assignmentType = parsed.assignmentType;
   }
-  if (allowedLevels.has(String(parsed.languageLevel || "").trim())) {
+  if (allowedLevels.has(String(inferred.languageLevel || "").trim())) {
+    ui.teacherDraft.languageLevel = String(inferred.languageLevel).trim();
+  } else if (allowedLevels.has(String(parsed.languageLevel || "").trim())) {
     ui.teacherDraft.languageLevel = String(parsed.languageLevel).trim();
   }
-  if (Number.isFinite(Number(parsed.feedbackRequestLimit)) && Number(parsed.feedbackRequestLimit) >= 0) {
+  if (Number.isFinite(Number(inferred.feedbackRequestLimit)) && Number(inferred.feedbackRequestLimit) >= 0) {
+    ui.teacherDraft.feedbackRequestLimit = Number(inferred.feedbackRequestLimit);
+  } else if (Number.isFinite(Number(parsed.feedbackRequestLimit)) && Number(parsed.feedbackRequestLimit) >= 0) {
     ui.teacherDraft.feedbackRequestLimit = Number(parsed.feedbackRequestLimit);
   }
-  if (typeof parsed.disableChatbot === "boolean") {
+  if (typeof inferred.disableChatbot === "boolean") {
+    ui.teacherDraft.disableChatbot = inferred.disableChatbot;
+  } else if (typeof parsed.disableChatbot === "boolean") {
     ui.teacherDraft.disableChatbot = parsed.disableChatbot;
   }
-  if (Number.isFinite(Number(parsed.chatTimeLimit)) && Number(parsed.chatTimeLimit) >= 0) {
-    ui.teacherDraft.chatTimeLimit = ui.teacherDraft.disableChatbot ? -1 : Number(parsed.chatTimeLimit);
+  if (ui.teacherDraft.disableChatbot) {
+    ui.teacherDraft.chatTimeLimit = -1;
+  } else if (Number.isFinite(Number(inferred.chatTimeLimit)) && Number(inferred.chatTimeLimit) >= 0) {
+    ui.teacherDraft.chatTimeLimit = Number(inferred.chatTimeLimit);
+  } else if (Number.isFinite(Number(parsed.chatTimeLimit)) && Number(parsed.chatTimeLimit) >= 0) {
+    ui.teacherDraft.chatTimeLimit = Number(parsed.chatTimeLimit);
   } else if (ui.teacherDraft.disableChatbot) {
     ui.teacherDraft.chatTimeLimit = -1;
   }
-  if (Number.isFinite(Number(parsed.totalPoints)) && Number(parsed.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+  if (Number.isFinite(Number(inferred.totalPoints)) && Number(inferred.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+    ui.teacherDraft.totalPoints = Number(inferred.totalPoints);
+  } else if (Number.isFinite(Number(parsed.totalPoints)) && Number(parsed.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
     ui.teacherDraft.totalPoints = Number(parsed.totalPoints);
   }
 
