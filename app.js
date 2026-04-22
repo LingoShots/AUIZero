@@ -653,7 +653,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
         </div>
       ` : ""}
       ${schema.criteria[0]?.levels?.length ? `
-        <div class="rubric-level-legend" style="grid-template-columns:repeat(${Math.max(schema.criteria[0].levels.length, 1)}, minmax(0, 1fr));">
+        <div class="rubric-level-legend" style="grid-template-columns:repeat(auto-fit, minmax(${previewMode ? 150 : 170}px, 1fr));">
           ${schema.criteria[0].levels.map((level) => {
             const theme = levelTheme(level.label);
             return `<span class="rubric-level-legend-chip" style="background:${theme.badge};color:${theme.text};">${escapeHtml(level.label)} — ${level.score} pts</span>`;
@@ -666,7 +666,7 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
           const suggested = suggestedRowScoreMap.get(criterion.id);
           const statusTheme = selected ? levelTheme(selected.label) : null;
           return `
-            <section class="rubric-criterion-card ${previewMode ? "rubric-criterion-card-preview" : ""}">
+            <section class="rubric-criterion-card ${previewMode ? "rubric-criterion-card-preview" : ""}" data-rubric-criterion-id="${escapeAttribute(criterion.id)}">
               <div class="rubric-criterion-header">
                 <div>
                   <div class="rubric-criterion-name">${escapeHtml(criterion.name)}</div>
@@ -886,6 +886,55 @@ function getVisibleChatTimeLimit(config = {}) {
 function assignmentUsesSingleParagraph(assignment = {}) {
   const haystack = `${assignment?.title || ""} ${assignment?.brief || ""} ${assignment?.prompt || ""}`.toLowerCase();
   return /\bparagraph\b/.test(haystack) && !/\bparagraphs\b/.test(haystack);
+}
+
+function assignmentLikelyEssay(assignment = {}) {
+  const haystack = `${assignment?.title || ""} ${assignment?.brief || ""} ${assignment?.prompt || ""}`.toLowerCase();
+  return /\bessay\b/.test(haystack)
+    || /\bintroduction\b/.test(haystack)
+    || /\bconclusion\b/.test(haystack)
+    || /\bbody paragraph\b/.test(haystack);
+}
+
+function getAssignmentRubricFeedbackText(assignment = {}) {
+  const rubricSchema = assignment?.uploadedRubricSchema
+    || assignment?.rubricSchema
+    || getRubricSchema(assignment?.rubric, assignment?.uploadedRubricName || assignment?.title || "Rubric");
+
+  if (!rubricSchema?.criteria?.length) {
+    return safeArray(assignment?.rubric)
+      .map((criterion) => `${criterion?.name || ""} ${criterion?.description || ""}`)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  return safeArray(rubricSchema.criteria)
+    .flatMap((criterion) => [
+      criterion?.name || "",
+      ...safeArray(criterion?.levels).map((level) => `${level?.label || ""} ${level?.description || ""}`),
+    ])
+    .join(" ")
+    .toLowerCase();
+}
+
+function hasLowSentenceVariety(sentences = []) {
+  if (!Array.isArray(sentences) || sentences.length < 3) return false;
+  const lengths = sentences.map((sentence) => wordCount(sentence)).filter(Boolean);
+  if (lengths.length < 3) return false;
+  return Math.max(...lengths) - Math.min(...lengths) <= 4;
+}
+
+function scrollToNextRubricCriterionMobile(criterionId) {
+  if (!criterionId || typeof window === "undefined" || window.innerWidth > 760) return;
+  window.requestAnimationFrame(() => {
+    const sections = Array.from(document.querySelectorAll("[data-rubric-criterion-id]"));
+    const currentIndex = sections.findIndex((section) => section.dataset.rubricCriterionId === criterionId);
+    if (currentIndex === -1) return;
+    const nextSection = sections[currentIndex + 1];
+    if (nextSection) {
+      nextSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
 }
 
 function isChatSessionExpired(assignment, submission) {
@@ -2575,6 +2624,7 @@ if (action === "select-assignment") {
     submission.teacherReview.finalScore = calculateTeacherReviewSummary(assignment, submission, submission.teacherReview.rowScores).totalScore;
     persistState();
     render();
+    scrollToNextRubricCriterionMobile(criterion.id);
     return;
   }
 
@@ -2604,6 +2654,7 @@ if (action === "select-assignment") {
     persistState();
     scheduleSubmissionSync();
     render();
+    scrollToNextRubricCriterionMobile(criterion.id);
     return;
   }
 
@@ -3501,7 +3552,7 @@ function renderTeacherWorkspace() {
   const sharedSettingsFields = `
     <div class="field">
       <label>Rubric (optional — drag and drop or click to upload)</label>
-      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;"
+      <div id="rubric-drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:24px 18px;min-height:104px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:#fafaf8;display:grid;place-items:center;"
         ondragover="event.preventDefault();this.style.borderColor='var(--accent)';"
         ondragleave="this.style.borderColor='var(--line)';"
         ondrop="handleRubricDrop(event);"
@@ -3594,7 +3645,17 @@ function renderTeacherWorkspace() {
           </div>
         </div>
         <div class="field-stack">
-         <div class="field">
+          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
+                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
+              </div>
+              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
+            </div>
+            ${sharedSettingsFields}
+          </div>
+          <div class="field">
             <label for="teacher-brief">Teacher brief</label>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
@@ -3609,16 +3670,6 @@ function renderTeacherWorkspace() {
               </div>
             </div>
           ` : ""}
-          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
-            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
-              <div>
-                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
-              </div>
-              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
-            </div>
-            ${sharedSettingsFields}
-          </div>
         </div>
         ${
           ui.teacherAssist
@@ -5535,6 +5586,9 @@ function generateFeedback(assignment, submission) {
   const singleParagraphTask = assignmentUsesSingleParagraph(assignment);
   const finalSentence = sentences[sentences.length - 1] || "";
   const processTask = assignment?.assignmentType === "process";
+  const essayTask = assignmentLikelyEssay(assignment);
+  const rubricFeedbackText = getAssignmentRubricFeedbackText(assignment);
+  const firstSentence = sentences[0] || "";
 
   if (!text) {
     return [
@@ -5554,8 +5608,31 @@ function generateFeedback(assignment, submission) {
     primaryPool.push("Your draft is still short. Can you add one more example or explanation?");
   }
 
-  if (!singleParagraphTask && paragraphs.length < 2) {
+  if (essayTask && paragraphs.length < 3) {
+    primaryPool.push("This still reads more like notes than an essay. Can you shape it into a clear introduction, body, and conclusion?");
+  } else if (!singleParagraphTask && paragraphs.length < 2) {
     primaryPool.push("Could you split this into at least two parts so the reader can follow your thinking more easily?");
+  }
+
+  if (singleParagraphTask && /topic sentence|main idea/.test(rubricFeedbackText) && wordCount(firstSentence) < 6) {
+    primaryPool.push("Look at your first sentence. Does it clearly state the main idea of the whole paragraph?");
+  }
+
+  if (singleParagraphTask && /supporting|detail|example|fact/.test(rubricFeedbackText) && !/\bbecause\b|\bfor example\b|\bfor instance\b|\bsuch as\b/i.test(text)) {
+    primaryPool.push("Your paragraph needs a stronger supporting detail. Add one clear example, fact, or explanation that directly supports your main idea.");
+  }
+
+  if (singleParagraphTask && /concluding sentence|restates? the main idea|final comment/.test(rubricFeedbackText) && (wordCount(finalSentence) < 7 || finalSentence.toLowerCase() === firstSentence.toLowerCase())) {
+    primaryPool.push("Check your last sentence. Does it give the reader a clear final thought about the paragraph instead of just stopping suddenly?");
+  }
+
+  if (essayTask && /organization|coherence|unity|body paragraph|introduction|conclusion/.test(rubricFeedbackText)) {
+    const weakParagraph = paragraphs.find((paragraph) => wordCount(paragraph) < 35);
+    if (weakParagraph) {
+      primaryPool.push("One paragraph still feels thin. Which paragraph needs another example or explanation so it can do its job more clearly?");
+    } else if (!paragraphs.every((paragraph) => splitSentences(paragraph).length >= 2)) {
+      primaryPool.push("Check each paragraph separately. Does every paragraph have a clear topic sentence and enough support to match its role in the essay?");
+    }
   }
 
   const longSentence = sentences.find((sentence) => wordCount(sentence) > 28);
@@ -5577,6 +5654,10 @@ function generateFeedback(assignment, submission) {
 
   if ((text.match(/\bthis\b|\bit\b|\bthey\b/gi) || []).length >= 5) {
     primaryPool.push("A few words like 'this' or 'it' may be unclear. Which one needs a more exact word?");
+  }
+
+  if (/sentence variety/.test(rubricFeedbackText) && hasLowSentenceVariety(sentences)) {
+    primaryPool.push("Many of your sentences sound the same length. Could you combine one idea and shorten another so the writing has more variety?");
   }
 
   // Secondary checks — always available but only used when primary ones are exhausted or repeated

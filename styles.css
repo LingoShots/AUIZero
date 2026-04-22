@@ -732,15 +732,16 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: 46px;
+  padding: 8px 14px;
   border-radius: 14px;
   border: 1px solid rgba(78, 103, 156, 0.10);
   font-size: 0.76rem;
   line-height: 1.25;
   font-weight: 700;
   text-align: center;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .rubric-level-legend-chip {
@@ -769,7 +770,7 @@ button {
 
 .rubric-level-badge {
   width: 100%;
-  min-height: 40px;
+  min-height: 52px;
   border-radius: 14px;
   justify-content: center;
 }
@@ -1091,6 +1092,22 @@ button.rubric-level-cell:hover {
   .rubric-level-grid-4,
   .rubric-level-grid-5 {
     grid-template-columns: 1fr;
+  }
+
+  .rubric-level-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .rubric-level-legend-chip,
+  .rubric-level-badge,
+  .rubric-selection-pill {
+    min-height: 52px;
+    padding: 10px 12px;
+    font-size: 0.74rem;
+  }
+
+  .rubric-level-cell {
+    min-height: 0;
   }
 
   .draft-editor,
