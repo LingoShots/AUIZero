@@ -1608,7 +1608,7 @@ ${rubricGuidanceLine}
 - Rubric descriptions must be one clear sentence a student at CEFR ${d.languageLevel} can understand.
 - The student prompt should be encouraging and clear, not academic in tone.
 
-Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, process, definition, compare, response, other), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of exactly 4 objects each with "name", "description", "points").`;
+Respond with ONLY a valid JSON object, no extra text, with these exact keys: "title" (string), "prompt" (string for students), "assignmentType" (one of: argument, narrative, informational, process, definition, compare, response, other), "wordCountMin" (number), "wordCountMax" (number), "studentFocus" (array of 3-4 short strings), "rubric" (array of exactly 4 objects each with "name", "description", "points"), "feedbackRequestLimit" (number), "chatTimeLimit" (number, 0 if unlimited), "disableChatbot" (boolean), "languageLevel" (one of: A0, A1, A2, B1, B2, C1, C2), "totalPoints" (number), "deadlineDate" (string in YYYY-MM-DD format or empty string), "deadlineTime" (string in HH:MM 24-hour format or empty string).`;
 }
 
 async function handleClick(event) {
@@ -1691,6 +1691,7 @@ if (action === "generate-teacher-assist") {
           parsed.rubric[parsed.rubric.length - 1].bands = createScoreBandsForPoints(parsed.rubric[parsed.rubric.length - 1].points);
         }
       }
+      applyAiSettingsToTeacherDraft(parsed);
       ui.teacherAssist = parsed;
       ui.notice = "Assignment generated successfully!";
       ui.aiAssistLoading = false;
@@ -3489,16 +3490,16 @@ function renderTeacherWorkspace() {
               </div>
             </div>
           ` : ""}
-          ${ui.teacherAssist ? `<div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
+          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
               <div>
                 <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                <p class="subtle">These settings still apply while you review the AI-generated version.</p>
+                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
               </div>
               <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
             </div>
             ${sharedSettingsFields}
-          </div>` : ""}
+          </div>
         </div>
         ${
           ui.teacherAssist
@@ -3575,12 +3576,11 @@ function renderTeacherWorkspace() {
                   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div>
                       <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
-                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. Everything you need for manual setup is here too.</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. Use the shared settings above for rubric, deadline, chatbot, and feedback controls.</p>
                     </div>
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
                   <div style="margin-top:14px;">
-                    ${sharedSettingsFields}
                     <div class="field" style="margin-bottom:10px;">
                       <label for="teacher-title">Assignment title</label>
                       <input id="teacher-title" data-teacher-field="title" value="${escapeAttribute(ui.teacherDraft.title)}" placeholder="Assignment title" />
@@ -6036,6 +6036,37 @@ function normalizeTeacherDraft(draft) {
       points: Number(item.points || 0),
     })),
   };
+}
+
+function applyAiSettingsToTeacherDraft(parsed = {}) {
+  const allowedLevels = new Set(["A0", "A1", "A2", "B1", "B2", "C1", "C2"]);
+
+  if (parsed.assignmentType) {
+    ui.teacherDraft.assignmentType = parsed.assignmentType;
+  }
+  if (allowedLevels.has(String(parsed.languageLevel || "").trim())) {
+    ui.teacherDraft.languageLevel = String(parsed.languageLevel).trim();
+  }
+  if (Number.isFinite(Number(parsed.feedbackRequestLimit)) && Number(parsed.feedbackRequestLimit) >= 0) {
+    ui.teacherDraft.feedbackRequestLimit = Number(parsed.feedbackRequestLimit);
+  }
+  if (typeof parsed.disableChatbot === "boolean") {
+    ui.teacherDraft.disableChatbot = parsed.disableChatbot;
+  }
+  if (Number.isFinite(Number(parsed.chatTimeLimit)) && Number(parsed.chatTimeLimit) >= 0) {
+    ui.teacherDraft.chatTimeLimit = ui.teacherDraft.disableChatbot ? -1 : Number(parsed.chatTimeLimit);
+  } else if (ui.teacherDraft.disableChatbot) {
+    ui.teacherDraft.chatTimeLimit = -1;
+  }
+  if (Number.isFinite(Number(parsed.totalPoints)) && Number(parsed.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+    ui.teacherDraft.totalPoints = Number(parsed.totalPoints);
+  }
+
+  const deadlineDate = String(parsed.deadlineDate || "").trim();
+  const deadlineTime = String(parsed.deadlineTime || "").trim();
+  if (deadlineDate) {
+    ui.teacherDraft.deadline = combineDeadlineParts(deadlineDate, deadlineTime || getDeadlineTimePart(ui.teacherDraft.deadline) || "09:00");
+  }
 }
 
 function createEmptySubmission(assignmentId, studentId) {
