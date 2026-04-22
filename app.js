@@ -41,6 +41,8 @@ const ui = {
   aiAssistLoading: false,
   selectedSavedRubricId: "",
   selectedAssignmentId: null,
+  expandedAssignmentBriefId: null,
+  editingAssignmentId: null,
   selectedStudentAssignmentId: null,
   selectedReviewSubmissionId: null,
   selectedReviewStudentId: null,
@@ -609,6 +611,32 @@ function renderRichTextHtml(text = "") {
     .replace(/\n+/g, "<br>");
 }
 
+function stripPromptFormatting(text = "") {
+  return String(text || "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\+\+([^+]+)\+\+/g, "$1")
+    .replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, "$1$2");
+}
+
+function truncateText(text = "", maxLength = 140) {
+  const normalized = String(text || "").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength).trimEnd()}…`;
+}
+
+function focusChatInput() {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    const textarea = document.getElementById("chat-input");
+    if (!textarea) return;
+    textarea.focus();
+    const cursor = textarea.value.length;
+    if (typeof textarea.setSelectionRange === "function") {
+      textarea.setSelectionRange(cursor, cursor);
+    }
+  });
+}
+
 function applyPromptFormattingToTextarea(textarea, format) {
   if (!textarea) return;
   const wrappers = {
@@ -849,6 +877,37 @@ function createBlankTeacherDraft() {
     uploadedRubricData: null,
     uploadedRubricSchema: null,
   };
+}
+
+function populateTeacherDraftFromAssignment(assignment) {
+  if (!assignment) return;
+  ui.teacherDraft = {
+    brief: assignment.brief || "",
+    title: assignment.title || "",
+    prompt: assignment.prompt || "",
+    focus: assignment.focus || "",
+    assignmentType: assignment.assignmentType || "response",
+    languageLevel: assignment.languageLevel || "B1",
+    totalPoints: Number(assignment.totalPoints || assignment.rubricSchema?.totalPoints || assignment.rubric?.reduce((sum, row) => sum + Number(row?.points || 0), 0) || 20),
+    wordCountMin: Number(assignment.wordCountMin || 250),
+    wordCountMax: Number(assignment.wordCountMax || 400),
+    ideaRequestLimit: Number(assignment.ideaRequestLimit || 3),
+    feedbackRequestLimit: Number(assignment.feedbackRequestLimit || 2),
+    chatTimeLimit: Number(assignment.chatTimeLimit ?? 0),
+    disableChatbot: isChatDisabled(assignment),
+    deadline: assignment.deadline || "",
+    studentFocus: Array.isArray(assignment.studentFocus) ? assignment.studentFocus.join("\n") : String(assignment.studentFocus || ""),
+    rubric: safeArray(assignment.rubric).map((item) => normalizeRubricRow(item)),
+    uploadedRubricText: assignment.uploadedRubricText || "",
+    uploadedRubricName: assignment.uploadedRubricName || "",
+    uploadedRubricData: assignment.uploadedRubricData || null,
+    uploadedRubricSchema: assignment.uploadedRubricSchema ? normalizeRubricSchema(assignment.uploadedRubricSchema, assignment.uploadedRubricName || assignment.title || "Uploaded rubric") : null,
+  };
+  if (ui.teacherDraft.disableChatbot) {
+    ui.teacherDraft.chatTimeLimit = -1;
+  }
+  ui.teacherAssist = null;
+  ui.editingAssignmentId = assignment.id;
 }
 
 function inferTeacherBriefSettings(text = "") {
@@ -2271,6 +2330,35 @@ if (action === "sign-out") {
     return;
   }
 
+  if (action === "toggle-assignment-brief") {
+    const assignmentId = target.dataset.assignmentId || "";
+    ui.expandedAssignmentBriefId = ui.expandedAssignmentBriefId === assignmentId ? null : assignmentId;
+    render();
+    return;
+  }
+
+  if (action === "edit-assignment") {
+    const assignmentId = target.dataset.assignmentId;
+    const assignment = state.assignments.find((item) => item.id === assignmentId);
+    if (!assignment) return;
+    populateTeacherDraftFromAssignment(assignment);
+    ui.notice = "Assignment loaded into the editor. Update the details and save when you are ready.";
+    render();
+    window.setTimeout(() => {
+      document.getElementById("teacher-rubric-upload")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+    return;
+  }
+
+  if (action === "cancel-assignment-edit") {
+    ui.teacherDraft = createBlankTeacherDraft();
+    ui.teacherAssist = null;
+    ui.editingAssignmentId = null;
+    ui.notice = "Assignment editing cancelled.";
+    render();
+    return;
+  }
+
  if (action === "save-assignment") {
     await saveTeacherAssignment();
     return;
@@ -2488,6 +2576,7 @@ if (action === "select-assignment") {
     persistState();
     scheduleSubmissionSync(900);
     render();
+    focusChatInput();
 
     // Scroll chat to bottom
     setTimeout(() => {
@@ -2511,6 +2600,7 @@ if (action === "select-assignment") {
         persistState();
         scheduleSubmissionSync(900);
         render();
+        focusChatInput();
         setTimeout(() => {
           const win = document.getElementById("chatbot-window");
           if (win) win.scrollTop = win.scrollHeight;
@@ -2523,6 +2613,7 @@ if (action === "select-assignment") {
         persistState();
         scheduleSubmissionSync(900);
         render();
+        focusChatInput();
       });
     return;
   }
@@ -3690,10 +3781,12 @@ function renderTeacherWorkspace() {
           <div>
             <p class="mini-label">Teacher Setup</p>
             <h2 class="panel-title">Describe the assignment in plain English</h2>
+            ${ui.editingAssignmentId ? `<p class="subtle" style="margin:6px 0 0;">Editing an existing assignment. Changes will update the published version too.</p>` : ""}
           </div>
           <div class="toolbar">
             <button class="button-secondary" data-action="generate-teacher-assist" ${ui.aiAssistLoading ? "disabled" : ""}>Format With AI</button>
-            <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>Save</button>
+            ${ui.editingAssignmentId ? `<button class="button-ghost" data-action="cancel-assignment-edit" ${ui.aiAssistLoading ? "disabled" : ""}>Cancel edit</button>` : ""}
+            <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>${ui.editingAssignmentId ? "Update assignment" : "Save"}</button>
           </div>
         </div>
         <div class="field-stack">
@@ -3896,6 +3989,8 @@ function renderTeacherWorkspace() {
                   const gradedCount = assignmentSubs.filter(s => s.teacherReview?.savedAt).length;
                   const pasteCount = assignmentSubs.filter(s => (s.writingEvents || []).some(e => e.flagged)).length;
                   const totalStudents = classRoster.length;
+                  const isBriefExpanded = ui.expandedAssignmentBriefId === assignment.id;
+                  const promptPreview = truncateText(stripPromptFormatting(assignment.prompt), 140);
                   return `
                   <div class="assignment-card simple-card">
                     <div class="card-top" style="align-items:flex-start;">
@@ -3904,7 +3999,15 @@ function renderTeacherWorkspace() {
                           <h3 style="margin:0;">${escapeHtml(assignment.title)}</h3>
                           <span class="${assignment.status === "published" ? "pill" : "warning-pill"}" style="font-size:0.75rem;">${assignment.status === "published" ? "Published" : "Draft"}</span>
                         </div>
-                        <p style="margin:0 0 8px;color:var(--muted);font-size:0.88rem;">${escapeHtml(assignment.prompt.slice(0, 100))}${assignment.prompt.length > 100 ? "…" : ""}</p>
+                        ${isBriefExpanded
+                          ? `<div style="margin:0 0 8px;color:var(--muted);font-size:0.9rem;line-height:1.55;">${renderRichTextHtml(assignment.prompt)}</div>`
+                          : `<p style="margin:0 0 8px;color:var(--muted);font-size:0.88rem;">${escapeHtml(promptPreview)}</p>`
+                        }
+                        ${assignment.prompt && assignment.prompt.length > 140 ? `
+                          <button class="button-ghost" data-action="toggle-assignment-brief" data-assignment-id="${assignment.id}" style="font-size:0.78rem;padding:6px 10px;margin:0 0 10px;">
+                            ${isBriefExpanded ? "Hide brief" : "View full brief"}
+                          </button>
+                        ` : ""}
                         <div class="pill-row" style="flex-wrap:wrap;">
                           <span class="pill">${escapeHtml(titleCase(assignment.assignmentType || "writing"))}</span>
                           <span class="pill">${assignment.wordCountMin}–${assignment.wordCountMax} words</span>
@@ -3917,6 +4020,7 @@ function renderTeacherWorkspace() {
                       <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;align-items:flex-end;">
                         <button class="button" data-action="select-assignment" data-assignment-id="${assignment.id}" style="white-space:nowrap;">Review students →</button>
                         <div style="display:flex;gap:6px;">
+                          <button class="button-ghost" data-action="edit-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;">Edit</button>
                           <button class="${assignment.status === "published" ? "button-ghost" : "button-secondary"}" data-action="publish-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;${assignment.status === "published" ? "color:var(--sage);border-color:var(--sage);" : ""}">
                             ${assignment.status === "published" ? "✓ Published" : "Publish"}
                           </button>
@@ -4546,7 +4650,7 @@ function renderStudentDraftStep(assignment, submission) {
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="1">Back</button>
         <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
-        <button class="button" data-action="student-next-step" data-step="3">Next: Finish</button>
+        <button class="button" data-action="student-next-step" data-step="3">Next</button>
       </div>
     </div>
   `;
@@ -4601,6 +4705,7 @@ function renderStudentFinalStep(assignment, submission) {
         <span></span>
         <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit assignment</button>
       </div>
+      ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
       ${submission.status === "submitted" ? `
         <div id="submitted-confirmation" class="submitted-banner" style="margin-top:16px;">
           <div class="submitted-icon">✓</div>
@@ -4684,6 +4789,9 @@ function applyTeacherAssistToDraft() {
 async function saveTeacherAssignment() {
   // Use the editable AI draft if present, otherwise fall back to teacherDraft
   const source = ui.teacherAssist || ui.teacherDraft;
+  const editingAssignment = ui.editingAssignmentId
+    ? state.assignments.find((item) => item.id === ui.editingAssignmentId) || null
+    : null;
   const classSelect = document.getElementById("class-select");
   const selectedClassId = classSelect?.value && classSelect.value !== "__new__"
     ? classSelect.value
@@ -4746,7 +4854,7 @@ async function saveTeacherAssignment() {
     : splitLines(draft.studentFocus);
 
   const assignment = {
-    id: uid("assignment"),
+    id: editingAssignment?.id || uid("assignment"),
     title: draft.title,
     prompt: draft.prompt,
     focus: draft.focus,
@@ -4779,9 +4887,9 @@ async function saveTeacherAssignment() {
           })),
         }))
       : (draft.rubric.length ? draft.rubric : rubricForType(draft.assignmentType)),
-    createdBy: "teacher-1",
-    createdAt: new Date().toISOString(),
-    status: "draft",
+    createdBy: editingAssignment?.createdBy || "teacher-1",
+    createdAt: editingAssignment?.createdAt || new Date().toISOString(),
+    status: editingAssignment?.status || "draft",
     deadline: ui.teacherDraft.deadline || "",
     chatTimeLimit: draft.disableChatbot ? -1 : Number(draft.chatTimeLimit || 0),
     uploadedRubricText: ui.teacherDraft.uploadedRubricText || "",
@@ -4797,9 +4905,7 @@ async function saveTeacherAssignment() {
   }
   currentClassId = selectedClassId;
 
-  const data = await Auth.apiFetch(`/api/classes/${selectedClassId}/assignments`, {
-    method: 'POST',
-    body: JSON.stringify({
+  const payload = {
       title: assignment.title,
       prompt: assignment.prompt,
       focus: assignment.focus,
@@ -4814,9 +4920,17 @@ async function saveTeacherAssignment() {
       deadline: assignment.deadline || null,
       chat_time_limit: assignment.chatTimeLimit,
       uploaded_rubric_text: assignment.uploadedRubricText,
-      status: 'draft'
-    })
-  });
+      status: assignment.status || 'draft'
+    };
+  const data = editingAssignment
+    ? await Auth.apiFetch(`/api/assignments/${editingAssignment.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      })
+    : await Auth.apiFetch(`/api/classes/${selectedClassId}/assignments`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
   if (data.error) {
     ui.notice = "Could not save assignment: " + data.error;
     render();
@@ -4829,7 +4943,10 @@ async function saveTeacherAssignment() {
   ui.selectedReviewSubmissionId = null;
   ui.teacherDraft = createBlankTeacherDraft();
   ui.teacherAssist = null;
-  ui.notice = "Assignment saved as draft. Publish it when you're ready for students to see it.";
+  ui.editingAssignmentId = null;
+  ui.notice = editingAssignment
+    ? "Assignment updated."
+    : "Assignment saved as draft. Publish it when you're ready for students to see it.";
   persistState();
   render();
 }
@@ -4898,21 +5015,21 @@ function handleSubmission() {
   const finalText = finalEditor.value.trim();
   const improved = (reflectionEditor ? reflectionEditor.value : submission.reflections.improved || "").trim();
 
-  if (assignment.deadline && new Date(assignment.deadline) < new Date()) {
-    ui.notice = "The deadline for this assignment has passed. Speak to your teacher if you need an extension.";
-    render();
-    return;
-  }
-
   if (!finalText) {
     ui.notice = "Write your final text before submitting.";
     render();
+    window.requestAnimationFrame(() => {
+      document.getElementById("final-editor")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
     return;
   }
   if (!improved) {
     ui.notice = "Complete the reflection before submitting.";
     render();
     reflectionEditor?.focus();
+    window.requestAnimationFrame(() => {
+      reflectionEditor?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
     return;
   }
   submission.reflections.improved = improved;
@@ -4936,6 +5053,9 @@ function handleSubmission() {
     console.error("Submit sync failed:", e);
     ui.notice = "Submitted locally but could not reach server. Please try again.";
     render();
+    window.requestAnimationFrame(() => {
+      document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   });
 }
 
@@ -5663,6 +5783,8 @@ function generateFeedback(assignment, submission) {
 
   // Primary checks — triggered by what's actually in the draft
   const primaryPool = [];
+  const sentenceLabel = (index) => `Sentence ${index + 1}`;
+  const mechanicsFocused = /mechanics|punctuation|spelling|grammar/.test(rubricFeedbackText);
 
   if (hasFlaggedPaste) {
     primaryPool.push("Your draft contains pasted content. Please remove it and rewrite that section in your own words before requesting feedback.");
@@ -5680,6 +5802,30 @@ function generateFeedback(assignment, submission) {
 
   if (singleParagraphTask && /topic sentence|main idea/.test(rubricFeedbackText) && wordCount(firstSentence) < 6) {
     primaryPool.push("Look at your first sentence. Does it clearly state the main idea of the whole paragraph?");
+  }
+
+  const lowercaseStartIndex = sentences.findIndex((sentence) => /^[a-z]/.test(sentence));
+  if (lowercaseStartIndex !== -1) {
+    primaryPool.push(`${sentenceLabel(lowercaseStartIndex)} starts with a lowercase letter. Fix the first word's capitalization and check the rest of that sentence for small grammar slips too.`);
+  }
+
+  const lowercaseIIndex = sentences.findIndex((sentence) => /\bi\b/.test(sentence));
+  if (lowercaseIIndex !== -1) {
+    primaryPool.push(`${sentenceLabel(lowercaseIIndex)} uses the word "i" in lowercase. Check every use of "I" in that sentence and correct the capitalization.`);
+  }
+
+  const repeatedWordIssue = sentences
+    .map((sentence, index) => ({ sentence, index, match: sentence.match(/\b([a-z']+)\s+\1\b/i) }))
+    .find((entry) => entry.match);
+  if (repeatedWordIssue) {
+    primaryPool.push(`${sentenceLabel(repeatedWordIssue.index)} repeats "${repeatedWordIssue.match[1]}" twice in a row. Remove the repetition and make sure the sentence still sounds natural.`);
+  }
+
+  const weakTransitionIssue = sentences
+    .map((sentence, index) => ({ sentence, index }))
+    .find(({ sentence }) => /\bto conclusion\b|\bin other hand\b|\bon other hand\b|\bin the another hand\b/i.test(sentence));
+  if (weakTransitionIssue) {
+    primaryPool.push(`${sentenceLabel(weakTransitionIssue.index)} starts with a transition phrase that does not sound right. Recheck the opening words and the punctuation in that sentence.`);
   }
 
   if (singleParagraphTask && /supporting|detail|example|fact/.test(rubricFeedbackText) && !/\bbecause\b|\bfor example\b|\bfor instance\b|\bsuch as\b/i.test(text)) {
@@ -5701,7 +5847,20 @@ function generateFeedback(assignment, submission) {
 
   const longSentence = sentences.find((sentence) => wordCount(sentence) > 28);
   if (longSentence) {
-    primaryPool.push("One sentence feels long. Where could you break it into two shorter sentences?");
+    const longSentenceIndex = sentences.findIndex((sentence) => sentence === longSentence);
+    primaryPool.push(`${sentenceLabel(longSentenceIndex)} is doing too much at once. Break it into two shorter sentences and check the punctuation when you split it.`);
+  }
+
+  const missingEndPunctuationIndex = sentences.findIndex((sentence, index) => index === sentences.length - 1 && !/[.!?]["')\]]?$/.test(sentence));
+  if (missingEndPunctuationIndex !== -1) {
+    primaryPool.push(`${sentenceLabel(missingEndPunctuationIndex)} does not end with clear punctuation. Add the correct end mark and then reread the whole sentence.`);
+  }
+
+  const commaHeavyIssue = sentences
+    .map((sentence, index) => ({ sentence, index }))
+    .find(({ sentence }) => wordCount(sentence) > 20 && (sentence.match(/,/g) || []).length >= 2);
+  if (commaHeavyIssue) {
+    primaryPool.push(`${sentenceLabel(commaHeavyIssue.index)} has several commas and may be joining too many ideas together. Check whether one comma should become a full stop instead.`);
   }
 
   if (!/\bbecause\b|\bfor example\b|\bfor instance\b|\bsuch as\b/i.test(text)) {
@@ -5724,18 +5883,27 @@ function generateFeedback(assignment, submission) {
     primaryPool.push("Many of your sentences sound the same length. Could you combine one idea and shorten another so the writing has more variety?");
   }
 
+  if (mechanicsFocused) {
+    const shortFragments = sentences
+      .map((sentence, index) => ({ sentence, index }))
+      .find(({ sentence }) => wordCount(sentence) > 0 && wordCount(sentence) < 4);
+    if (shortFragments) {
+      primaryPool.push(`${sentenceLabel(shortFragments.index)} is very short. Check whether it is a complete sentence with both a subject and a verb.`);
+    }
+  }
+
   // Secondary checks — always available but only used when primary ones are exhausted or repeated
   const secondaryPool = [
     singleParagraphTask
       ? "Underline your topic sentence. Does every other sentence clearly support that one idea?"
       : "Read each paragraph and ask: does every sentence clearly support that paragraph’s job?",
     singleParagraphTask ? "Read each sentence and ask: does it clearly support your one main idea?" : "Check that each paragraph has one main job.",
-    "Does your opening sentence tell the reader exactly what you are writing about?",
-    "Is there one place where you could add a specific detail to make your point clearer?",
+    "Pick one sentence and check it word by word for spelling, capitals, and end punctuation before you submit again.",
+    "Find the weakest sentence in your draft. Add one clear detail, or cut one unclear part, so the meaning becomes stronger.",
     !/\b(in conclusion|to conclude|overall|finally|to sum up)\b/i.test(finalSentence) || wordCount(finalSentence) < 8
       ? "Look at your final sentence. Does it clearly restate your main idea in your own words?"
-      : "Check whether your final sentence is smooth and accurate, not just a rushed list of ideas.",
-    "Are there any words you have used more than twice in a row? Try swapping one for a different word.",
+      : "Read your final sentence aloud and check whether every word sounds deliberate rather than rushed.",
+    "Choose one sentence that feels awkward and rewrite only that sentence more clearly in your own words.",
   ];
 
   // Collect all items already given in previous feedback rounds
@@ -5782,11 +5950,12 @@ RULES:
 6. Match your vocabulary to CEFR level ${assignment.languageLevel} — keep it simple and encouraging.
 7. Never repeat the same question twice in a conversation.
 8. After two or three useful student replies, briefly check whether they already have enough ideas to begin drafting. Ask a choice-style question such as: "Do you feel ready to draft now, or do you want one more planning question?"
-9. If the student seems ready, help them name their next drafting step instead of continuing the chat forever.
+9. If the student seems ready, tell them clearly to click the Next button to move into the draft area. Do not tell them to write sentences in the chat.
 10. Do not accept vague ideas too quickly. If the student gives something broad like "ask the teacher" or "do research", ask a follow-up such as "What exactly would you ask?" or "Why would that help?" before moving on.
 11. Before you move from one main idea or step to the next, ask whether the student feels satisfied with the current one or wants to develop it a little more.
 12. If the student gives a weak first step, ask them to make it more specific before you accept it. For example, turn "ask the teacher" into one concrete question they could ask.
 13. When the assignment is about process or steps, help the student improve each step before moving to the next one.
+14. Never say "share it here" or ask the student to draft their first sentence in chat. The chat is only for planning.
 
 Assignment title: "${assignment.title}"
 Task: "${assignment.prompt}"

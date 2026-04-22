@@ -24,6 +24,17 @@ const supabase = createClient(
   SUPABASE_SERVER_KEY
 );
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const NOTIFY_FROM_EMAIL =
+  process.env.NOTIFY_FROM_EMAIL ||
+  process.env.RESEND_FROM_EMAIL ||
+  process.env.FROM_EMAIL ||
+  '';
+const DEADLINE_REMINDER_POLL_MS = Math.max(5 * 60 * 1000, Number(process.env.ASSIGNMENT_REMINDER_POLL_MS || 15 * 60 * 1000));
+const DEADLINE_REMINDER_WINDOW_MS = Math.max(5 * 60 * 1000, Number(process.env.ASSIGNMENT_REMINDER_WINDOW_MS || 20 * 60 * 1000));
+let deadlineReminderJob = null;
+let deadlineReminderInFlight = false;
+
 if (!process.env.SUPABASE_URL || !SUPABASE_SERVER_KEY) {
   console.warn('Supabase server client is missing SUPABASE_URL or a service-role key.');
 }
@@ -95,6 +106,215 @@ function getRequestBaseUrl(req) {
   }
 
   return 'http://localhost:3000';
+}
+
+function getConfiguredPublicBaseUrl() {
+  const configuredBase =
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_URL ||
+    process.env.SITE_URL ||
+    process.env.PUBLIC_SITE_URL ||
+    '';
+  return String(configuredBase || '').replace(/\/+$/, '');
+}
+
+function canSendNotificationEmails() {
+  return Boolean(RESEND_API_KEY && NOTIFY_FROM_EMAIL);
+}
+
+function makeIdempotencyKey(parts = []) {
+  return parts
+    .filter(Boolean)
+    .join('-')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .slice(0, 240);
+}
+
+function escapeHtmlEmail(value = '') {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatDeadline(deadlineValue) {
+  if (!deadlineValue) return '';
+  const date = new Date(deadlineValue);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+async function sendEmail({ to, subject, html, text, idempotencyKey }) {
+  if (!canSendNotificationEmails() || !to) return { skipped: true };
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    },
+    body: JSON.stringify({
+      from: NOTIFY_FROM_EMAIL,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+      text,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || payload?.error || `Email send failed with status ${response.status}`);
+  }
+  return payload;
+}
+
+async function getAuthUserEmailMap(userIds = []) {
+  const wantedIds = Array.from(new Set(userIds.filter(Boolean)));
+  const emailMap = new Map();
+  if (!wantedIds.length) return emailMap;
+
+  let page = 1;
+  const perPage = 1000;
+  while (emailMap.size < wantedIds.length) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = data?.users || [];
+    if (!users.length) break;
+    for (const authUser of users) {
+      if (wantedIds.includes(authUser.id) && authUser.email) {
+        emailMap.set(authUser.id, authUser.email);
+      }
+    }
+    if (users.length < perPage) break;
+    page += 1;
+  }
+
+  return emailMap;
+}
+
+async function getClassStudentRecipients(classId) {
+  const { data, error } = await supabase
+    .from('class_members')
+    .select('student_id, profiles(name)')
+    .eq('class_id', classId);
+  if (error) throw error;
+
+  const studentRows = (data || []).filter((entry) => entry.student_id);
+  const emailMap = await getAuthUserEmailMap(studentRows.map((entry) => entry.student_id));
+  return studentRows
+    .map((entry) => ({
+      id: entry.student_id,
+      name: entry.profiles?.name || 'Student',
+      email: emailMap.get(entry.student_id) || '',
+    }))
+    .filter((entry) => entry.email);
+}
+
+async function notifyStudentsAboutAssignment({
+  assignment,
+  className,
+  baseUrl,
+  mode,
+}) {
+  if (!canSendNotificationEmails() || !assignment?.class_id) return;
+  const recipients = await getClassStudentRecipients(assignment.class_id);
+  if (!recipients.length) return;
+
+  const safeTitle = escapeHtmlEmail(assignment.title || 'New assignment');
+  const safeClassName = escapeHtmlEmail(className || 'your class');
+  const safeDeadline = formatDeadline(assignment.deadline);
+  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
+  const subject = mode === 'deadline-reminder'
+    ? `Reminder: ${assignment.title || 'Assignment'} is due soon`
+    : `New assignment in ${className || 'praxis'}`;
+
+  await Promise.allSettled(recipients.map((recipient) => {
+    const intro = mode === 'deadline-reminder'
+      ? `<p>Hi ${escapeHtmlEmail(recipient.name)},</p><p>This is a reminder that <strong>${safeTitle}</strong> is due in about 24 hours.</p>`
+      : `<p>Hi ${escapeHtmlEmail(recipient.name)},</p><p>Your teacher has published a new assignment in <strong>${safeClassName}</strong>.</p>`;
+    const deadlineLine = safeDeadline
+      ? `<p><strong>Deadline:</strong> ${escapeHtmlEmail(safeDeadline)}</p>`
+      : '';
+    const buttonHtml = safeBaseUrl
+      ? `<p><a href="${escapeHtmlEmail(safeBaseUrl)}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#4c6fe7;color:#ffffff;text-decoration:none;font-weight:600;">Open praxis</a></p>`
+      : '';
+    const textDeadlineLine = safeDeadline ? `Deadline: ${safeDeadline}\n` : '';
+    const accessLine = safeBaseUrl
+      ? `Open praxis here: ${safeBaseUrl}`
+      : `Open praxis from your usual class link to view the assignment.`;
+    const text = mode === 'deadline-reminder'
+      ? `Hi ${recipient.name},\n\nThis is a reminder that "${assignment.title || 'Assignment'}" is due in about 24 hours.\n${textDeadlineLine}\n${accessLine}`
+      : `Hi ${recipient.name},\n\nYour teacher has published a new assignment in ${className || 'praxis'}: "${assignment.title || 'Assignment'}".\n${textDeadlineLine}\n${accessLine}`;
+
+    return sendEmail({
+      to: recipient.email,
+      subject,
+      html: `
+        <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
+          ${intro}
+          <p><strong>Assignment:</strong> ${safeTitle}</p>
+          ${deadlineLine}
+          ${buttonHtml}
+        </div>
+      `,
+      text,
+      idempotencyKey: makeIdempotencyKey([
+        mode,
+        assignment.id,
+        recipient.id,
+        mode === 'deadline-reminder' ? assignment.deadline : new Date().toISOString().slice(0, 16),
+      ]),
+    });
+  }));
+}
+
+async function processUpcomingDeadlineReminders() {
+  if (!canSendNotificationEmails() || deadlineReminderInFlight) return;
+  deadlineReminderInFlight = true;
+  try {
+    const now = Date.now();
+    const lowerBound = new Date(now + (24 * 60 * 60 * 1000) - DEADLINE_REMINDER_WINDOW_MS).toISOString();
+    const upperBound = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const { data: assignments, error } = await supabase
+      .from('assignments')
+      .select('id, class_id, title, deadline, status')
+      .eq('status', 'published')
+      .gte('deadline', lowerBound)
+      .lte('deadline', upperBound);
+    if (error) throw error;
+    if (!assignments?.length) return;
+
+    const classIds = Array.from(new Set(assignments.map((assignment) => assignment.class_id).filter(Boolean)));
+    const { data: classRows, error: classError } = await supabase
+      .from('classes')
+      .select('id, name')
+      .in('id', classIds);
+    if (classError) throw classError;
+    const classNameMap = new Map((classRows || []).map((row) => [row.id, row.name]));
+
+    for (const assignment of assignments) {
+      await notifyStudentsAboutAssignment({
+        assignment,
+        className: classNameMap.get(assignment.class_id) || 'your class',
+        baseUrl: getConfiguredPublicBaseUrl(),
+        mode: 'deadline-reminder',
+      });
+    }
+  } catch (error) {
+    console.error('Deadline reminder processing failed:', error);
+  } finally {
+    deadlineReminderInFlight = false;
+  }
 }
 
 async function requireTeacherProfile(req) {
@@ -599,6 +819,7 @@ app.patch('/api/assignments/:id', async (req, res) => {
     if (teacherError) return res.status(status).json({ error: teacherError });
     const ownedAssignment = await ensureTeacherOwnsAssignment(req.params.id, user.id);
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only update assignments in your own classes.' });
+    const ownedClass = await ensureTeacherOwnsClass(ownedAssignment.class_id, user.id);
     const payload = sanitizeAssignmentPayload(req.body);
     const assignmentClient = getRequestScopedSupabase(req);
     const { data, error } = await assignmentClient
@@ -608,6 +829,16 @@ app.patch('/api/assignments/:id', async (req, res) => {
       .select()
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    if (ownedAssignment.status !== 'published' && data?.status === 'published') {
+      notifyStudentsAboutAssignment({
+        assignment: data,
+        className: ownedClass?.name || 'your class',
+        baseUrl: getRequestBaseUrl(req),
+        mode: 'published',
+      }).catch((notifyError) => {
+        console.error('Assignment publish email failed:', notifyError);
+      });
+    }
     res.json({ assignment: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -775,4 +1006,19 @@ app.patch('/api/submissions/:id', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running on port " + PORT));
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
+  if (canSendNotificationEmails()) {
+    processUpcomingDeadlineReminders().catch((error) => {
+      console.error('Initial deadline reminder check failed:', error);
+    });
+    if (deadlineReminderJob) clearInterval(deadlineReminderJob);
+    deadlineReminderJob = setInterval(() => {
+      processUpcomingDeadlineReminders().catch((error) => {
+        console.error('Scheduled deadline reminder check failed:', error);
+      });
+    }, DEADLINE_REMINDER_POLL_MS);
+  } else {
+    console.log('Email notifications are disabled. Set RESEND_API_KEY and NOTIFY_FROM_EMAIL to enable publish/deadline emails.');
+  }
+});
