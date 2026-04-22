@@ -22,6 +22,10 @@ const ERROR_CODES = [
   { code: "SP",  label: "Spelling error" },
 ];
 
+function getErrorCodeLabel(code) {
+  return ERROR_CODES.find((entry) => entry.code === code)?.label || "";
+}
+
 const ui = {
   role: "student",
   activeUserId: "",
@@ -54,6 +58,7 @@ const ui = {
     speed: 1,
     index: 0,
     timerId: null,
+    touched: false,
   },
   lastAnnotationSelection: "",
   pendingPaste: null,
@@ -2467,6 +2472,7 @@ if (action === "back-to-assignments") {
     ui.selectedAssignmentId = null;
     ui.selectedReviewSubmissionId = null;
     ui.selectedReviewStudentId = null;
+    ui.playback.touched = false;
     render();
     return;
   }
@@ -2475,6 +2481,7 @@ if (action === "back-to-assignments") {
     ui.teacherView = "review";
     ui.selectedReviewSubmissionId = null;
     ui.selectedReviewStudentId = null;
+    ui.playback.touched = false;
     render();
     return;
   }
@@ -2484,6 +2491,7 @@ if (action === "select-assignment") {
   ui.selectedAssignmentId = target.dataset.assignmentId;
   ui.selectedReviewSubmissionId = null;
   ui.selectedReviewStudentId = null;
+  ui.playback.touched = false;
   ui.teacherView = "review";
   ui.notice = "Loading submissions...";
   render();
@@ -2704,6 +2712,7 @@ if (action === "select-assignment") {
     ui.selectedReviewSubmissionId = getReviewSubmissionForStudent(ui.selectedReviewStudentId, ui.selectedAssignmentId)?.id || null;
     ui.teacherView = "grading";
     ui.playback.index = 0;
+    ui.playback.touched = false;
     ui.notice = "";
     render();
     return;
@@ -2717,6 +2726,7 @@ if (action === "select-assignment") {
     ui.selectedReviewSubmissionId = getReviewSubmissionForStudent(nextStudentId, ui.selectedAssignmentId)?.id || null;
     ui.teacherView = "grading";
     ui.playback.index = 0;
+    ui.playback.touched = false;
     ui.notice = "";
     render();
     return;
@@ -2728,6 +2738,7 @@ if (action === "select-assignment") {
     if (!frames.length) {
       return;
     }
+    ui.playback.touched = true;
 
     if (ui.playback.isPlaying) {
       stopPlayback();
@@ -2740,6 +2751,7 @@ if (action === "select-assignment") {
 
   if (action === "playback-step") {
     const direction = Number(target.dataset.direction);
+    ui.playback.touched = true;
     stepPlayback(direction);
     render();
     return;
@@ -2949,6 +2961,7 @@ async function handleChange(event) {
 
 if (target.id === "playback-speed") {
     ui.playback.speed = Number(target.value);
+    ui.playback.touched = true;
     if (ui.playback.isPlaying) {
       const submission = getSelectedReviewSubmission();
       const frames = submission ? getPlaybackFrames(submission) : [];
@@ -3037,6 +3050,7 @@ if (target.id === "student-class-select") {
     stopPlayback();
     ui.selectedReviewSubmissionId = target.value;
     ui.playback.index = 0;
+    ui.playback.touched = false;
     render();
     return;
   }
@@ -3053,6 +3067,7 @@ if (target.id === "student-class-select") {
 
   if (target.id === "playback-speed") {
     ui.playback.speed = Number(target.value);
+    ui.playback.touched = true;
     if (ui.playback.isPlaying) {
       const submission = getSelectedReviewSubmission();
       const frames = submission ? getPlaybackFrames(submission) : [];
@@ -3065,6 +3080,7 @@ if (target.id === "student-class-select") {
 
   if (target.id === "playback-slider") {
     ui.playback.index = Number(target.value);
+    ui.playback.touched = true;
     renderPlaybackScreenOnly();
     return;
   }
@@ -3126,9 +3142,10 @@ function handleInput(event) {
     return;
   }
 
-      if (target.id === "teacher-deadline-date" || target.id === "teacher-deadline-time") {
-    const dateInput = document.getElementById("teacher-deadline-date");
-    const timeInput = document.getElementById("teacher-deadline-time");
+      if (target.id.endsWith("-deadline-date") || target.id.endsWith("-deadline-time")) {
+    const prefix = target.id.startsWith("manual-") ? "manual" : "teacher";
+    const dateInput = document.getElementById(`${prefix}-deadline-date`);
+    const timeInput = document.getElementById(`${prefix}-deadline-time`);
     ui.teacherDraft.deadline = combineDeadlineParts(
       dateInput ? dateInput.value : "",
       timeInput ? timeInput.value : "09:00"
@@ -3801,44 +3818,44 @@ function renderTeacherWorkspace() {
       ` : ""}
     </div>
   `;
-  const assignmentSettingsFields = `
+  const renderAssignmentSettingsFields = (idPrefix) => `
     <div class="field-grid compact-grid">
       <div class="field">
-        <label for="teacher-feedback-limit">Feedback checks</label>
-        <input id="teacher-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
+        <label for="${idPrefix}-feedback-limit">Feedback checks</label>
+        <input id="${idPrefix}-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
       </div>
       <div class="field">
         <label>Total points</label>
         ${ui.teacherAssist
           ? `<div style="font-size:1.1rem;font-weight:700;padding:8px 0;">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts (auto-calculated from rubric)</div>`
-          : `<input id="teacher-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />`
+          : `<input id="${idPrefix}-total-points" data-teacher-field="totalPoints" type="number" min="4" value="${escapeAttribute(String(ui.teacherDraft.totalPoints))}" />`
         }
       </div>
       <div class="field">
-        <label for="teacher-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
-        <input id="teacher-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(getVisibleChatTimeLimit(ui.teacherDraft)))}" ${ui.teacherDraft.disableChatbot ? "disabled" : ""} />
+        <label for="${idPrefix}-chat-limit">Chat time limit (mins, 0 = unlimited)</label>
+        <input id="${idPrefix}-chat-limit" data-teacher-field="chatTimeLimit" type="number" min="0" value="${escapeAttribute(String(getVisibleChatTimeLimit(ui.teacherDraft)))}" ${ui.teacherDraft.disableChatbot ? "disabled" : ""} />
       </div>
       <div class="field" style="display:flex;align-items:flex-end;">
         <label style="display:flex;gap:10px;align-items:center;min-height:44px;padding:0 4px;font-weight:600;">
-          <input id="teacher-disable-chatbot" data-teacher-field="disableChatbot" type="checkbox" ${ui.teacherDraft.disableChatbot ? "checked" : ""} />
+          <input id="${idPrefix}-disable-chatbot" data-teacher-field="disableChatbot" type="checkbox" ${ui.teacherDraft.disableChatbot ? "checked" : ""} />
           Disable chatbot
         </label>
       </div>
       <div class="field" style="grid-column:1 / -1;">
-        <label for="teacher-deadline-date">Deadline</label>
+        <label for="${idPrefix}-deadline-date">Deadline</label>
         <div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:8px;align-items:end;">
           <div style="min-width:0;">
-            <input id="teacher-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="width:100%;min-width:0;" />
+            <input id="${idPrefix}-deadline-date" type="date" value="${escapeAttribute(getDeadlineDatePart(ui.teacherDraft.deadline))}" style="width:100%;min-width:0;" />
           </div>
-          <select id="teacher-deadline-time">
+          <select id="${idPrefix}-deadline-time">
             ${buildDeadlineTimeOptions(getDeadlineTimePart(ui.teacherDraft.deadline))}
           </select>
         </div>
       </div>
 
       <div class="field">
-        <label for="teacher-language-level">Student language level</label>
-        <select id="teacher-language-level" data-teacher-field="languageLevel">
+        <label for="${idPrefix}-language-level">Student language level</label>
+        <select id="${idPrefix}-language-level" data-teacher-field="languageLevel">
           ${["A0", "A1", "A2", "B1", "B2", "C1", "C2"].map((level) => `<option value="${level}" ${ui.teacherDraft.languageLevel === level ? "selected" : ""}>${escapeHtml(level)}</option>`).join("")}
         </select>
       </div>
@@ -3883,7 +3900,7 @@ function renderTeacherWorkspace() {
               </div>
               <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
             </div>
-            ${assignmentSettingsFields}
+            ${renderAssignmentSettingsFields("teacher")}
           </div>
           ${ui.aiAssistLoading ? `
             <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
@@ -3973,7 +3990,7 @@ function renderTeacherWorkspace() {
                   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div>
                       <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
-                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. Use the shared settings above for rubric, deadline, chatbot, and feedback controls.</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. The same rubric, deadline, chatbot, and feedback controls are available below.</p>
                     </div>
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
@@ -4007,6 +4024,14 @@ function renderTeacherWorkspace() {
                       <label for="teacher-student-focus">Student focus</label>
                       <textarea id="teacher-student-focus" data-teacher-field="studentFocus" placeholder="One focus point per line">${escapeHtml(ui.teacherDraft.studentFocus)}</textarea>
                       <p class="subtle" style="font-size:0.82rem;margin-top:6px;">Optional. One focus point per line.</p>
+                    </div>
+                    <div class="teacher-ready-card" style="margin-top:14px;">
+                      <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
+                      <p class="subtle" style="margin:0 0 12px;">Use the same class, deadline, chatbot, language, and feedback controls here without switching back to the AI path.</p>
+                      <div class="pill-row" style="margin-bottom:10px;">
+                        <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
+                      </div>
+                      ${renderAssignmentSettingsFields("manual")}
                     </div>
                   </div>
                 </details>
@@ -4330,7 +4355,7 @@ function renderTeacherGrading(assignment, submission) {
                                                                         <div id="comment-${escapeAttribute(ann.id)}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;scroll-margin-top:120px;">
                     <strong style="color:#5b2a86;flex-shrink:0;">${escapeHtml(ann.code)}</strong>
                     <button type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="flex:1;text-align:left;background:none;border:none;padding:0;color:#3f2a56;cursor:pointer;font:inherit;">
-                      "${escapeHtml(ann.selectedText)}"${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}
+                      "${escapeHtml(ann.selectedText)}"${getErrorCodeLabel(ann.code) ? ` — ${escapeHtml(getErrorCodeLabel(ann.code))}` : ""}${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}
                     </button>
                     <button class="error-code-btn" data-action="remove-annotation" data-annotation-index="${i}" style="flex-shrink:0;color:var(--danger);">✕</button>
                   </div>
@@ -4352,16 +4377,16 @@ function renderTeacherGrading(assignment, submission) {
             </div>
           </details>
 
-          <details style="margin-bottom:16px;">
+          <details style="margin-bottom:16px;" ${ui.playback.touched ? "open" : ""}>
             <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Letter-by-letter playback</summary>
             <div style="margin-top:10px;">
               <div class="pill-row" style="margin-bottom:10px;">
-                <button class="button-ghost" data-action="playback-step" data-direction="-1" ${playback.frames.length <= 1 ? "disabled" : ""}>← Back</button>
-                <button class="button-ghost" data-action="playback-toggle" ${playback.frames.length <= 1 ? "disabled" : ""}>${ui.playback.isPlaying ? "Pause" : "Play"}</button>
-                <button class="button-ghost" data-action="playback-step" data-direction="1" ${playback.frames.length <= 1 ? "disabled" : ""}>Next →</button>
+                <button type="button" class="button-ghost" data-action="playback-step" data-direction="-1" ${playback.frames.length <= 1 ? "disabled" : ""}>← Back</button>
+                <button type="button" class="button-ghost" data-action="playback-toggle" ${playback.frames.length <= 1 ? "disabled" : ""}>${ui.playback.isPlaying ? "Pause" : "Play"}</button>
+                <button type="button" class="button-ghost" data-action="playback-step" data-direction="1" ${playback.frames.length <= 1 ? "disabled" : ""}>Next →</button>
                 <label class="subtle" style="display:flex;align-items:center;gap:8px;">Speed
                   <select id="playback-speed">
-                    ${[0.5, 1, 1.5, 2, 3].map((speed) => `<option value="${speed}" ${Number(ui.playback.speed) === Number(speed) ? "selected" : ""}>${speed}×</option>`).join("")}
+                    ${[0.5, 1, 1.5, 2, 3, 5, 8, 10, 15].map((speed) => `<option value="${speed}" ${Number(ui.playback.speed) === Number(speed) ? "selected" : ""}>${speed}×</option>`).join("")}
                   </select>
                 </label>
                 <span id="playback-meta" class="pill">${escapeHtml(`Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}`)}</span>
@@ -4577,7 +4602,11 @@ function renderStudentWorkspace() {
                 ` : ""}
                 ${assignmentBuckets.submitted.length ? `
                   <optgroup label="Submitted work">
-                    ${assignmentBuckets.submitted.map(({ assignment: item, isGraded }) => `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}${isGraded ? " — Graded" : " — Awaiting review"}</option>`).join("")}
+                    ${assignmentBuckets.submitted.map(({ assignment: item, isGraded }) => {
+                      const itemSubmission = state.submissions.find((submission) => submission.assignmentId === item.id && submission.studentId === ui.activeUserId);
+                      const score = itemSubmission?.teacherReview?.finalScore;
+                      return `<option value="${item.id}" ${ui.selectedStudentAssignmentId === item.id ? "selected" : ""}>${escapeHtml(item.title)}${isGraded ? ` — Graded${score !== "" && score != null ? ` (${escapeHtml(String(score))})` : ""}` : " — Awaiting review"}</option>`;
+                    }).join("")}
                   </optgroup>
                 ` : ""}
               `
@@ -4781,6 +4810,75 @@ function renderStudentFinalStep(assignment, submission) {
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
   const selfAssessmentRowMap = getStudentSelfAssessmentRowScoreMap(submission);
   const selfAssessmentScore = Array.from(selfAssessmentRowMap.values()).reduce((sum, entry) => sum + Number(entry?.points ?? 0), 0);
+  const teacherReviewRows = getTeacherReviewRowsForExport(assignment, submission);
+
+  if (submission.teacherReview?.savedAt) {
+    return `
+      <div class="step-card wizard-card">
+        <div class="step-head">
+          <div>
+            <div class="step-number">3</div>
+            <h3>Your graded work</h3>
+            <p class="subtle">Your teacher has finished reviewing this assignment. Your score, comments, rubric breakdown, and marked copy are below.</p>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.8rem;font-weight:800;color:var(--accent-deep);">${escapeHtml(String(submission.teacherReview.finalScore ?? "—"))}</div>
+            <div class="subtle">Final score</div>
+          </div>
+        </div>
+        <div class="submitted-banner" style="margin-bottom:16px;">
+          <div class="submitted-icon">✓</div>
+          <div>
+            <strong>Submitted and graded</strong>
+            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Open the report or review the comments below.</p>
+          </div>
+          <button class="button-secondary" data-action="download-work" style="flex-shrink:0;margin-left:auto;">⬇ Download graded report</button>
+        </div>
+        <div class="teacher-ready-card" style="border-left:4px solid var(--accent);">
+          <p class="mini-label">Teacher feedback</p>
+          ${submission.teacherReview.finalNotes ? `<p style="white-space:pre-wrap;line-height:1.65;margin:8px 0 0;">${escapeHtml(submission.teacherReview.finalNotes)}</p>` : `<p class="subtle" style="margin:8px 0 0;">Your teacher saved a score without overall notes.</p>`}
+          ${teacherReviewRows.length ? `
+            <div style="display:grid;gap:8px;margin:14px 0 0;">
+              ${teacherReviewRows.map((row) => `
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fbfdff;">
+                  <div style="min-width:0;">
+                    <strong style="display:block;margin-bottom:4px;">${escapeHtml(row.criterion)}</strong>
+                    <span class="subtle" style="font-size:0.82rem;">${escapeHtml(row.selectedLabel || "Not scored")}</span>
+                  </div>
+                  <strong style="white-space:nowrap;">${row.selectedPoints}/${row.maxPoints}</strong>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+          ${submission.teacherReview.annotations?.length ? `
+            <div style="margin-top:14px;">
+              <p class="mini-label">Marked copy</p>
+              <div id="student-feedback-text" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:220px;max-height:min(72vh,720px);overflow-y:auto;">
+                ${renderAnnotatedText(submission)}
+              </div>
+              <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
+              <div style="display:grid;gap:6px;margin-top:6px;">
+                ${submission.teacherReview.annotations.map((ann) => `
+                  <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
+                    <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
+                    <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${getErrorCodeLabel(ann.code) ? ` — ${escapeHtml(getErrorCodeLabel(ann.code))}` : ""}${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
+                  </button>
+                `).join("")}
+              </div>
+            </div>
+          ` : ""}
+        </div>
+        <div class="teacher-ready-card" style="margin-top:14px;">
+          <p class="mini-label">Your final writing</p>
+          <div style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.8;white-space:pre-wrap;word-break:break-word;">${escapeHtml(submission.finalText || submission.draftText || "No final text recorded.")}</div>
+          <div class="field" style="margin-top:14px;">
+            <label>Reflection — what you improved</label>
+            <div style="background:#fbfdff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.reflections.improved || "No reflection recorded.")}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -6210,7 +6308,10 @@ function renderAnnotatedText(submission) {
   };
 
   for (const paste of flaggedPastes) {
-    const idx = findNextSequentialIndex(paste.insertedText);
+    const startHint = Number.isFinite(Number(paste.start)) ? Number(paste.start) : -1;
+    let idx = startHint >= 0 && text.slice(startHint, startHint + paste.insertedText.length) === paste.insertedText
+      ? startHint
+      : findNextSequentialIndex(paste.insertedText);
     if (idx !== -1) {
       const end = idx + paste.insertedText.length;
       pasteRanges.push({ start: idx, end });
@@ -6261,10 +6362,11 @@ function renderAnnotatedText(submission) {
     if (h.type === "paste") {
       result += `<mark class="paste-highlight" title="Pasted content — teacher review required">${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup></mark>`;
     } else {
+      const codeLabel = getErrorCodeLabel(h.code);
       if (h.overlapsPaste) {
-        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="${escapeAttribute(codeLabel || "Click to jump to comment")}">${segment}<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.75);padding:1px 4px;border-radius:999px;">${escapeHtml(h.code)}</sup></mark>`;
       } else {
-        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="${escapeAttribute(codeLabel || "Click to jump to comment")}">${segment}<sup style="font-size:0.76em;color:var(--accent-deep);font-weight:800;margin-left:4px;background:rgba(255,255,255,0.72);padding:1px 4px;border-radius:999px;">${escapeHtml(h.code)}</sup></mark>`;
       }
     }
 
@@ -6482,16 +6584,41 @@ function renderTextWithPasteHighlights(text, writingEvents) {
   const flaggedPastes = (writingEvents || []).filter(e => e.type === "paste" && e.flagged && e.insertedText);
   if (!flaggedPastes.length) return `<pre class="context-expanded-text">${escapeHtml(text)}</pre>`;
 
-  let remaining = text;
-  let html = "";
+  const searchStarts = new Map();
+  const ranges = [];
+
+  const findNextSequentialIndex = (needle) => {
+    if (!needle) return -1;
+    const start = Number(searchStarts.get(needle) || 0);
+    let idx = text.indexOf(needle, start);
+    if (idx === -1 && start > 0) {
+      idx = text.indexOf(needle);
+    }
+    if (idx !== -1) {
+      searchStarts.set(needle, idx + Math.max(needle.length, 1));
+    }
+    return idx;
+  };
+
   for (const event of flaggedPastes) {
-    const idx = remaining.indexOf(event.insertedText);
+    const startHint = Number.isFinite(Number(event.start)) ? Number(event.start) : -1;
+    const idx = startHint >= 0 && text.slice(startHint, startHint + event.insertedText.length) === event.insertedText
+      ? startHint
+      : findNextSequentialIndex(event.insertedText);
     if (idx === -1) continue;
-    html += escapeHtml(remaining.slice(0, idx));
-    html += `<mark class="paste-highlight" title="Pasted content">${escapeHtml(event.insertedText)}</mark>`;
-    remaining = remaining.slice(idx + event.insertedText.length);
+    ranges.push({ start: idx, end: idx + event.insertedText.length });
   }
-  html += escapeHtml(remaining);
+
+  ranges.sort((a, b) => a.start - b.start);
+  let html = "";
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start < cursor) continue;
+    html += escapeHtml(text.slice(cursor, range.start));
+    html += `<mark class="paste-highlight" title="Pasted content">${escapeHtml(text.slice(range.start, range.end))}</mark>`;
+    cursor = range.end;
+  }
+  html += escapeHtml(text.slice(cursor));
   return `<pre class="context-expanded-text">${html}</pre>`;
 }
 
