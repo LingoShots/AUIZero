@@ -1496,16 +1496,21 @@ async function loadStudentAssignmentsForCurrentClass() {
   const classIds = currentClasses.map((cls) => cls.id).filter(Boolean);
   if (!classIds.length) {
     state.assignments = [];
-    state.submissions = [];
     persistState();
     return;
   }
 
   try {
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       classIds.map((classId) => Auth.apiFetch(`/api/classes/${classId}/assignments`))
     );
-    const rawAssignments = results.flatMap((result) => safeArray(result?.assignments));
+    const successfulResults = results
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value);
+    if (!successfulResults.length) {
+      throw new Error("No class assignment requests succeeded");
+    }
+    const rawAssignments = successfulResults.flatMap((result) => safeArray(result?.assignments));
 
     state.assignments = rawAssignments
       .filter((a) => a.status === 'published')
@@ -1535,11 +1540,58 @@ async function loadStudentAssignmentsForCurrentClass() {
     state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
     persistState();
   } catch (error) {
-    state.assignments = [];
-    state.submissions = [];
-    persistState();
     console.error("Could not load student assignments:", error.message, error);
   }
+}
+
+function mergeStudentSubmission(localSubmission, serverSubmission) {
+  const local = localSubmission ? normalizeSubmission(localSubmission) : null;
+  const server = normalizeSubmission(serverSubmission);
+  if (!local) return server;
+
+  const localUpdatedAt = Date.parse(local.updatedAt || 0) || 0;
+  const serverUpdatedAt = Date.parse(server.updatedAt || 0) || 0;
+  const localIsNewer = localUpdatedAt >= serverUpdatedAt;
+  const prefer = (serverValue, localValue, options = {}) => {
+    const { isEmpty = (value) => value === null || value === undefined || value === "" } = options;
+    if (localIsNewer && !isEmpty(localValue)) return localValue;
+    return isEmpty(serverValue) ? localValue : serverValue;
+  };
+  const preferArray = (serverValue, localValue) => {
+    if (localIsNewer && safeArray(localValue).length) return safeArray(localValue);
+    return safeArray(serverValue).length ? safeArray(serverValue) : safeArray(localValue);
+  };
+
+  return normalizeSubmission({
+    ...server,
+    id: server.id || local.id,
+    assignmentId: server.assignmentId || local.assignmentId,
+    studentId: server.studentId || local.studentId,
+    draftText: prefer(server.draftText, local.draftText),
+    finalText: prefer(server.finalText, local.finalText),
+    reflections: {
+      improved: prefer(server.reflections?.improved, local.reflections?.improved),
+    },
+    outline: {
+      partOne: prefer(server.outline?.partOne, local.outline?.partOne),
+      partTwo: prefer(server.outline?.partTwo, local.outline?.partTwo),
+      partThree: prefer(server.outline?.partThree, local.outline?.partThree),
+    },
+    ideaResponses: preferArray(server.ideaResponses, local.ideaResponses),
+    feedbackHistory: preferArray(server.feedbackHistory, local.feedbackHistory),
+    writingEvents: preferArray(server.writingEvents, local.writingEvents),
+    focusAnnotations: preferArray(server.focusAnnotations, local.focusAnnotations),
+    chatHistory: preferArray(server.chatHistory, local.chatHistory),
+    selfAssessment: Object.keys(server.selfAssessment || {}).length ? server.selfAssessment : (local.selfAssessment || {}),
+    chatStartedAt: prefer(server.chatStartedAt, local.chatStartedAt),
+    chatSkippedAt: prefer(server.chatSkippedAt, local.chatSkippedAt),
+    chatExpiredAt: prefer(server.chatExpiredAt, local.chatExpiredAt),
+    chatElapsedMs: prefer(server.chatElapsedMs, local.chatElapsedMs, { isEmpty: (value) => value === null || value === undefined || Number(value) === 0 }),
+    startedAt: prefer(server.startedAt, local.startedAt),
+    submittedAt: prefer(server.submittedAt, local.submittedAt),
+    status: prefer(server.status, local.status, { isEmpty: (value) => !value }),
+    updatedAt: localIsNewer ? local.updatedAt : server.updatedAt,
+  });
 }
 
 function mapServerSubmission(serverSubmission) {
@@ -1617,18 +1669,12 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
     const mapped = mapServerSubmission(result.submission);
     const index = state.submissions.findIndex((submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId);
     if (index >= 0) {
-      state.submissions[index] = normalizeSubmission({
-        ...state.submissions[index],
-        ...mapped,
-        chatExpiredAt: state.submissions[index]?.chatExpiredAt || mapped.chatExpiredAt || null,
-        chatElapsedMs: state.submissions[index]?.chatElapsedMs || mapped.chatElapsedMs || 0,
-        chatResumedAt: state.submissions[index]?.chatResumedAt || null,
-      });
+      state.submissions[index] = mergeStudentSubmission(state.submissions[index], mapped);
     } else {
       state.submissions.push(mapped);
     }
     persistState();
-    return mapped;
+    return index >= 0 ? state.submissions[index] : mapped;
   } catch (error) {
     console.error("Could not load student submission:", error.message, error);
     return null;
