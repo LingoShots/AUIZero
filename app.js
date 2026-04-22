@@ -1242,21 +1242,9 @@ async function upsertTeacherReviewSubmission(assignment, submission) {
 
     const result = await Auth.apiFetch(`/api/assignments/${assignment.id}/students/${submission.studentId}/submission`, {
       method: "PUT",
-      body: JSON.stringify({
-        status: submission.status,
+      body: JSON.stringify(buildSubmissionServerPayload(submission, {
         teacher_review: submission.teacherReview,
-        started_at: submission.startedAt || null,
-        submitted_at: submission.submittedAt || null,
-        draft_text: submission.draftText || "",
-        final_text: submission.finalText || "",
-        reflections: submission.reflections || { improved: "" },
-        outline: submission.outline || {},
-        chat_history: submission.chatHistory || [],
-        writing_events: submission.writingEvents || [],
-        feedback_history: submission.feedbackHistory || [],
-        focus_annotations: submission.focusAnnotations || [],
-        self_assessment: submission.selfAssessment || {},
-      }),
+      })),
     });
 
     return mapServerSubmission(result?.submission || submission);
@@ -1272,6 +1260,29 @@ function replaceSubmissionInState(nextSubmission) {
     (submission) => !(submission.assignmentId === nextSubmission.assignmentId && submission.studentId === nextSubmission.studentId)
   );
   state.submissions.push(nextSubmission);
+}
+
+function buildSubmissionServerPayload(submission, overrides = {}) {
+  return {
+    idea_responses: safeArray(submission?.ideaResponses),
+    draft_text: submission?.draftText || "",
+    final_text: submission?.finalText || "",
+    reflections: submission?.reflections || { improved: "" },
+    outline: submission?.outline || { partOne: "", partTwo: "", partThree: "" },
+    chat_history: safeArray(submission?.chatHistory),
+    writing_events: safeArray(submission?.writingEvents),
+    feedback_history: safeArray(submission?.feedbackHistory),
+    focus_annotations: safeArray(submission?.focusAnnotations),
+    self_assessment: submission?.selfAssessment || {},
+    status: submission?.status || "draft",
+    chat_started_at: submission?.chatStartedAt || null,
+    chat_skipped_at: submission?.chatSkippedAt || null,
+    chat_expired_at: submission?.chatExpiredAt || null,
+    chat_elapsed_ms: Math.max(0, Math.round(Number(submission?.chatElapsedMs || 0))),
+    started_at: submission?.startedAt || null,
+    submitted_at: submission?.submittedAt || null,
+    ...overrides,
+  };
 }
 
 function getTeacherReviewRowsForExport(assignment, submission) {
@@ -1730,6 +1741,9 @@ function pauseActiveChatSession() {
   submission.chatResumedAt = null;
   submission.updatedAt = new Date().toISOString();
   persistState();
+  if (currentProfile?.role === "student") {
+    syncSubmissionToServer(submission);
+  }
 }
 
 function resumeActiveChatSession() {
@@ -2211,6 +2225,24 @@ if (action === "switch-class") {
       ui.notice = "Student added. They can now log in and see published assignments for this class.";
     } else {
       ui.notice = `Could not add student: ${data.error || "unknown error"}`;
+    }
+    render();
+    return;
+  }
+
+  if (action === "remove-class-member") {
+    if (!currentClassId) return;
+    const studentId = target.dataset.studentId;
+    const studentName = target.dataset.studentName || "this student";
+    if (!studentId || !window.confirm(`Remove ${studentName} from this class?`)) return;
+    const data = await Auth.apiFetch(`/api/classes/${currentClassId}/members/${studentId}`, {
+      method: "DELETE",
+    });
+    if (data.ok) {
+      await loadTeacherClassContext(currentClassId);
+      ui.notice = `${studentName} was removed from this class.`;
+    } else {
+      ui.notice = `Could not remove student: ${data.error || "unknown error"}`;
     }
     render();
     return;
@@ -3211,7 +3243,8 @@ function handlePaste(event) {
 
 function render() {
   document.title = PRODUCT_NAME;
-  if (!currentProfile) {
+  if (!currentProfile || !Auth.getToken() || !Auth.getProfile()) {
+    resetAppShellState();
     const params = new URLSearchParams(window.location.search);
     renderAuthScreen(params.get("join"));
     return;
@@ -4021,11 +4054,14 @@ function renderTeacherWorkspace() {
             <span class="pill">${classRoster.length} student${classRoster.length === 1 ? "" : "s"}</span>
           </div>
           ${classRoster.length
-            ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
+            ? `<div style="display:grid;gap:8px;">
                 ${classRoster.map((member, index) => `
-                  <div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fbfdff;">
-                    <span class="subtle" style="display:block;font-size:0.74rem;margin-bottom:3px;">Student ${index + 1}</span>
-                    <strong>${escapeHtml(member.name || "Student")}</strong>
+                  <div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fbfdff;display:flex;justify-content:space-between;gap:12px;align-items:center;">
+                    <div style="min-width:0;">
+                      <span class="subtle" style="display:block;font-size:0.74rem;margin-bottom:3px;">Student ${index + 1}</span>
+                      <strong style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(member.name || "Student")}</strong>
+                    </div>
+                    <button class="button-ghost" data-action="remove-class-member" data-student-id="${member.id}" data-student-name="${escapeAttribute(member.name || "Student")}" style="font-size:0.78rem;color:var(--danger);border-color:var(--danger);white-space:nowrap;">Remove</button>
                   </div>
                 `).join("")}
               </div>`
@@ -7124,20 +7160,7 @@ async function syncSubmissionToServer(submission) {
     if (existing.error) return;
     const serverId = existing.submission?.id;
     if (!serverId) return;
-    const payload = {
-      draft_text: submission.draftText || "",
-      final_text: submission.finalText || "",
-      reflections: submission.reflections || { improved: "" },
-      chat_history: submission.chatHistory || [],
-      writing_events: submission.writingEvents || [],
-      feedback_history: submission.feedbackHistory || [],
-      focus_annotations: submission.focusAnnotations || [],
-      self_assessment: submission.selfAssessment || {},
-      status: submission.status || "draft",
-      chat_started_at: submission.chatStartedAt || null,
-      started_at: submission.startedAt || null,
-      submitted_at: submission.submittedAt || null,
-    };
+    const payload = buildSubmissionServerPayload(submission);
     const result = await Auth.apiFetch(`/api/submissions/${serverId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload)

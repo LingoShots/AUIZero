@@ -377,6 +377,7 @@ async function ensureStudentCanAccessAssignment(assignmentId, studentId) {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
+  if (data.status !== 'published') return null;
   const enrolledClass = await ensureStudentBelongsToClass(data.class_id, studentId);
   return enrolledClass ? data : null;
 }
@@ -615,22 +616,43 @@ app.post('/api/classes', async (req, res) => {
 // Add student to class
 app.post('/api/classes/:classId/members', async (req, res) => {
   try {
-    const user = await getUser(req);
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
+    if (!ownedClass) return res.status(403).json({ error: 'You can only add students to your own classes.' });
     const { studentEmail } = req.body;
     // Find student by email
-    const { data: students, error: findError } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('role', 'student');
-    if (findError) return res.status(400).json({ error: findError.message });
-    // Look up auth user by email using admin API
     const { data: authUsers } = await supabase.auth.admin.listUsers();
     const authUser = authUsers.users.find(u => u.email === studentEmail);
     if (!authUser) return res.status(404).json({ error: 'No student found with that email' });
+    const studentProfile = await getProfile(authUser.id);
+    if (!studentProfile || studentProfile.role !== 'student') {
+      return res.status(404).json({ error: 'No student found with that email' });
+    }
     const { error } = await supabase
       .from('class_members')
-      .insert({ class_id: req.params.classId, student_id: authUser.id });
+      .upsert(
+        { class_id: req.params.classId, student_id: authUser.id },
+        { onConflict: 'class_id,student_id' }
+      );
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/classes/:classId/members/:studentId', async (req, res) => {
+  try {
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
+    if (!ownedClass) return res.status(403).json({ error: 'You can only remove students from your own classes.' });
+    const { error } = await supabase
+      .from('class_members')
+      .delete()
+      .eq('class_id', req.params.classId)
+      .eq('student_id', req.params.studentId);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
   } catch (error) {
@@ -677,9 +699,16 @@ app.post('/api/classes/:classId/join', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const profile = await getProfile(user.id);
+    if (profile?.role !== 'student') {
+      return res.status(403).json({ error: 'Only student accounts can join classes.' });
+    }
     const { error } = await supabase
       .from('class_members')
-      .upsert({ class_id: req.params.classId, student_id: user.id });
+      .upsert(
+        { class_id: req.params.classId, student_id: user.id },
+        { onConflict: 'class_id,student_id' }
+      );
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
   } catch (error) {
@@ -730,9 +759,11 @@ const ASSIGNMENT_ALLOWED_FIELDS = new Set([
 ]);
 
 const SUBMISSION_ALLOWED_FIELDS = new Set([
+  'idea_responses',
   'draft_text',
   'final_text',
   'reflections',
+  'outline',
   'chat_history',
   'writing_events',
   'feedback_history',
@@ -741,6 +772,9 @@ const SUBMISSION_ALLOWED_FIELDS = new Set([
   'self_assessment',
   'status',
   'chat_started_at',
+  'chat_skipped_at',
+  'chat_expired_at',
+  'chat_elapsed_ms',
   'started_at',
   'submitted_at',
 ]);
@@ -790,8 +824,7 @@ app.post('/api/classes/:classId/assignments', async (req, res) => {
     const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
     if (!ownedClass) return res.status(403).json({ error: 'You can only add assignments to your own classes.' });
     const payload = sanitizeAssignmentPayload(req.body);
-    const assignmentClient = getRequestScopedSupabase(req);
-    const { data, error } = await assignmentClient
+    const { data, error } = await supabase
       .from('assignments')
       .insert({ ...payload, class_id: req.params.classId })
       .select()
@@ -821,8 +854,7 @@ app.patch('/api/assignments/:id', async (req, res) => {
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only update assignments in your own classes.' });
     const ownedClass = await ensureTeacherOwnsClass(ownedAssignment.class_id, user.id);
     const payload = sanitizeAssignmentPayload(req.body);
-    const assignmentClient = getRequestScopedSupabase(req);
-    const { data, error } = await assignmentClient
+    const { data, error } = await supabase
       .from('assignments')
       .update(payload)
       .eq('id', req.params.id)
