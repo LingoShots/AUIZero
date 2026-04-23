@@ -976,6 +976,40 @@ button.rubric-level-cell:hover {
   background: #fff;
 }
 
+.editor-with-lines {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.review-editor-with-lines {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+.line-gutter {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f6f9ff;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.65;
+  padding: 14px 6px 14px 0;
+  text-align: right;
+  overflow: hidden;
+  user-select: none;
+}
+
+.line-gutter-row {
+  min-height: calc(1em * 1.65);
+}
+
+.editor-with-lines .draft-editor,
+.editor-with-lines .final-editor,
+.editor-with-lines #student-text-annotate {
+  margin: 0;
+}
+
 .wizard-nav {
   display: flex;
   justify-content: space-between;
@@ -1113,6 +1147,17 @@ button.rubric-level-cell:hover {
   .draft-editor,
   .final-editor {
     min-height: 220px;
+  }
+
+  .editor-with-lines,
+  .review-editor-with-lines {
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .line-gutter {
+    font-size: 0.68rem;
+    padding-right: 4px;
   }
 
   .brand-mark {
