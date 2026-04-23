@@ -1,4 +1,14 @@
-(function initAiAssistUtils(global) {
+(function initAiAssistUtils(global, factory) {
+  const utils = factory();
+  if (global) {
+    global.AiAssistUtils = utils;
+  }
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = utils;
+  }
+})(
+  typeof window !== "undefined" ? window : globalThis,
+  function aiAssistUtilsFactory() {
   function stripCodeFence(text = "") {
     const raw = String(text || "").trim();
     const fenceMatch = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -58,10 +68,11 @@
     }).join("\n");
   }
 
-  global.AiAssistUtils = {
+  return {
     extractJsonBlock,
     parseJsonResponse,
     stringifyLinesWithMarkers,
     stripCodeFence,
   };
-})(window);
+  }
+);

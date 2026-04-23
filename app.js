@@ -123,6 +123,9 @@ const ui = {
 
 let state = { assignments: [], submissions: [], users: [] };
 let teacherAssistAbortController = null;
+const authUiState = {
+  signupRole: "student",
+};
 
 function loadActiveClassPreferences() {
   try {
@@ -3645,6 +3648,109 @@ function render() {
   syncTeacherReviewPolling();
 }
 
+function setAuthTab(tab) {
+  const signinForm = document.getElementById("auth-signin-form");
+  const signupForm = document.getElementById("auth-signup-form");
+  const signinTab = document.getElementById("auth-tab-signin");
+  const signupTab = document.getElementById("auth-tab-signup");
+  if (!signinForm || !signupForm || !signinTab || !signupTab) return;
+  signinForm.style.display = tab === "signin" ? "block" : "none";
+  signupForm.style.display = tab === "signup" ? "block" : "none";
+  signinTab.style.background = tab === "signin" ? "#fff" : "#eef4ff";
+  signinTab.style.color = tab === "signin" ? "var(--accent)" : "#667063";
+  signupTab.style.background = tab === "signup" ? "#fff" : "#eef4ff";
+  signupTab.style.color = tab === "signup" ? "var(--accent)" : "#667063";
+}
+
+function setAuthSignupRole(role) {
+  authUiState.signupRole = role === "teacher" ? "teacher" : "student";
+  const studentButton = document.getElementById("role-btn-student");
+  const teacherButton = document.getElementById("role-btn-teacher");
+  if (studentButton) {
+    studentButton.style.border = authUiState.signupRole === "student" ? "2px solid var(--accent)" : "1px solid var(--line)";
+    studentButton.style.background = authUiState.signupRole === "student" ? "#e7eeff" : "#fff";
+    studentButton.style.color = authUiState.signupRole === "student" ? "var(--accent-deep)" : "#667063";
+  }
+  if (teacherButton) {
+    teacherButton.style.border = authUiState.signupRole === "teacher" ? "2px solid var(--accent)" : "1px solid var(--line)";
+    teacherButton.style.background = authUiState.signupRole === "teacher" ? "#e7eeff" : "#fff";
+    teacherButton.style.color = authUiState.signupRole === "teacher" ? "var(--accent-deep)" : "#667063";
+  }
+}
+
+function bindAuthScreenEvents(joinClassId = null) {
+  authUiState.signupRole = "student";
+  setAuthTab("signin");
+  setAuthSignupRole("student");
+
+  appEl.querySelectorAll("[data-auth-tab]").forEach((button) => {
+    button.addEventListener("click", () => setAuthTab(button.dataset.authTab));
+  });
+
+  appEl.querySelectorAll("[data-auth-role]").forEach((button) => {
+    button.addEventListener("click", () => setAuthSignupRole(button.dataset.authRole));
+  });
+
+  appEl.querySelector("[data-auth-action='signin']")?.addEventListener("click", async () => {
+    const email = document.getElementById("auth-email").value.trim();
+    const password = document.getElementById("auth-password").value;
+    const errEl = document.getElementById("auth-error");
+    errEl.style.display = "none";
+    try {
+      const stayLoggedIn = document.getElementById("stay-logged-in")?.checked !== false;
+      const profile = await Auth.signIn(email, password, stayLoggedIn);
+      await Auth.joinClassIfInvited();
+      await bootApp(profile);
+    } catch (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = "block";
+    }
+  });
+
+  appEl.querySelector("[data-auth-action='forgot-password']")?.addEventListener("click", async () => {
+    const email = document.getElementById("auth-email").value.trim();
+    const errEl = document.getElementById("auth-error");
+    errEl.style.display = "none";
+    if (!email) {
+      errEl.textContent = "Enter your email first, then click forgot password.";
+      errEl.style.display = "block";
+      errEl.style.color = "var(--danger)";
+      return;
+    }
+    try {
+      await Auth.requestPasswordReset(email);
+      errEl.textContent = "Password reset email sent. Check your inbox.";
+      errEl.style.display = "block";
+      errEl.style.color = "var(--sage)";
+    } catch (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = "block";
+      errEl.style.color = "var(--danger)";
+    }
+  });
+
+  appEl.querySelector("[data-auth-action='signup']")?.addEventListener("click", async () => {
+    const name = document.getElementById("auth-signup-name").value.trim();
+    const email = document.getElementById("auth-signup-email").value.trim();
+    const password = document.getElementById("auth-signup-password").value;
+    const errEl = document.getElementById("auth-signup-error");
+    errEl.style.display = "none";
+    if (!name || !email || !password) {
+      errEl.textContent = "Please fill in all fields.";
+      errEl.style.display = "block";
+      return;
+    }
+    try {
+      const profile = await Auth.signUp(email, password, name, joinClassId ? "student" : authUiState.signupRole);
+      await Auth.joinClassIfInvited();
+      await bootApp(profile);
+    } catch (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = "block";
+    }
+  });
+}
+
 function renderAuthScreen(joinClassId = null, inviteInfo = null) {
   stopTeacherReviewPolling();
   document.title = PRODUCT_NAME;
@@ -3671,8 +3777,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
         </div>
         ${inviteBanner}
         <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#eef4ff;">
-          <button id="auth-tab-signin" onclick="showAuthTab('signin')" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:var(--accent);">Sign in</button>
-          <button id="auth-tab-signup" onclick="showAuthTab('signup')" style="flex:1;padding:10px;border:none;background:#eef4ff;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
+          <button id="auth-tab-signin" data-auth-tab="signin" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:var(--accent);">Sign in</button>
+          <button id="auth-tab-signup" data-auth-tab="signup" style="flex:1;padding:10px;border:none;background:#eef4ff;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
         </div>
         <div id="auth-signin-form">
           <div style="display:grid;gap:12px;">
@@ -3681,8 +3787,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--muted);cursor:pointer;">
               <input type="checkbox" id="stay-logged-in" checked style="cursor:pointer;" /> Stay logged in
             </label>
-            <button type="button" onclick="handleForgotPassword()" style="background:none;border:none;padding:0;text-align:left;color:var(--accent);font-weight:600;cursor:pointer;">Forgot password?</button>
-            <button onclick="handleSignIn()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Sign in</button>
+            <button type="button" data-auth-action="forgot-password" style="background:none;border:none;padding:0;text-align:left;color:var(--accent);font-weight:600;cursor:pointer;">Forgot password?</button>
+            <button type="button" data-auth-action="signin" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Sign in</button>
             <p id="auth-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
         </div>
@@ -3692,97 +3798,17 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <input id="auth-signup-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <input id="auth-signup-password" type="password" placeholder="Password (min 6 characters)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <div style="display:flex;gap:8px;">
-              <button onclick="setSignupRole('student')" id="role-btn-student" style="flex:1;padding:10px;border:2px solid var(--accent);border-radius:10px;background:#e7eeff;font:inherit;font-weight:700;cursor:pointer;color:var(--accent-deep);">Student</button>
-              ${!joinClassId ? `<button onclick="setSignupRole('teacher')" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
+              <button type="button" data-auth-role="student" id="role-btn-student" style="flex:1;padding:10px;border:2px solid var(--accent);border-radius:10px;background:#e7eeff;font:inherit;font-weight:700;cursor:pointer;color:var(--accent-deep);">Student</button>
+              ${!joinClassId ? `<button type="button" data-auth-role="teacher" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
               </div>
-            <button onclick="handleSignUp()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Create account</button>
+            <button type="button" data-auth-action="signup" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Create account</button>
             <p id="auth-signup-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
         </div>
       </div>
     </div>
   `;
-
-  // Inline auth functions — attached to window so onclick works
-  window.signupRole = 'student';
-
-  window.showAuthTab = (tab) => {
-    document.getElementById('auth-signin-form').style.display = tab === 'signin' ? 'block' : 'none';
-    document.getElementById('auth-signup-form').style.display = tab === 'signup' ? 'block' : 'none';
-    document.getElementById('auth-tab-signin').style.background = tab === 'signin' ? '#fff' : '#eef4ff';
-    document.getElementById('auth-tab-signin').style.color = tab === 'signin' ? 'var(--accent)' : '#667063';
-    document.getElementById('auth-tab-signup').style.background = tab === 'signup' ? '#fff' : '#eef4ff';
-    document.getElementById('auth-tab-signup').style.color = tab === 'signup' ? 'var(--accent)' : '#667063';
-  };
-
-  window.setSignupRole = (role) => {
-    window.signupRole = role;
-    document.getElementById('role-btn-student').style.border = role === 'student' ? '2px solid var(--accent)' : '1px solid var(--line)';
-    document.getElementById('role-btn-student').style.background = role === 'student' ? '#e7eeff' : '#fff';
-    document.getElementById('role-btn-student').style.color = role === 'student' ? 'var(--accent-deep)' : '#667063';
-    document.getElementById('role-btn-teacher').style.border = role === 'teacher' ? '2px solid var(--accent)' : '1px solid var(--line)';
-    document.getElementById('role-btn-teacher').style.background = role === 'teacher' ? '#e7eeff' : '#fff';
-    document.getElementById('role-btn-teacher').style.color = role === 'teacher' ? 'var(--accent-deep)' : '#667063';
-  };
-
-  window.handleSignIn = async () => {
-    const email = document.getElementById('auth-email').value.trim();
-    const password = document.getElementById('auth-password').value;
-    const errEl = document.getElementById('auth-error');
-    errEl.style.display = 'none';
-    try {
-      const stayLoggedIn = document.getElementById('stay-logged-in')?.checked !== false;
-      const profile = await Auth.signIn(email, password, stayLoggedIn);
-      await Auth.joinClassIfInvited();
-      await bootApp(profile);
-    } catch (e) {
-      errEl.textContent = e.message;
-      errEl.style.display = 'block';
-    }
-  };
-
-  window.handleForgotPassword = async () => {
-    const email = document.getElementById('auth-email').value.trim();
-    const errEl = document.getElementById('auth-error');
-    errEl.style.display = 'none';
-    if (!email) {
-      errEl.textContent = 'Enter your email first, then click forgot password.';
-      errEl.style.display = 'block';
-      errEl.style.color = 'var(--danger)';
-      return;
-    }
-    try {
-      await Auth.requestPasswordReset(email);
-      errEl.textContent = 'Password reset email sent. Check your inbox.';
-      errEl.style.display = 'block';
-      errEl.style.color = 'var(--sage)';
-    } catch (e) {
-      errEl.textContent = e.message;
-      errEl.style.display = 'block';
-      errEl.style.color = 'var(--danger)';
-    }
-  };
-  
-  window.handleSignUp = async () => {
-    const name = document.getElementById('auth-signup-name').value.trim();
-    const email = document.getElementById('auth-signup-email').value.trim();
-    const password = document.getElementById('auth-signup-password').value;
-    const errEl = document.getElementById('auth-signup-error');
-    errEl.style.display = 'none';
-    if (!name || !email || !password) {
-      errEl.textContent = 'Please fill in all fields.';
-      errEl.style.display = 'block';
-      return;
-    }
-    try {
-      const profile = await Auth.signUp(email, password, name, window.signupRole);
-      await Auth.joinClassIfInvited();
-      await bootApp(profile);
-    } catch (e) {
-      errEl.textContent = e.message;
-      errEl.style.display = 'block';
-    }
-  };
+  bindAuthScreenEvents(joinClassId);
 }
 
 function renderResetPasswordScreen() {
@@ -3804,15 +3830,17 @@ function renderResetPasswordScreen() {
           </div>
           <p id="reset-password-error" style="display:none;margin:0;font-size:0.88rem;"></p>
           <div style="display:flex;gap:10px;justify-content:flex-end;">
-            <button class="button-ghost" onclick="window.location.href='/'">Cancel</button>
-            <button class="button" onclick="handleResetPassword()">Save new password</button>
+            <button class="button-ghost" type="button" data-reset-action="cancel">Cancel</button>
+            <button class="button" type="button" data-reset-action="save">Save new password</button>
           </div>
         </div>
       </div>
     </div>
   `;
-
-  window.handleResetPassword = async () => {
+  appEl.querySelector("[data-reset-action='cancel']")?.addEventListener("click", () => {
+    window.location.href = "/";
+  });
+  appEl.querySelector("[data-reset-action='save']")?.addEventListener("click", async () => {
     const password = document.getElementById('reset-password-input').value;
     const confirm = document.getElementById('reset-password-confirm').value;
     const errEl = document.getElementById('reset-password-error');
@@ -3843,7 +3871,7 @@ function renderResetPasswordScreen() {
       errEl.style.display = 'block';
       errEl.style.color = 'var(--danger)';
     }
-  };
+  });
 }
 
 window.handleRubricDrop = async (event) => {

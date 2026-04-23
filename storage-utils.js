@@ -1,4 +1,14 @@
-(function initStorageUtils(global) {
+(function initStorageUtils(global, factory) {
+  const utils = factory(global);
+  if (global) {
+    global.StorageUtils = utils;
+  }
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = utils;
+  }
+})(
+  typeof window !== "undefined" ? window : globalThis,
+  function storageUtilsFactory(global) {
   function safeReadJson(key, fallback = null) {
     try {
       const raw = global.localStorage.getItem(key);
@@ -116,7 +126,7 @@
     return { ok: false, error: fallbackWrite.error || primaryWrite.error, mode: "fallback" };
   }
 
-  global.StorageUtils = {
+  return {
     buildFallbackStateSnapshot,
     buildStateSnapshot,
     isQuotaError,
@@ -125,4 +135,5 @@
     safeReadJson,
     safeWriteJson,
   };
-})(window);
+  }
+);
