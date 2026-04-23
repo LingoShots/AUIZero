@@ -2,6 +2,7 @@ const STORAGE_KEY = "AUIZero-v1";
 const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
 const STORAGE_BACKUP_KEY = "AUIZero-v1-backup";
 const ACTIVE_CLASS_KEY = "AUIZero-active-class-v1";
+const ACTIVE_STUDENT_ASSIGNMENT_KEY = "AUIZero-active-student-assignment-v1";
 const CUSTOM_ERROR_CODES_KEY = "AUIZero-custom-error-codes-v1";
 const LARGE_PASTE_LIMIT = 220;
 const PRODUCT_NAME = "praxis";
@@ -116,6 +117,7 @@ const ui = {
   lastAnnotationSelection: "",
   pendingPaste: null,
   notice: "",
+  draftSaveMessage: "",
   expandedContextCol: null,
   chatInput: "",
   chatLoading: false,
@@ -142,6 +144,46 @@ function saveActiveClassPreferences(preferences) {
   } catch (_) {
     // Ignore localStorage write failures and keep the app usable.
   }
+}
+
+function loadActiveStudentAssignmentPreferences() {
+  try {
+    return JSON.parse(window.localStorage.getItem(ACTIVE_STUDENT_ASSIGNMENT_KEY) || "{}") || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveActiveStudentAssignmentPreferences(preferences) {
+  try {
+    window.localStorage.setItem(ACTIVE_STUDENT_ASSIGNMENT_KEY, JSON.stringify(preferences || {}));
+  } catch (_) {
+    // Ignore localStorage write failures and keep the app usable.
+  }
+}
+
+function getStudentAssignmentPreferenceKey(profile = currentProfile, classId = currentClassId) {
+  if (!profile?.id || !classId) return "";
+  return `${profile.id}:${classId}`;
+}
+
+function getSavedStudentAssignmentId(profile = currentProfile, classId = currentClassId) {
+  const key = getStudentAssignmentPreferenceKey(profile, classId);
+  if (!key) return null;
+  const preferences = loadActiveStudentAssignmentPreferences();
+  return preferences[key] || null;
+}
+
+function saveStudentAssignmentId(assignmentId, profile = currentProfile, classId = currentClassId) {
+  const key = getStudentAssignmentPreferenceKey(profile, classId);
+  if (!key) return;
+  const preferences = loadActiveStudentAssignmentPreferences();
+  if (assignmentId) {
+    preferences[key] = assignmentId;
+  } else {
+    delete preferences[key];
+  }
+  saveActiveStudentAssignmentPreferences(preferences);
 }
 
 function getActiveClassPreferenceKey(profile = currentProfile) {
@@ -1924,6 +1966,14 @@ function showAutosaveIndicator(message = "Saved") {
   setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
 }
 
+function setDraftSaveMessage(message) {
+  ui.draftSaveMessage = message || "";
+  const el = document.getElementById("draft-save-status");
+  if (el) {
+    el.textContent = ui.draftSaveMessage;
+  }
+}
+
 function getActiveChatElapsedMs(assignment, submission) {
   const timeLimit = isChatDisabled(assignment) ? 0 : Math.max(0, Number(assignment?.chatTimeLimit || 0));
   if (timeLimit <= 0 || !submission?.chatStartedAt) return 0;
@@ -2066,12 +2116,16 @@ function startChatTimer() {
 
 function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
+  showAutosaveIndicator("Saving...");
+  setDraftSaveMessage("Saving…");
   autoSaveTimer = setTimeout(() => {
     const submission = getStudentSubmission();
     if (!submission) return;
     persistState();
-    flushCurrentStudentWork();
-    showAutosaveIndicator("Saved");
+    flushCurrentStudentWork().then((saved) => {
+      showAutosaveIndicator(saved ? "Saved" : "Saved on this device");
+      setDraftSaveMessage(saved ? "Saved just now." : "Saved on this device.");
+    });
   }, 2500);
 }
 
@@ -2094,7 +2148,10 @@ function flushCurrentStudentWork(options = {}) {
   if (options.preferKeepalive) {
     submission.updatedAt = new Date().toISOString();
   }
-  return syncSubmissionToServer(submission);
+  return syncSubmissionToServer(submission).then((saved) => {
+    setDraftSaveMessage(saved ? "Saved just now." : "Saved on this device.");
+    return saved;
+  });
 }
 
 async function requestAiGenerate(payload, options = {}) {
@@ -2453,8 +2510,10 @@ if (action === "generate-teacher-assist") {
     }
     submission.updatedAt = new Date().toISOString();
     persistState();
+    setDraftSaveMessage("Saving…");
     const saved = await flushCurrentStudentWork();
     showAutosaveIndicator(saved ? "Draft saved" : "Saved on this device");
+    setDraftSaveMessage(saved ? "Draft saved." : "Saved on this device.");
     ui.notice = saved ? "Draft saved." : "We couldn't save to the server just now, but your draft is still on this device.";
     render();
     return;
@@ -2462,6 +2521,7 @@ if (action === "generate-teacher-assist") {
 
 if (action === "switch-class") {
     pauseActiveChatSession();
+    await flushCurrentStudentWork();
     currentClassId = target.dataset.classId;
     saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = null;
@@ -2477,9 +2537,11 @@ if (action === "switch-class") {
 
   if (action === "open-assignment") {
     pauseActiveChatSession();
+    await flushCurrentStudentWork();
     currentClassId = target.dataset.classId;
     saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = target.dataset.assignmentId;
+    saveStudentAssignmentId(ui.selectedStudentAssignmentId);
     ui.studentStep = 1;
     ui.notice = "";
     ensureStudentSubmission();
@@ -2653,6 +2715,9 @@ if (action === "toggle-full-rubric") {
   }
   
 if (action === "sign-out") {
+    if (currentProfile?.role === "student") {
+      await flushCurrentStudentWork();
+    }
     await Auth.signOut();
     resetAppShellState();
     appEl.innerHTML = '';
@@ -2948,10 +3013,14 @@ if (action === "select-assignment") {
   }
 
   if (action === "student-prev-step") {
-    if (ui.studentStep === 1 && Number(target.dataset.step) !== 1) {
+    const targetStep = Number(target.dataset.step);
+    if (ui.studentStep === 1 && targetStep !== 1) {
       pauseActiveChatSession();
     }
-    ui.studentStep = Number(target.dataset.step);
+    if (targetStep === 1) {
+      resumeActiveChatSession();
+    }
+    ui.studentStep = targetStep;
     ui.notice = "";
     render();
     return;
@@ -3365,6 +3434,7 @@ if (target.id === "playback-speed") {
 
 if (target.id === "student-class-select") {
     pauseActiveChatSession();
+    await flushCurrentStudentWork();
     currentClassId = target.value;
     saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = null;
@@ -3423,7 +3493,9 @@ if (target.id === "student-class-select") {
   }
 
   if (target.id === "student-assignment-select") {
+    await flushCurrentStudentWork();
     ui.selectedStudentAssignmentId = target.value;
+    saveStudentAssignmentId(ui.selectedStudentAssignmentId);
     ui.studentStep = 1;
     ui.notice = "";
     ensureStudentSubmission();
@@ -3525,7 +3597,7 @@ function handleInput(event) {
     idea[target.dataset.ideaField] = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
-    scheduleSubmissionSync();
+    scheduleAutoSave();
     return;
   }
 
@@ -3559,6 +3631,7 @@ function handleInput(event) {
     persistState();
     scheduleSubmissionSync();
     refreshLineNumberGutterForElement(target);
+    scheduleAutoSave();
     updateFinalMeters();
     return;
   }
@@ -3574,7 +3647,7 @@ function handleInput(event) {
       el.closest(".sa-option").classList.toggle("sa-selected", el === target);
     });
     persistState();
-    scheduleSubmissionSync();
+    scheduleAutoSave();
     return;
   }
   if (target.dataset.reflectionField) {
@@ -3586,7 +3659,7 @@ function handleInput(event) {
     submission.reflections[target.dataset.reflectionField] = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
-    scheduleSubmissionSync();
+    scheduleAutoSave();
     return;
   }
 
@@ -3599,7 +3672,7 @@ function handleInput(event) {
     submission.outline[target.dataset.outlineField] = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
-    scheduleSubmissionSync();
+    scheduleAutoSave();
     return;
   }
 }
@@ -5134,7 +5207,7 @@ function renderStudentIdeasStep(assignment, submission) {
         <div class="chatbot-window" id="chatbot-window">
           ${chatHistory.length === 0 ? `
             <div class="chat-message chat-assistant">
-              <div class="chat-bubble">Hello! I'm your writing coach. I won't write anything for you, but I'll ask you questions to help you think. Let's start: what topic or idea are you thinking about for this piece?</div>
+              <div class="chat-bubble">Hello! I'm your writing coach. I won't write anything for you, but I'll ask you questions to help you think. Let's start outlining: What are your thoughts on the topic "${escapeHtml(assignment.title || "this assignment")}"?</div>
             </div>
           ` : chatHistory.map((msg) => `
             <div class="chat-message chat-${escapeHtml(msg.role)}">
@@ -5206,6 +5279,7 @@ function renderStudentDraftStep(assignment, submission) {
         <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
         <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
       </div>
+      <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
       <div class="feedback-list">
         ${
           feedbackEntries.length
@@ -5232,6 +5306,7 @@ function renderStudentDraftStep(assignment, submission) {
         <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
         <button class="button" data-action="student-next-step" data-step="3">Next</button>
       </div>
+      ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
     </div>
   `;
 }
@@ -6163,7 +6238,18 @@ function hydrateSelections() {
 
   const published = getPublishedAssignments();
   if (!published.some((assignment) => assignment.id === ui.selectedStudentAssignmentId)) {
-    ui.selectedStudentAssignmentId = published[0]?.id || null;
+    const buckets = getStudentAssignmentBuckets();
+    const savedAssignmentId = getSavedStudentAssignmentId();
+    const preferredCurrentId = buckets.current[0]?.assignment?.id || null;
+    const preferredSubmittedId = buckets.submitted[0]?.assignment?.id || null;
+    const nextAssignmentId = published.some((assignment) => assignment.id === savedAssignmentId)
+      ? savedAssignmentId
+      : (preferredCurrentId || preferredSubmittedId || published[0]?.id || null);
+    ui.selectedStudentAssignmentId = nextAssignmentId;
+  }
+
+  if (ui.selectedStudentAssignmentId) {
+    saveStudentAssignmentId(ui.selectedStudentAssignmentId);
   }
 
   ui.studentStep = clamp(ui.studentStep, 1, 3);
@@ -8279,6 +8365,7 @@ async function syncSubmissionToServer(submission) {
   } catch (e) {
     console.error("Could not sync submission to server:", e.message, e);
     ui.notice = "We couldn't save to the server just now. Your work is still on this device.";
+    setDraftSaveMessage("Saved on this device.");
     return false;
   }
 }
