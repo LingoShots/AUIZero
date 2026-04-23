@@ -990,6 +990,61 @@ app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
   }
 });
 
+// Submit student's own work atomically
+app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    const accessibleAssignment = await ensureStudentCanAccessAssignment(req.params.assignmentId, user.id);
+    if (!accessibleAssignment) {
+      return res.status(403).json({ error: 'You do not have access to this assignment.' });
+    }
+
+    const payload = sanitizeSubmissionPayload(req.body);
+    const submittedAt = payload.submitted_at || new Date().toISOString();
+    const nextPayload = {
+      ...payload,
+      status: 'submitted',
+      submitted_at: submittedAt,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existing, error: existingError } = await supabase
+      .from('submissions')
+      .select('id')
+      .eq('assignment_id', req.params.assignmentId)
+      .eq('student_id', user.id)
+      .maybeSingle();
+    if (existingError) return res.status(400).json({ error: existingError.message });
+
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from('submissions')
+        .update(nextPayload)
+        .eq('id', existing.id)
+        .select('*, profiles(id, name)')
+        .single();
+      if (error) return res.status(400).json({ error: error.message });
+      return res.json({ submission: data });
+    }
+
+    const { data, error } = await supabase
+      .from('submissions')
+      .insert({
+        assignment_id: req.params.assignmentId,
+        student_id: user.id,
+        started_at: nextPayload.started_at || new Date().toISOString(),
+        ...nextPayload,
+      })
+      .select('*, profiles(id, name)')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ submission: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Upsert a submission shell for teacher review/status updates
 app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (req, res) => {
   try {
