@@ -119,6 +119,7 @@ const ui = {
   expandedContextCol: null,
   chatInput: "",
   chatLoading: false,
+  latestDraftFeedbackByAssignmentId: {},
 };
 
 let state = { assignments: [], submissions: [], users: [] };
@@ -1535,6 +1536,7 @@ function resetAppShellState() {
   ui.teacherAssist = null;
   ui.studentStep = 1;
   ui.showDraftFeedbackPrompt = false;
+  ui.latestDraftFeedbackByAssignmentId = {};
   ui.notice = "";
 }
 async function bootApp(profile) {
@@ -5149,7 +5151,8 @@ function renderStudentIdeasStep(assignment, submission) {
 }
 
 function renderStudentDraftStep(assignment, submission) {
-  const feedbackUsed = Number(submission.feedbackHistory.length || 0);
+  const feedbackEntries = getRenderableDraftFeedbackEntries(assignment, submission);
+  const feedbackUsed = Number(safeArray(submission.feedbackHistory).length || 0);
   const feedbackLimit = Number(assignment.feedbackRequestLimit || 0);
   const feedbackDisabled = feedbackUsed >= feedbackLimit;
   return `
@@ -5181,18 +5184,19 @@ function renderStudentDraftStep(assignment, submission) {
       </div>
       <div class="feedback-list">
         ${
-          submission.feedbackHistory.length
-            ? submission.feedbackHistory.slice().reverse().map((entry) => {
+          feedbackEntries.length
+            ? feedbackEntries.slice().reverse().map((entry) => {
                 const errorCodes = getErrorCodes();
-                const hasCode = errorCodes.some(({code}) => entry.items.some(i => i.includes(`[${code}]`)));
+                const items = safeArray(entry.items).map((item) => String(item || "").trim()).filter(Boolean);
+                const hasCode = errorCodes.some(({code}) => items.some((item) => item.includes(`[${code}]`)));
                 return `
                   <div class="feedback-card">
                     <strong>${escapeHtml(formatDateTime(entry.timestamp))}</strong>
-                    <ul>${entry.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+                    <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
                     ${hasCode ? `
                       <div class="error-code-key">
                         <p>Code key</p>
-                        <dl>${errorCodes.filter(({code}) => entry.items.some(i => i.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
+                        <dl>${errorCodes.filter(({code}) => items.some((item) => item.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
                       </div>` : ""}
                   </div>`;
               }).join("")
@@ -5665,11 +5669,39 @@ async function handleFeedbackRequest() {
     timestamp: new Date().toISOString(),
     items,
   });
+  ui.latestDraftFeedbackByAssignmentId[assignment.id] = safeArray(items).slice();
   submission.updatedAt = new Date().toISOString();
   ui.notice = "Draft check added. Use it to improve your own writing.";
   persistState();
-  flushCurrentStudentWork();
+  await flushCurrentStudentWork();
   render();
+}
+
+function getRenderableDraftFeedbackEntries(assignment, submission) {
+  const history = safeArray(submission?.feedbackHistory)
+    .map((entry) => ({
+      id: entry?.id || uid("feedback"),
+      timestamp: entry?.timestamp || new Date().toISOString(),
+      items: safeArray(entry?.items).map((item) => String(item || "").trim()).filter(Boolean),
+    }))
+    .filter((entry) => entry.items.length);
+
+  if (history.length) {
+    return history;
+  }
+
+  const latestItems = safeArray(ui.latestDraftFeedbackByAssignmentId?.[assignment?.id])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  if (!latestItems.length) {
+    return [];
+  }
+
+  return [{
+    id: uid("feedback"),
+    timestamp: new Date().toISOString(),
+    items: latestItems,
+  }];
 }
 
 function handleSubmission() {
