@@ -6,12 +6,30 @@ const CUSTOM_ERROR_CODES_KEY = "AUIZero-custom-error-codes-v1";
 const LARGE_PASTE_LIMIT = 220;
 const PRODUCT_NAME = "praxis";
 const PRODUCT_TAGLINE = "Think clearly. Write clearly.";
+const REVIEW_REFRESH_MS = 20000;
+
+const {
+  buildDeadlineTimeOptions,
+  combineDeadlineParts,
+  getDeadlineDatePart,
+  getDeadlineTimePart,
+} = window.DeadlineUtils;
+const {
+  loadStateSnapshot,
+  persistStateSnapshot,
+} = window.StorageUtils;
+const {
+  parseJsonResponse,
+  stringifyLinesWithMarkers,
+} = window.AiAssistUtils;
 
 // App state — now server-backed
 let currentProfile = null;
 let currentClasses = [];
 let currentClassId = null;
 let currentClassMembers = [];
+let reviewRefreshTimer = null;
+let storageWarningShown = false;
 
 const BASE_ERROR_CODES = [
   { code: "CS",  label: "Comma splice: two complete sentences joined with only a comma" },
@@ -943,66 +961,6 @@ function renderUploadedRubricPreview(title = "Uploaded rubric preview", rubricTe
   `;
 }
 
-function getDeadlineDatePart(value) {
-  if (!value || !String(value).includes("T")) return "";
-  return String(value).split("T")[0];
-}
-
-function getDeadlineTimePart(value) {
-  if (!value || !String(value).includes("T")) return "09:00";
-  return String(value).split("T")[1].slice(0, 5) || "09:00";
-}
-
-function combineDeadlineParts(dateValue, timeValue) {
-  if (!dateValue) return "";
-  return `${dateValue}T${timeValue || "09:00"}`;
-}
-
-function buildDeadlineTimeOptions(selectedValue) {
-  const selected = selectedValue || "09:00";
-  const options = [];
-  for (let hour = 0; hour < 24; hour += 1) {
-    for (const minute of [0, 30]) {
-      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-      const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-      const suffix = hour < 12 ? "AM" : "PM";
-      const label = `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
-      options.push(`<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`);
-    }
-  }
-  return options.join("");
-}
-
-function getDeadlineDatePart(value) {
-  if (!value || !String(value).includes("T")) return "";
-  return String(value).split("T")[0];
-}
-
-function getDeadlineTimePart(value) {
-  if (!value || !String(value).includes("T")) return "09:00";
-  return String(value).split("T")[1].slice(0, 5) || "09:00";
-}
-
-function combineDeadlineParts(dateValue, timeValue) {
-  if (!dateValue) return "";
-  return `${dateValue}T${timeValue || "09:00"}`;
-}
-
-function buildDeadlineTimeOptions(selectedValue) {
-  const selected = selectedValue || "09:00";
-  const options = [];
-  for (let hour = 0; hour < 24; hour += 1) {
-    for (const minute of [0, 30]) {
-      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-      const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-      const suffix = hour < 12 ? "AM" : "PM";
-      const label = `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
-      options.push(`<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`);
-    }
-  }
-  return options.join("");
-}
-
 function createBlankTeacherDraft() {
   return {
     brief: "",
@@ -1577,9 +1535,10 @@ function resetAppShellState() {
   ui.notice = "";
 }
 async function bootApp(profile) {
-  state = loadState();
-  ui.teacherDraft = createBlankTeacherDraft();
   currentProfile = profile;
+  storageWarningShown = false;
+  state = loadState(profile);
+  ui.teacherDraft = createBlankTeacherDraft();
   ui.role = profile.role;
   ui.activeUserId = profile.id;
 
@@ -1894,6 +1853,61 @@ async function loadReviewDataForAssignment(assignmentId) {
   return subs;
 }
 
+function stopTeacherReviewPolling() {
+  if (reviewRefreshTimer) {
+    window.clearInterval(reviewRefreshTimer);
+    reviewRefreshTimer = null;
+  }
+}
+
+function getReviewRefreshSignature(submissions = []) {
+  return safeArray(submissions)
+    .map((submission) => `${submission?.id || ""}:${submission?.updated_at || submission?.updatedAt || ""}:${submission?.status || ""}:${submission?.teacher_review?.savedAt || ""}`)
+    .join("|");
+}
+
+async function refreshTeacherReviewData() {
+  if (
+    currentProfile?.role !== "teacher"
+    || ui.teacherView !== "review"
+    || !ui.selectedAssignmentId
+    || document.visibilityState !== "visible"
+  ) {
+    return;
+  }
+
+  const currentSignature = getReviewRefreshSignature(
+    state.submissions.filter((submission) => submission.assignmentId === ui.selectedAssignmentId)
+  );
+  const subs = await loadReviewDataForAssignment(ui.selectedAssignmentId);
+  const nextSignature = getReviewRefreshSignature(subs);
+  if (currentSignature !== nextSignature) {
+    render();
+  }
+}
+
+function syncTeacherReviewPolling() {
+  const shouldPoll =
+    currentProfile?.role === "teacher"
+    && ui.teacherView === "review"
+    && Boolean(ui.selectedAssignmentId);
+
+  if (!shouldPoll) {
+    stopTeacherReviewPolling();
+    return;
+  }
+
+  if (reviewRefreshTimer) {
+    return;
+  }
+
+  reviewRefreshTimer = window.setInterval(() => {
+    refreshTeacherReviewData().catch((error) => {
+      console.error("Could not refresh teacher review data:", error);
+    });
+  }, REVIEW_REFRESH_MS);
+}
+
 let autoSaveTimer = null;
 let submissionSyncTimer = null;
 let lifecycleEventsBound = false;
@@ -1959,6 +1973,13 @@ function bindLifecycleEvents() {
   window.addEventListener("beforeunload", () => {
     pauseActiveChatSession();
     flushCurrentStudentWork({ preferKeepalive: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      refreshTeacherReviewData().catch((error) => {
+        console.error("Could not refresh teacher review data:", error);
+      });
+    }
   });
   window.addEventListener("pageshow", async () => {
     const params = new URLSearchParams(window.location.search);
@@ -3023,12 +3044,20 @@ if (action === "select-assignment") {
   }
 
   if (action === "request-ideas") {
-    handleIdeaRequest();
+    handleIdeaRequest().catch((error) => {
+      console.error("Idea help failed:", error);
+      ui.notice = "We couldn't prepare idea help just now.";
+      render();
+    });
     return;
   }
 
   if (action === "request-feedback") {
-    handleFeedbackRequest();
+    handleFeedbackRequest().catch((error) => {
+      console.error("Draft feedback failed:", error);
+      ui.notice = "We couldn't check your draft just now.";
+      render();
+    });
     return;
   }
 
@@ -3097,14 +3126,23 @@ if (action === "select-assignment") {
 
     submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
     submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
-    submission.teacherReview.suggestedGrade = gradeSubmission(assignment, submission);
-    submission.teacherReview.suggestedRowScores = safeArray(submission.teacherReview.suggestedGrade?.rowScores);
-    ui.notice = "Suggested grading is ready to review.";
-    persistState();
+    ui.notice = "Preparing suggested grade...";
     render();
-    window.requestAnimationFrame(() => {
-      document.getElementById("suggested-grade-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    requestGradeSuggestionFromAi(assignment, submission)
+      .catch((error) => {
+        console.error("Falling back to local grade suggestion:", error);
+        return gradeSubmission(assignment, submission);
+      })
+      .then((suggestedGrade) => {
+        submission.teacherReview.suggestedGrade = suggestedGrade;
+        submission.teacherReview.suggestedRowScores = safeArray(suggestedGrade?.rowScores);
+        ui.notice = "Suggested grading is ready to review.";
+        persistState();
+        render();
+        window.requestAnimationFrame(() => {
+          document.getElementById("suggested-grade-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
     return;
   }
 
@@ -3571,6 +3609,7 @@ function handlePaste(event) {
 function render() {
   document.title = PRODUCT_NAME;
   if (!currentProfile || !Auth.getToken() || !Auth.getProfile()) {
+    stopTeacherReviewPolling();
     resetAppShellState();
     const params = new URLSearchParams(window.location.search);
     renderAuthScreen(params.get("join"));
@@ -3602,9 +3641,12 @@ function render() {
       }
     });
   }
+
+  syncTeacherReviewPolling();
 }
 
 function renderAuthScreen(joinClassId = null, inviteInfo = null) {
+  stopTeacherReviewPolling();
   document.title = PRODUCT_NAME;
   const teacherName = inviteInfo?.teacherName || "";
   const className = inviteInfo?.className || "";
@@ -3744,6 +3786,7 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
 }
 
 function renderResetPasswordScreen() {
+  stopTeacherReviewPolling();
   document.title = `${PRODUCT_NAME} · Reset password`;
   appEl.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
@@ -5529,7 +5572,7 @@ async function saveTeacherAssignment() {
   render();
 }
 
-function handleIdeaRequest() {
+async function handleIdeaRequest() {
   const assignment = getStudentAssignment();
   const submission = getStudentSubmission();
   if (!assignment || !submission) {
@@ -5542,10 +5585,20 @@ function handleIdeaRequest() {
     return;
   }
 
+  ui.notice = "Preparing idea help...";
+  render();
+  let aiBullets;
+  try {
+    aiBullets = await requestStudentIdeasFromAi(assignment, submission);
+  } catch (error) {
+    console.error("Falling back to local idea help:", error);
+    aiBullets = generateStudentIdeas(assignment, submission);
+  }
+
   submission.ideaResponses.push({
     id: uid("idea"),
     requestedAt: new Date().toISOString(),
-    aiBullets: generateStudentIdeas(assignment, submission),
+    aiBullets,
     rewrittenIdea: "",
     whyChosen: "",
   });
@@ -5556,7 +5609,7 @@ function handleIdeaRequest() {
   render();
 }
 
-function handleFeedbackRequest() {
+async function handleFeedbackRequest() {
   const assignment = getStudentAssignment();
   const submission = getStudentSubmission();
   if (!assignment || !submission) {
@@ -5569,10 +5622,20 @@ function handleFeedbackRequest() {
     return;
   }
 
+  ui.notice = "Checking your draft...";
+  render();
+  let items;
+  try {
+    items = await requestDraftFeedbackFromAi(assignment, submission);
+  } catch (error) {
+    console.error("Falling back to local draft feedback:", error);
+    items = generateFeedback(assignment, submission);
+  }
+
   submission.feedbackHistory.push({
     id: uid("feedback"),
     timestamp: new Date().toISOString(),
-    items: generateFeedback(assignment, submission),
+    items,
   });
   submission.updatedAt = new Date().toISOString();
   ui.notice = "Draft check added. Use it to improve your own writing.";
@@ -6381,6 +6444,276 @@ function buildTitleFromBrief(brief, assignmentType, topic) {
     }
   }
   return `${titleCase(assignmentType)} Writing: ${titleCase(topic)}`;
+}
+
+function getAssignmentRubricSummaryForAi(assignment) {
+  return serializeRubricSchemaForPrompt(
+    assignment?.uploadedRubricSchema || assignment?.rubricSchema || assignment?.rubric,
+    assignment?.uploadedRubricName || assignment?.title || "Assignment rubric"
+  ) || "No rubric provided.";
+}
+
+function buildDraftLinesWithPasteMarkers(submission) {
+  const text = String(submission?.draftText || "");
+  const flaggedRanges = safeArray(submission?.writingEvents)
+    .filter((event) => event?.type === "paste" && event?.flagged && typeof event?.start === "number")
+    .map((event) => ({
+      start: Number(event.start || 0),
+      end: Number(event.end ?? event.start ?? 0) + String(event.insertedText || "").length,
+    }));
+
+  let cursor = 0;
+  return text.split("\n").map((lineText, index) => {
+    const lineLength = lineText.length;
+    const start = cursor;
+    const end = start + lineLength;
+    const pasted = flaggedRanges.some((range) => start < range.end && end > range.start);
+    cursor = end + 1;
+    return {
+      number: index + 1,
+      text: lineText,
+      pasted,
+    };
+  });
+}
+
+function buildAiIdeaRequest(assignment, submission) {
+  const previousIdea = submission.ideaResponses.at(-1)?.rewrittenIdea || "";
+  return {
+    maxTokens: 450,
+    temperature: 0.4,
+    system: `You are a supportive writing coach helping a ${assignment.languageLevel || "B1"} student plan before drafting.
+
+Return ONLY a JSON array of exactly 4 short bullet ideas.
+
+Rules:
+- Do not write any full assignment sentences for the student to copy.
+- Give planning ideas only.
+- Keep the language simple.
+- Each bullet should be one sentence, practical, and specific to the task.
+- If the student already has one idea, give a different angle or stronger example option.`,
+    prompt: `Assignment title: ${assignment.title}
+Assignment type: ${assignment.assignmentType}
+Student-facing task:
+${assignment.prompt}
+
+Current outline or idea notes:
+${previousIdea || "No saved idea yet."}
+
+Rubric summary:
+${getAssignmentRubricSummaryForAi(assignment)}
+
+Respond with a JSON array of 4 short planning bullets.`,
+  };
+}
+
+function buildAiFeedbackRequest(assignment, submission) {
+  const lines = buildDraftLinesWithPasteMarkers(submission).filter((line) => String(line.text || "").trim());
+  const previousFeedback = safeArray(submission.feedbackHistory)
+    .flatMap((entry) => safeArray(entry.items))
+    .slice(-12)
+    .join("\n- ");
+  const responseShape = `["feedback item 1", "feedback item 2", "feedback item 3"]`;
+
+  return {
+    maxTokens: 750,
+    temperature: 0.2,
+    system: `You are a careful writing teacher giving feedback to an ESL student.
+
+Return ONLY a JSON array of 2 to 4 feedback strings.
+
+Rules:
+- Use the student's real visible line numbers.
+- Ignore [PASTED] lines for judging quality, but still count them in line numbering.
+- Point to specific measurable problems in the student's own writing.
+- Quote a short snippet when helpful.
+- Do NOT rewrite the sentence for the student.
+- Do NOT repeat the same issue twice.
+- On very short drafts, give at most two line-specific issues, then switch to structure/length guidance.
+- Match the assignment type. A paragraph task should not be treated like a multi-paragraph essay.
+- Prefer issues involving grammar, punctuation, spelling, logic, missing support, weak topic sentence, or weak ending.
+- Keep the language simple and direct for a ${assignment.languageLevel || "B1"} student.`,
+    prompt: `Assignment title: ${assignment.title}
+Assignment type: ${assignment.assignmentType}
+Expected length: ${assignment.wordCountMin}-${assignment.wordCountMax} words
+Student-facing task:
+${assignment.prompt}
+
+Rubric summary:
+${getAssignmentRubricSummaryForAi(assignment)}
+
+Draft with visible line numbers:
+${stringifyLinesWithMarkers(lines)}
+
+Previous feedback already given (avoid repeating these ideas):
+- ${previousFeedback || "None"}
+
+Respond with only a JSON array like:
+${responseShape}`,
+  };
+}
+
+function buildAiGradeSuggestionRequest(assignment, submission) {
+  const rubricOptions = safeArray(assignment?.rubric).map((criterion) => ({
+    criterionId: criterion.id,
+    criterionName: criterion.name,
+    criterionDescription: criterion.description || "",
+    maxPoints: Number(criterion.points || 0),
+    bands: getCriterionBands(criterion).map((band) => ({
+      bandId: band.id || `band-${criterion.id}-${band.points}`,
+      label: band.label,
+      points: Number(band.points || 0),
+      description: band.description || "",
+    })),
+  }));
+  const metrics = computeProcessMetrics(assignment, submission);
+
+  return {
+    maxTokens: 1400,
+    temperature: 0.1,
+    system: `You are a careful teacher helping draft a rubric-aligned grade suggestion.
+
+Return ONLY a JSON object.
+
+Rules:
+- Use only the provided criterionId and bandId values.
+- Be conservative and teacher-safe.
+- Consider the final writing first, then process evidence.
+- Very short or underdeveloped work should score low.
+- Do not invent criteria or bands.
+- Keep reasons short and concrete.`,
+    prompt: `Assignment title: ${assignment.title}
+Assignment type: ${assignment.assignmentType}
+Word target: ${assignment.wordCountMin}-${assignment.wordCountMax}
+Prompt:
+${assignment.prompt}
+
+Rubric options:
+${JSON.stringify(rubricOptions, null, 2)}
+
+Student final text:
+${submission.finalText || "(blank)"}
+
+Student draft text:
+${submission.draftText || "(blank)"}
+
+Student reflection:
+${submission.reflections?.improved || "(blank)"}
+
+Process metrics:
+${JSON.stringify({
+  finalWordCount: metrics.finalWordCount,
+  revisionCount: metrics.revisionCount,
+  largePasteCount: metrics.largePasteCount,
+  feedbackCount: safeArray(submission.feedbackHistory).length,
+  outlineComplete: isOutlineComplete(submission, assignment),
+}, null, 2)}
+
+Respond with ONLY this JSON shape:
+{
+  "criteria": [
+    { "criterionId": "criterion-id", "bandId": "band-id", "reason": "short reason" }
+  ],
+  "justification": "2-4 sentence teacher-facing summary",
+  "studentComment": "2-4 sentence student-facing summary"
+}`,
+  };
+}
+
+async function requestStudentIdeasFromAi(assignment, submission) {
+  const response = await requestAiGenerate(buildAiIdeaRequest(assignment, submission), {
+    retries: 1,
+    timeoutMs: 22000,
+  });
+  const parsed = parseJsonResponse(response.response, []);
+  const ideas = safeArray(parsed)
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  if (!ideas.length) {
+    throw new Error("AI returned no usable ideas.");
+  }
+  return ideas;
+}
+
+async function requestDraftFeedbackFromAi(assignment, submission) {
+  const response = await requestAiGenerate(buildAiFeedbackRequest(assignment, submission), {
+    retries: 1,
+    timeoutMs: 24000,
+  });
+  const parsed = parseJsonResponse(response.response, []);
+  const items = safeArray(parsed)
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  if (!items.length) {
+    throw new Error("AI returned no usable feedback.");
+  }
+  return items;
+}
+
+function mapAiGradeSuggestionToReview(assignment, submission, parsed) {
+  const criteria = safeArray(parsed?.criteria);
+  if (!criteria.length) {
+    throw new Error("AI grade suggestion returned no criteria.");
+  }
+
+  const rowScores = [];
+  const reasons = [];
+  for (const selection of criteria) {
+    const criterion = safeArray(assignment?.rubric).find((entry) => entry.id === selection?.criterionId);
+    if (!criterion) continue;
+    const band = getCriterionBands(criterion).find((entry) => (
+      (entry.id || `band-${criterion.id}-${entry.points}`) === selection?.bandId
+    ));
+    if (!band) continue;
+    rowScores.push(buildTeacherReviewRowScore(criterion, band));
+    if (selection?.reason) {
+      reasons.push({
+        criterionId: criterion.id,
+        name: criterion.name,
+        reason: String(selection.reason).trim(),
+      });
+    }
+  }
+
+  if (!rowScores.length) {
+    throw new Error("AI grade suggestion did not match any rubric bands.");
+  }
+
+  const summary = calculateTeacherReviewSummary(assignment, null, rowScores);
+  return {
+    generatedAt: new Date().toISOString(),
+    criteria: safeArray(assignment?.rubric).map((criterion) => {
+      const selected = rowScores.find((entry) => entry.criterionId === criterion.id);
+      return {
+        criterionId: criterion.id,
+        name: criterion.name,
+        points: criterion.points,
+        score: Number(selected?.points || 0),
+        bandLabel: selected?.label || "",
+        bandId: selected?.bandId || "",
+        reason: reasons.find((entry) => entry.criterionId === criterion.id)?.reason || "",
+      };
+    }),
+    rowScores,
+    totalScore: summary.totalScore,
+    maxScore: summary.maxScore,
+    justification: String(parsed?.justification || "").trim() || buildGradeJustification(assignment, submission, computeProcessMetrics(assignment, submission), summary.totalScore, summary.maxScore),
+    studentComment: String(parsed?.studentComment || "").trim() || buildSuggestedStudentComment(assignment, submission, computeProcessMetrics(assignment, submission), summary.totalScore, summary.maxScore),
+  };
+}
+
+async function requestGradeSuggestionFromAi(assignment, submission) {
+  const response = await requestAiGenerate(buildAiGradeSuggestionRequest(assignment, submission), {
+    retries: 1,
+    timeoutMs: 26000,
+  });
+  const parsed = parseJsonResponse(response.response, null);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("AI returned invalid grade suggestion JSON.");
+  }
+  return mapAiGradeSuggestionToReview(assignment, submission, parsed);
 }
 
 function generateStudentIdeas(assignment, submission) {
@@ -7804,36 +8137,45 @@ function createDemoState() {
   return state;
 }
 
-function loadState() {
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY) || window.localStorage.getItem(STORAGE_BACKUP_KEY);
-    if (!stored) throw new Error("no stored state");
-    return normalizeState(JSON.parse(stored));
-  } catch (e) {
-    const seeded = createBlankState();
-    const normalized = normalizeState(seeded);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    window.localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(normalized));
-    return normalized;
-  }
+function loadState(profile = currentProfile) {
+  return loadStateSnapshot({
+    storageKey: STORAGE_KEY,
+    backupKey: STORAGE_BACKUP_KEY,
+    normalizeState,
+    createBlankState,
+    currentProfile: profile,
+  });
 }
 
 async function syncSubmissionToServer(submission) {
   if (!submission?.assignmentId || currentProfile?.role !== "student") return;
   try {
-    const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
-    if (existing?.error) {
-      throw new Error(existing.error);
-    }
-    const serverId = existing.submission?.id;
+    let serverId = looksLikeServerSubmissionId(submission.id) ? submission.id : null;
     if (!serverId) {
-      throw new Error("Submission record was not created on the server.");
+      const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
+      if (existing?.error) {
+        throw new Error(existing.error);
+      }
+      serverId = existing.submission?.id;
+      if (!serverId) {
+        throw new Error("Submission record was not created on the server.");
+      }
     }
     const payload = buildSubmissionServerPayload(submission);
-    const result = await Auth.apiFetch(`/api/submissions/${serverId}`, {
+    let result = await Auth.apiFetch(`/api/submissions/${serverId}`, {
       method: 'PATCH',
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
+    if (result?.error && looksLikeServerSubmissionId(submission.id)) {
+      const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
+      if (!existing?.error && existing?.submission?.id) {
+        serverId = existing.submission.id;
+        result = await Auth.apiFetch(`/api/submissions/${serverId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+      }
+    }
     if (result?.error) {
       throw new Error(result.error);
     }
@@ -7855,6 +8197,10 @@ async function syncSubmissionToServer(submission) {
     ui.notice = "We couldn't save to the server just now. Your work is still on this device.";
     return false;
   }
+}
+
+function looksLikeServerSubmissionId(id) {
+  return Boolean(id && !String(id).startsWith("submission-"));
 }
 
 async function submitStudentSubmissionToServer(submission) {
@@ -7888,9 +8234,25 @@ async function submitStudentSubmissionToServer(submission) {
 }
 
 function persistState() {
-  const cloned = JSON.parse(JSON.stringify(state));
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cloned));
-  window.localStorage.setItem(STORAGE_BACKUP_KEY, JSON.stringify(cloned));
+  const result = persistStateSnapshot({
+    state,
+    currentProfile,
+    storageKey: STORAGE_KEY,
+    backupKey: STORAGE_BACKUP_KEY,
+  });
+  if (!result.ok) {
+    console.error("Could not persist local state:", result.error);
+    if (!storageWarningShown) {
+      storageWarningShown = true;
+      ui.notice = "Local backup storage is full. Your latest work may not be fully backed up on this device.";
+    }
+    return;
+  }
+
+  if (result.mode === "fallback" && !storageWarningShown) {
+    storageWarningShown = true;
+    ui.notice = "Local backup storage is nearly full. praxis saved a smaller backup on this device.";
+  }
 }
 
 function getStudentUsers() {

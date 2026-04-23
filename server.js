@@ -130,6 +130,14 @@ function makeIdempotencyKey(parts = []) {
     .slice(0, 240);
 }
 
+function clampNumber(value, { min = 0, max = 1, fallback = null } = {}) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, numeric));
+}
+
 function escapeHtmlEmail(value = '') {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -272,7 +280,9 @@ async function notifyStudentsAboutAssignment({
         mode,
         assignment.id,
         recipient.id,
-        mode === 'deadline-reminder' ? assignment.deadline : new Date().toISOString().slice(0, 16),
+        mode === 'deadline-reminder'
+          ? assignment.deadline
+          : assignment.updated_at || assignment.created_at || assignment.deadline || 'published',
       ]),
     });
   }));
@@ -450,14 +460,16 @@ app.post('/api/rubric/parse-text', async (req, res) => {
 // ── AI endpoint ─────────────────────────────────────────────
 app.post('/api/generate', async (req, res) => {
   try {
-    const { prompt, messages, system } = req.body;
+    const { prompt, messages, system, maxTokens, temperature } = req.body;
     const apiMessages = messages || [{ role: "user", content: prompt }];
     const requestBody = {
       model: "claude-sonnet-4-6",
-      max_tokens: 1000,
+      max_tokens: clampNumber(maxTokens, { min: 200, max: 2500, fallback: 1000 }),
       messages: apiMessages,
     };
     if (system) requestBody.system = system;
+    const safeTemperature = clampNumber(temperature, { min: 0, max: 1, fallback: null });
+    if (safeTemperature !== null) requestBody.temperature = safeTemperature;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
