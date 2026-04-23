@@ -5824,6 +5824,18 @@ function getStudentSubmission() {
 
 function getStudentStepForSubmission(submission) {
   if (submission?.status === "submitted" || submission?.submittedAt) return 3;
+  const hasFinalWork = Boolean(
+    submission?.finalText?.trim() ||
+    submission?.reflections?.improved?.trim() ||
+    safeArray(submission?.selfAssessment?.rowScores).length
+  );
+  if (hasFinalWork) return 3;
+  const hasDraftWork = Boolean(
+    submission?.draftText?.trim() ||
+    safeArray(submission?.writingEvents).length ||
+    safeArray(submission?.feedbackHistory).length
+  );
+  if (hasDraftWork) return 2;
   return 1;
 }
 
