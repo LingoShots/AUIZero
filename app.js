@@ -5458,37 +5458,61 @@ function handleSubmission() {
   }
   submission.reflections.improved = improved;
   submission.finalText = finalText;
-  submission.status = "submitted";
-  submission.submittedAt = new Date().toISOString();
-  submission.updatedAt = submission.submittedAt;
+  const previousStatus = submission.status;
+  const previousSubmittedAt = submission.submittedAt;
+  const previousUpdatedAt = submission.updatedAt;
+  const attemptedSubmittedAt = new Date().toISOString();
+  submission.updatedAt = attemptedSubmittedAt;
   ui.notice = "Submitting...";
   persistState();
   render();
-  syncSubmissionToServer(submission)
-  .then((result) => {
-    console.log("Sync result:", result);
-    if (!result) {
-      ui.notice = "We couldn't send your work to the teacher yet. Your writing is still saved on this device.";
+  submitStudentSubmissionToServer({
+    ...submission,
+    status: "submitted",
+    submittedAt: attemptedSubmittedAt,
+    updatedAt: attemptedSubmittedAt,
+  })
+    .then(async (result) => {
+      if (!result) {
+        submission.status = previousStatus || "draft";
+        submission.submittedAt = previousSubmittedAt || null;
+        submission.updatedAt = new Date().toISOString();
+        persistState();
+        await syncSubmissionToServer(submission);
+        ui.notice = "Submission failed. Your writing was saved, but it was not sent to your teacher. Please try Submit again.";
+        render();
+        window.requestAnimationFrame(() => {
+          document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        return;
+      }
+
+      const refreshed = getStudentSubmission();
+      if (refreshed) {
+        refreshed.status = "submitted";
+        refreshed.submittedAt = refreshed.submittedAt || attemptedSubmittedAt;
+        refreshed.updatedAt = refreshed.submittedAt;
+      }
+      ui.notice = "";
+      persistState();
       render();
       window.requestAnimationFrame(() => {
         document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
-      return;
-    }
-    ui.notice = "";
-    render();
-    window.requestAnimationFrame(() => {
-      document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    })
+    .catch(async (e) => {
+      console.error("Submit sync failed:", e);
+      submission.status = previousStatus || "draft";
+      submission.submittedAt = previousSubmittedAt || null;
+      submission.updatedAt = previousUpdatedAt || new Date().toISOString();
+      persistState();
+      await syncSubmissionToServer(submission);
+      ui.notice = "Submission failed. Your writing was saved, but it was not sent to your teacher. Please try Submit again.";
+      render();
+      window.requestAnimationFrame(() => {
+        document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
     });
-  })
-  .catch(e => {
-    console.error("Submit sync failed:", e);
-    ui.notice = "We couldn't send your work to the teacher yet. Your writing is still saved on this device.";
-    render();
-    window.requestAnimationFrame(() => {
-      document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  });
 }
 
 function updateDraftSubmission(nextText) {
@@ -7546,6 +7570,36 @@ async function syncSubmissionToServer(submission) {
   } catch (e) {
     console.error("Could not sync submission to server:", e.message, e);
     ui.notice = "We couldn't save to the server just now. Your work is still on this device.";
+    return false;
+  }
+}
+
+async function submitStudentSubmissionToServer(submission) {
+  if (!submission?.assignmentId || currentProfile?.role !== "student") return false;
+  const payload = buildSubmissionServerPayload(submission, {
+    status: "submitted",
+    submitted_at: submission.submittedAt || new Date().toISOString(),
+  });
+
+  try {
+    const result = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/submit`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (result?.error || !result?.submission) {
+      throw new Error(result?.error || "Submission failed.");
+    }
+    const mapped = mapServerSubmission(result.submission);
+    const index = state.submissions.findIndex((entry) => entry.assignmentId === mapped.assignmentId && entry.studentId === mapped.studentId);
+    if (index >= 0) {
+      state.submissions[index] = mergeStudentSubmission(state.submissions[index], mapped);
+    } else {
+      state.submissions.push(mapped);
+    }
+    persistState();
+    return true;
+  } catch (error) {
+    console.error("Could not submit work to server:", error.message, error);
     return false;
   }
 }
