@@ -2,6 +2,7 @@ const STORAGE_KEY = "AUIZero-v1";
 const RUBRIC_LIBRARY_KEY = "AUIZero-rubric-library-v1";
 const STORAGE_BACKUP_KEY = "AUIZero-v1-backup";
 const ACTIVE_CLASS_KEY = "AUIZero-active-class-v1";
+const CUSTOM_ERROR_CODES_KEY = "AUIZero-custom-error-codes-v1";
 const LARGE_PASTE_LIMIT = 220;
 const PRODUCT_NAME = "praxis";
 const PRODUCT_TAGLINE = "Think clearly. Write clearly.";
@@ -12,7 +13,7 @@ let currentClasses = [];
 let currentClassId = null;
 let currentClassMembers = [];
 
-const ERROR_CODES = [
+const BASE_ERROR_CODES = [
   { code: "CS",  label: "Comma splice: two complete sentences joined with only a comma" },
   { code: "RO",  label: "Run-on: two or more sentences run together without correct punctuation" },
   { code: "FR",  label: "Fragment: incomplete sentence — missing a subject or verb" },
@@ -23,8 +24,41 @@ const ERROR_CODES = [
   { code: "SP",  label: "Spelling error" },
 ];
 
+function loadCustomErrorCodes() {
+  try {
+    return JSON.parse(window.localStorage.getItem(CUSTOM_ERROR_CODES_KEY) || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveCustomErrorCodes(entries) {
+  try {
+    window.localStorage.setItem(CUSTOM_ERROR_CODES_KEY, JSON.stringify(entries || []));
+  } catch (_) {
+    // Ignore localStorage failures and keep grading usable.
+  }
+}
+
+function getErrorCodes() {
+  const custom = loadCustomErrorCodes()
+    .filter((entry) => entry?.code && entry?.label)
+    .map((entry) => ({
+      code: String(entry.code).trim().toUpperCase().slice(0, 8),
+      label: String(entry.label).trim(),
+      custom: true,
+    }))
+    .filter((entry) => entry.code && entry.label);
+  const seen = new Set();
+  return [...BASE_ERROR_CODES, ...custom].filter((entry) => {
+    if (seen.has(entry.code)) return false;
+    seen.add(entry.code);
+    return true;
+  });
+}
+
 function getErrorCodeLabel(code) {
-  return ERROR_CODES.find((entry) => entry.code === code)?.label || "";
+  return getErrorCodes().find((entry) => entry.code === code)?.label || "";
 }
 
 const ui = {
@@ -1560,9 +1594,10 @@ async function bootApp(profile) {
       await loadTeacherClassContext(currentClassId);
     }
   } else {
+    const localSubmissions = safeArray(state.submissions).slice();
     await refreshStudentClasses(getSavedActiveClassId(profile));
     state.assignments = [];
-    state.submissions = [];
+    state.submissions = localSubmissions;
     await loadStudentAssignmentsForCurrentClass();
     recoverStudentActiveClass(profile);
   }
@@ -1860,6 +1895,7 @@ async function loadReviewDataForAssignment(assignmentId) {
 }
 
 let autoSaveTimer = null;
+let submissionSyncTimer = null;
 let lifecycleEventsBound = false;
 function showAutosaveIndicator(message = "Saved") {
   const indicator = document.getElementById("autosave-indicator");
@@ -1910,13 +1946,19 @@ function bindLifecycleEvents() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       pauseActiveChatSession();
+      flushCurrentStudentWork({ preferKeepalive: true });
     } else if (ui.role === "student" && ui.studentStep === 1) {
       resumeActiveChatSession();
       render();
     }
   });
+  window.addEventListener("pagehide", () => {
+    pauseActiveChatSession();
+    flushCurrentStudentWork({ preferKeepalive: true });
+  });
   window.addEventListener("beforeunload", () => {
     pauseActiveChatSession();
+    flushCurrentStudentWork({ preferKeepalive: true });
   });
   window.addEventListener("pageshow", async () => {
     const params = new URLSearchParams(window.location.search);
@@ -1990,19 +2032,82 @@ function scheduleAutoSave() {
     const submission = getStudentSubmission();
     if (!submission) return;
     persistState();
-    syncSubmissionToServer(submission);
+    flushCurrentStudentWork();
     showAutosaveIndicator("Saved");
-  }, 8000);
+  }, 2500);
 }
 
 function scheduleSubmissionSync(delay = 1800) {
-  clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(() => {
+  clearTimeout(submissionSyncTimer);
+  submissionSyncTimer = setTimeout(() => {
     const submission = getStudentSubmission();
     if (!submission) return;
     persistState();
     syncSubmissionToServer(submission);
   }, delay);
+}
+
+function flushCurrentStudentWork(options = {}) {
+  const submission = getStudentSubmission();
+  if (!submission || currentProfile?.role !== "student") {
+    return Promise.resolve(false);
+  }
+  persistState();
+  if (options.preferKeepalive) {
+    submission.updatedAt = new Date().toISOString();
+  }
+  return syncSubmissionToServer(submission);
+}
+
+async function requestAiGenerate(payload, options = {}) {
+  const retries = Math.max(0, Number(options.retries ?? 1));
+  const externalSignal = options.signal || null;
+  const timeoutMs = Math.max(8000, Number(options.timeoutMs || 20000));
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    const abortHandler = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        window.clearTimeout(timeoutId);
+        throw new DOMException("Aborted", "AbortError");
+      }
+      externalSignal.addEventListener("abort", abortHandler, { once: true });
+    }
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || `Server ${response.status}`);
+      }
+      if (!String(data?.response || "").trim()) {
+        throw new Error("Empty AI response.");
+      }
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (error?.name === "AbortError" && externalSignal?.aborted) {
+        throw error;
+      }
+      if (attempt === retries) {
+        throw lastError;
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", abortHandler);
+      }
+    }
+  }
+
+  throw lastError || new Error("AI request failed.");
 }
 
 function buildFormatPrompt() {
@@ -2114,17 +2219,12 @@ if (action === "generate-teacher-assist") {
     render();
 
     // Try reaching the API at the same domain (relative path)
-    fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    requestAiGenerate({
+      prompt: buildFormatPrompt()
+    }, {
       signal: teacherAssistAbortController.signal,
-      body: JSON.stringify({ 
-       prompt: buildFormatPrompt()
-      })
-    })
-    .then(res => {
-        if (!res.ok) throw new Error("Server returned " + res.status);
-        return res.json();
+      retries: 1,
+      timeoutMs: 25000,
     })
     .then(data => {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
@@ -2259,6 +2359,31 @@ if (action === "generate-teacher-assist") {
     return;
   }
 
+  if (action === "add-custom-error-code") {
+    const code = String(window.prompt("New error code (for example TS or WW)", "") || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+    if (!code) return;
+    const label = String(window.prompt(`Explanation for ${code}`, "") || "").trim();
+    if (!label) {
+      ui.notice = "Add a short explanation for the new error code.";
+      render();
+      return;
+    }
+    const nextCodes = [...loadCustomErrorCodes().filter((entry) => String(entry.code || "").toUpperCase() !== code), { code, label }];
+    saveCustomErrorCodes(nextCodes);
+    ui.notice = `${code} added to your reusable error codes.`;
+    render();
+    return;
+  }
+
+  if (action === "remove-custom-error-code") {
+    const code = String(target.dataset.code || "").trim().toUpperCase();
+    if (!code) return;
+    saveCustomErrorCodes(loadCustomErrorCodes().filter((entry) => String(entry.code || "").toUpperCase() !== code));
+    ui.notice = `${code} removed from your reusable error codes.`;
+    render();
+    return;
+  }
+
   if (action === "insert-error-code") {
     const code = target.dataset.code;
     const textarea = document.getElementById("teacher-review-notes");
@@ -2290,9 +2415,9 @@ if (action === "generate-teacher-assist") {
     }
     submission.updatedAt = new Date().toISOString();
     persistState();
-    await syncSubmissionToServer(submission);
-    showAutosaveIndicator("Draft saved");
-    ui.notice = "Draft saved.";
+    const saved = await flushCurrentStudentWork();
+    showAutosaveIndicator(saved ? "Draft saved" : "Saved on this device");
+    ui.notice = saved ? "Draft saved." : "We couldn't save to the server just now, but your draft is still on this device.";
     render();
     return;
   }
@@ -2401,6 +2526,34 @@ if (action === "switch-class") {
       ui.notice = `${studentName} was removed from this class.`;
     } else {
       ui.notice = `Could not remove student: ${data.error || "unknown error"}`;
+    }
+    render();
+    return;
+  }
+
+  if (action === "edit-class-member-name") {
+    if (!currentClassId) return;
+    const studentId = target.dataset.studentId;
+    const currentName = target.dataset.studentName || "Student";
+    if (!studentId) return;
+    const nextName = window.prompt("Edit student name", currentName);
+    if (nextName === null) return;
+    const trimmed = nextName.trim();
+    if (!trimmed) {
+      ui.notice = "Student name cannot be empty.";
+      render();
+      return;
+    }
+    const data = await Auth.apiFetch(`/api/classes/${currentClassId}/members/${studentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (data?.profile?.name) {
+      updateStudentDisplayName(studentId, data.profile.name);
+      persistState();
+      ui.notice = `Updated student name to ${data.profile.name}.`;
+    } else {
+      ui.notice = `Could not update student name: ${data?.error || "unknown error"}`;
     }
     render();
     return;
@@ -2837,15 +2990,13 @@ if (action === "select-assignment") {
       if (win) win.scrollTop = win.scrollHeight;
     }, 50);
 
-    fetch("/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    requestAiGenerate({
         system: getChatbotSystemPrompt(assignment),
         messages: submission.chatHistory.map((m) => ({ role: m.role, content: m.content })),
-      }),
-    })
-      .then((res) => { if (!res.ok) throw new Error("Server " + res.status); return res.json(); })
+      }, {
+        retries: 1,
+        timeoutMs: 22000,
+      })
       .then((data) => {
         submission.chatHistory.push({ role: "assistant", content: data.response, timestamp: new Date().toISOString() });
         submission.updatedAt = new Date().toISOString();
@@ -4003,6 +4154,20 @@ function renderTeacherWorkspace() {
   const renderAssignmentSettingsFields = (idPrefix) => `
     <div class="field-grid compact-grid">
       <div class="field">
+        <label for="${idPrefix}-assignment-type">Assignment type</label>
+        <select id="${idPrefix}-assignment-type" data-teacher-field="assignmentType">
+          ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label for="${idPrefix}-word-min">Min words</label>
+        <input id="${idPrefix}-word-min" data-teacher-field="wordCountMin" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.wordCountMin))}" />
+      </div>
+      <div class="field">
+        <label for="${idPrefix}-word-max">Max words</label>
+        <input id="${idPrefix}-word-max" data-teacher-field="wordCountMax" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.wordCountMax))}" />
+      </div>
+      <div class="field">
         <label for="${idPrefix}-feedback-limit">Feedback checks</label>
         <input id="${idPrefix}-feedback-limit" data-teacher-field="feedbackRequestLimit" type="number" min="0" value="${escapeAttribute(String(ui.teacherDraft.feedbackRequestLimit))}" />
       </div>
@@ -4054,7 +4219,6 @@ function renderTeacherWorkspace() {
             ${ui.editingAssignmentId ? `<p class="subtle" style="margin:6px 0 0;">Editing an existing assignment. Changes will update the published version too.</p>` : ""}
           </div>
           <div class="toolbar">
-            <button class="button-secondary" data-action="generate-teacher-assist" ${ui.aiAssistLoading ? "disabled" : ""}>Format With AI</button>
             ${ui.editingAssignmentId ? `<button class="button-ghost" data-action="cancel-assignment-edit" ${ui.aiAssistLoading ? "disabled" : ""}>Cancel edit</button>` : ""}
             <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>${ui.editingAssignmentId ? "Update assignment" : "Save"}</button>
           </div>
@@ -4070,8 +4234,14 @@ function renderTeacherWorkspace() {
             </div>
             ${rubricUploadField}
           </div>
-          <div class="field">
-            <label for="teacher-brief">Teacher brief</label>
+          <div class="teacher-ready-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+              <div>
+                <label for="teacher-brief" style="display:block;margin-bottom:6px;">Teacher brief</label>
+                <p class="subtle" style="margin:0;">Step 1: describe the assignment. Step 2: click Format With AI if you want help generating the student-facing version.</p>
+              </div>
+              <button class="button-secondary" data-action="generate-teacher-assist" ${ui.aiAssistLoading ? "disabled" : ""}>Format With AI</button>
+            </div>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
           <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
@@ -4131,11 +4301,6 @@ function renderTeacherWorkspace() {
                   </div>
                 </div>
                 <div class="teacher-ready-card">
-                  <p class="mini-label">Student focus</p>
-                  <textarea data-assist-field="studentFocusText" placeholder="One focus point per line" style="min-height:240px;">${escapeHtml((ui.teacherAssist.studentFocus || []).join("\n"))}</textarea>
-                  <p class="subtle" style="font-size:0.82rem;margin-top:6px;">One focus point per line</p>
-                </div>
-                <div class="teacher-ready-card">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                     <p class="mini-label">Rubric</p>
                     <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts total</span>
@@ -4172,7 +4337,7 @@ function renderTeacherWorkspace() {
                   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div>
                       <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
-                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. The same deadline, chatbot, language, and feedback controls are available below.</p>
+                      <p class="subtle">Skip AI if you already know the student-facing title and prompt. Fill these in manually, then save when you're ready.</p>
                     </div>
                     <span class="pill">${(ui.teacherDraft.title || ui.teacherDraft.prompt) ? "In progress" : "Optional"}</span>
                   </summary>
@@ -4186,34 +4351,9 @@ function renderTeacherWorkspace() {
                       ${renderPromptFormattingToolbar("teacher-prompt")}
                       <textarea id="teacher-prompt" data-teacher-field="prompt" placeholder="Write the instructions students will see.">${escapeHtml(ui.teacherDraft.prompt)}</textarea>
                     </div>
-                    <div class="field-grid" style="margin-bottom:10px;">
-                      <div class="field">
-                        <label for="teacher-word-min">Min words</label>
-                        <input id="teacher-word-min" type="number" data-teacher-field="wordCountMin" value="${escapeAttribute(String(ui.teacherDraft.wordCountMin))}" />
-                      </div>
-                      <div class="field">
-                        <label for="teacher-word-max">Max words</label>
-                        <input id="teacher-word-max" type="number" data-teacher-field="wordCountMax" value="${escapeAttribute(String(ui.teacherDraft.wordCountMax))}" />
-                      </div>
-                    </div>
-                    <div class="field" style="margin-bottom:10px;">
-                      <label for="teacher-assignment-type">Assignment type</label>
-                      <select id="teacher-assignment-type" data-teacher-field="assignmentType">
-                        ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
-                      </select>
-                    </div>
-                    <div class="field">
-                      <label for="teacher-student-focus">Student focus</label>
-                      <textarea id="teacher-student-focus" data-teacher-field="studentFocus" placeholder="One focus point per line">${escapeHtml(ui.teacherDraft.studentFocus)}</textarea>
-                      <p class="subtle" style="font-size:0.82rem;margin-top:6px;">Optional. One focus point per line.</p>
-                    </div>
-                    <div class="teacher-ready-card" style="margin-top:14px;">
-                      <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                      <p class="subtle" style="margin:0 0 12px;">Use the same class, deadline, chatbot, language, and feedback controls here without jumping back to the AI path.</p>
-                      <div class="pill-row" style="margin-bottom:10px;">
-                        <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
-                      </div>
-                      ${renderAssignmentSettingsFields("manual")}
+                    <p class="subtle" style="font-size:0.84rem;margin:6px 0 0;">Use the shared settings above for assignment type, word limits, deadline, chatbot, language level, and feedback limits.</p>
+                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+                      <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>${ui.editingAssignmentId ? "Update assignment" : "Save assignment"}</button>
                     </div>
                   </div>
                 </details>
@@ -4245,7 +4385,10 @@ function renderTeacherWorkspace() {
                       <span class="subtle" style="display:block;font-size:0.74rem;margin-bottom:3px;">Student ${index + 1}</span>
                       <strong style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(member.name || "Student")}</strong>
                     </div>
-                    <button class="button-ghost" data-action="remove-class-member" data-student-id="${member.id}" data-student-name="${escapeAttribute(member.name || "Student")}" style="font-size:0.78rem;color:var(--danger);border-color:var(--danger);white-space:nowrap;">Remove</button>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                      <button class="button-ghost" data-action="edit-class-member-name" data-student-id="${member.id}" data-student-name="${escapeAttribute(member.name || "Student")}" style="font-size:0.78rem;white-space:nowrap;">Rename</button>
+                      <button class="button-ghost" data-action="remove-class-member" data-student-id="${member.id}" data-student-name="${escapeAttribute(member.name || "Student")}" style="font-size:0.78rem;color:var(--danger);border-color:var(--danger);white-space:nowrap;">Remove</button>
+                    </div>
                   </div>
                 `).join("")}
               </div>`
@@ -4495,6 +4638,7 @@ function renderTeacherGrading(assignment, submission) {
         <button class="button-ghost" data-action="back-to-review" style="font-size:0.85rem;">${escapeHtml(assignment.title)}</button>
         <span style="color:var(--muted);font-size:0.85rem;">/</span>
         <span style="font-weight:600;font-size:0.95rem;">${escapeHtml(studentName)}</span>
+        <button class="button-ghost" data-action="edit-class-member-name" data-student-id="${submission.studentId}" data-student-name="${escapeAttribute(studentName)}" style="font-size:0.78rem;min-height:30px;padding:0 10px;">Rename</button>
         <span class="status-pill">${escapeHtml(getSubmissionStatusDisplay(currentStatus))}</span>
         ${roster.length ? `<span style="font-size:0.82rem;color:var(--muted);">${rosterIndex + 1}/${roster.length}</span>` : ""}
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
@@ -4531,9 +4675,19 @@ function renderTeacherGrading(assignment, submission) {
           <div style="margin-bottom:16px;">
             <div class="error-code-toolbar">
               <span class="mini-label" style="align-self:center;">Annotate:</span>
-              ${ERROR_CODES.map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}" onmousedown="event.preventDefault()">${code}</button>`).join("")}
+              ${getErrorCodes().map(({code, label}) => `<button class="error-code-btn" data-action="add-annotation" data-code="${code}" title="${label}" onmousedown="event.preventDefault()">${code}</button>`).join("")}
               <button class="error-code-btn" data-action="add-annotation" data-code="NOTE" title="Add a custom note" onmousedown="event.preventDefault()" style="background:#fff9e6;border-color:#e0c84a;">+ Note</button>
+              <button class="error-code-btn" data-action="add-custom-error-code" title="Add your own reusable error code" onmousedown="event.preventDefault()">+ Code</button>
             </div>
+            ${loadCustomErrorCodes().length ? `
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                ${loadCustomErrorCodes().map((entry) => `
+                  <button class="button-ghost" data-action="remove-custom-error-code" data-code="${escapeAttribute(entry.code)}" style="font-size:0.78rem;min-height:30px;padding:0 10px;">
+                    ${escapeHtml(entry.code)} ✕
+                  </button>
+                `).join("")}
+              </div>
+            ` : ""}
             ${(submission.teacherReview?.annotations?.length) ? `
               <div style="margin-top:8px;display:grid;gap:6px;">
                 ${submission.teacherReview.annotations.map((ann, i) => `
@@ -4873,12 +5027,8 @@ function renderStudentIdeasStep(assignment, submission) {
         <div>
           <div class="step-number">1</div>
           <h3>Explore your ideas</h3>
-          <p class="subtle">${chatDisabled ? "Your teacher has turned off the chatbot for this assignment. You can move straight to drafting when you are ready." : "Chat with your writing coach. Answer the questions to develop your thinking before you write."}</p>
+          <p class="subtle">${chatDisabled ? "Your teacher has turned off the chatbot for this assignment. You can move straight to drafting when you are ready." : "Step 1: use the coach to build your outline and test your ideas. When you feel ready, click Next to move to drafting."}</p>
         </div>
-      </div>
-      <div class="teacher-ready-card" style="margin-bottom:14px;">
-        <p class="mini-label">Your focus for this piece</p>
-        <ul class="focus-list">${assignment.studentFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </div>
       ${chatDisabled ? `
         <div class="teacher-ready-card">
@@ -4912,13 +5062,13 @@ function renderStudentIdeasStep(assignment, submission) {
       `}
       <div class="wizard-nav">
         ${chatDisabled ? `<span></span>` : `
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <button class="button-ghost" data-action="skip-chat-to-draft">Skip chat for now</button>
+          <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;flex-wrap:wrap;">
             ${timeLimit > 0 && minsRemaining !== null ? `
               <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
                 ${timeExpired ? "⏱ Time's up" : `⏱ ${minsRemaining}:${String(secsRemaining).padStart(2,'0')} left`}
               </div>
             ` : ""}
+            <button class="button-ghost" data-action="skip-chat-to-draft">Skip chat for now</button>
           </div>
         `}
         <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>Next: Write Draft</button>
@@ -4962,7 +5112,8 @@ function renderStudentDraftStep(assignment, submission) {
         ${
           submission.feedbackHistory.length
             ? submission.feedbackHistory.slice().reverse().map((entry) => {
-                const hasCode = ERROR_CODES.some(({code}) => entry.items.some(i => i.includes(`[${code}]`)));
+                const errorCodes = getErrorCodes();
+                const hasCode = errorCodes.some(({code}) => entry.items.some(i => i.includes(`[${code}]`)));
                 return `
                   <div class="feedback-card">
                     <strong>${escapeHtml(formatDateTime(entry.timestamp))}</strong>
@@ -4970,7 +5121,7 @@ function renderStudentDraftStep(assignment, submission) {
                     ${hasCode ? `
                       <div class="error-code-key">
                         <p>Code key</p>
-                        <dl>${ERROR_CODES.filter(({code}) => entry.items.some(i => i.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
+                        <dl>${errorCodes.filter(({code}) => entry.items.some(i => i.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
                       </div>` : ""}
                   </div>`;
               }).join("")
@@ -5373,7 +5524,7 @@ async function saveTeacherAssignment() {
   ui.editingAssignmentId = null;
   ui.notice = editingAssignment
     ? "Assignment updated."
-    : "Assignment saved as draft. Publish it when you're ready for students to see it.";
+    : "Assignment created and ready to publish.";
   persistState();
   render();
 }
@@ -5426,7 +5577,7 @@ function handleFeedbackRequest() {
   submission.updatedAt = new Date().toISOString();
   ui.notice = "Draft check added. Use it to improve your own writing.";
   persistState();
-  scheduleSubmissionSync();
+  flushCurrentStudentWork();
   render();
 }
 
@@ -7748,6 +7899,14 @@ function getStudentUsers() {
 
 function getUserById(id) {
   return state.users.find((user) => user.id === id) || null;
+}
+
+function updateStudentDisplayName(studentId, nextName) {
+  const name = String(nextName || "").trim();
+  if (!studentId || !name) return;
+  state.users = state.users.map((user) => user.id === studentId ? { ...user, name } : user);
+  currentClassMembers = currentClassMembers.map((member) => member.id === studentId ? { ...member, name } : member);
+  state.submissions = state.submissions.map((submission) => submission.studentId === studentId ? { ...submission, _studentName: name } : submission);
 }
 
 function uid(prefix) {
