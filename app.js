@@ -121,10 +121,14 @@ const ui = {
   expandedContextCol: null,
   chatInput: "",
   chatLoading: false,
+  latestDraftFeedbackByAssignmentId: {},
 };
 
 let state = { assignments: [], submissions: [], users: [] };
 let teacherAssistAbortController = null;
+const authUiState = {
+  signupRole: "student",
+};
 
 function loadActiveClassPreferences() {
   try {
@@ -1574,6 +1578,7 @@ function resetAppShellState() {
   ui.teacherAssist = null;
   ui.studentStep = 1;
   ui.showDraftFeedbackPrompt = false;
+  ui.latestDraftFeedbackByAssignmentId = {};
   ui.notice = "";
 }
 async function bootApp(profile) {
@@ -2051,6 +2056,7 @@ function bindEvents() {
   appEl.addEventListener("click", handleClick);
   appEl.addEventListener("change", handleChange);
   appEl.addEventListener("input", handleInput);
+  appEl.addEventListener("scroll", handleScroll, true);
   appEl.addEventListener("paste", handlePaste, true);
   appEl.addEventListener("keydown", handleKeydown);
 }
@@ -2060,6 +2066,17 @@ function handleKeydown(event) {
     event.preventDefault();
     const btn = document.querySelector("[data-action='send-chat-message']");
     if (btn && !btn.disabled) btn.click();
+  }
+}
+
+function handleScroll(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const gutterId = target.dataset.lineGutter;
+  if (!gutterId) return;
+  const gutter = document.getElementById(gutterId);
+  if (gutter) {
+    gutter.scrollTop = target.scrollTop;
   }
 }
 
@@ -3598,6 +3615,7 @@ function handleInput(event) {
   if (target.id === "draft-editor") {
     updateDraftSubmission(target.value);
     updateDraftMeters();
+    refreshLineNumberGutterForElement(target);
     scheduleAutoSave();
     return;
   }
@@ -3611,6 +3629,8 @@ function handleInput(event) {
     submission.finalText = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
+    scheduleSubmissionSync();
+    refreshLineNumberGutterForElement(target);
     scheduleAutoSave();
     updateFinalMeters();
     return;
@@ -3714,7 +3734,114 @@ function render() {
     });
   }
 
+  window.requestAnimationFrame(() => {
+    refreshAllLineNumberGutters();
+  });
+
   syncTeacherReviewPolling();
+}
+
+function setAuthTab(tab) {
+  const signinForm = document.getElementById("auth-signin-form");
+  const signupForm = document.getElementById("auth-signup-form");
+  const signinTab = document.getElementById("auth-tab-signin");
+  const signupTab = document.getElementById("auth-tab-signup");
+  if (!signinForm || !signupForm || !signinTab || !signupTab) return;
+  signinForm.style.display = tab === "signin" ? "block" : "none";
+  signupForm.style.display = tab === "signup" ? "block" : "none";
+  signinTab.style.background = tab === "signin" ? "#fff" : "#eef4ff";
+  signinTab.style.color = tab === "signin" ? "var(--accent)" : "#667063";
+  signupTab.style.background = tab === "signup" ? "#fff" : "#eef4ff";
+  signupTab.style.color = tab === "signup" ? "var(--accent)" : "#667063";
+}
+
+function setAuthSignupRole(role) {
+  authUiState.signupRole = role === "teacher" ? "teacher" : "student";
+  const studentButton = document.getElementById("role-btn-student");
+  const teacherButton = document.getElementById("role-btn-teacher");
+  if (studentButton) {
+    studentButton.style.border = authUiState.signupRole === "student" ? "2px solid var(--accent)" : "1px solid var(--line)";
+    studentButton.style.background = authUiState.signupRole === "student" ? "#e7eeff" : "#fff";
+    studentButton.style.color = authUiState.signupRole === "student" ? "var(--accent-deep)" : "#667063";
+  }
+  if (teacherButton) {
+    teacherButton.style.border = authUiState.signupRole === "teacher" ? "2px solid var(--accent)" : "1px solid var(--line)";
+    teacherButton.style.background = authUiState.signupRole === "teacher" ? "#e7eeff" : "#fff";
+    teacherButton.style.color = authUiState.signupRole === "teacher" ? "var(--accent-deep)" : "#667063";
+  }
+}
+
+function bindAuthScreenEvents(joinClassId = null) {
+  authUiState.signupRole = "student";
+  setAuthTab("signin");
+  setAuthSignupRole("student");
+
+  appEl.querySelectorAll("[data-auth-tab]").forEach((button) => {
+    button.addEventListener("click", () => setAuthTab(button.dataset.authTab));
+  });
+
+  appEl.querySelectorAll("[data-auth-role]").forEach((button) => {
+    button.addEventListener("click", () => setAuthSignupRole(button.dataset.authRole));
+  });
+
+  appEl.querySelector("[data-auth-action='signin']")?.addEventListener("click", async () => {
+    const email = document.getElementById("auth-email").value.trim();
+    const password = document.getElementById("auth-password").value;
+    const errEl = document.getElementById("auth-error");
+    errEl.style.display = "none";
+    try {
+      const stayLoggedIn = document.getElementById("stay-logged-in")?.checked !== false;
+      const profile = await Auth.signIn(email, password, stayLoggedIn);
+      await Auth.joinClassIfInvited();
+      await bootApp(profile);
+    } catch (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = "block";
+    }
+  });
+
+  appEl.querySelector("[data-auth-action='forgot-password']")?.addEventListener("click", async () => {
+    const email = document.getElementById("auth-email").value.trim();
+    const errEl = document.getElementById("auth-error");
+    errEl.style.display = "none";
+    if (!email) {
+      errEl.textContent = "Enter your email first, then click forgot password.";
+      errEl.style.display = "block";
+      errEl.style.color = "var(--danger)";
+      return;
+    }
+    try {
+      await Auth.requestPasswordReset(email);
+      errEl.textContent = "Password reset email sent. Check your inbox.";
+      errEl.style.display = "block";
+      errEl.style.color = "var(--sage)";
+    } catch (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = "block";
+      errEl.style.color = "var(--danger)";
+    }
+  });
+
+  appEl.querySelector("[data-auth-action='signup']")?.addEventListener("click", async () => {
+    const name = document.getElementById("auth-signup-name").value.trim();
+    const email = document.getElementById("auth-signup-email").value.trim();
+    const password = document.getElementById("auth-signup-password").value;
+    const errEl = document.getElementById("auth-signup-error");
+    errEl.style.display = "none";
+    if (!name || !email || !password) {
+      errEl.textContent = "Please fill in all fields.";
+      errEl.style.display = "block";
+      return;
+    }
+    try {
+      const profile = await Auth.signUp(email, password, name, joinClassId ? "student" : authUiState.signupRole);
+      await Auth.joinClassIfInvited();
+      await bootApp(profile);
+    } catch (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = "block";
+    }
+  });
 }
 
 function renderAuthScreen(joinClassId = null, inviteInfo = null) {
@@ -3743,8 +3870,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
         </div>
         ${inviteBanner}
         <div style="display:flex;gap:0;margin-bottom:24px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#eef4ff;">
-          <button id="auth-tab-signin" onclick="showAuthTab('signin')" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:var(--accent);">Sign in</button>
-          <button id="auth-tab-signup" onclick="showAuthTab('signup')" style="flex:1;padding:10px;border:none;background:#eef4ff;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
+          <button id="auth-tab-signin" data-auth-tab="signin" style="flex:1;padding:10px;border:none;background:#fff;font-weight:700;cursor:pointer;color:var(--accent);">Sign in</button>
+          <button id="auth-tab-signup" data-auth-tab="signup" style="flex:1;padding:10px;border:none;background:#eef4ff;font-weight:700;cursor:pointer;color:#667063;">Create account</button>
         </div>
         <div id="auth-signin-form">
           <div style="display:grid;gap:12px;">
@@ -3753,8 +3880,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;color:var(--muted);cursor:pointer;">
               <input type="checkbox" id="stay-logged-in" checked style="cursor:pointer;" /> Stay logged in
             </label>
-            <button type="button" onclick="handleForgotPassword()" style="background:none;border:none;padding:0;text-align:left;color:var(--accent);font-weight:600;cursor:pointer;">Forgot password?</button>
-            <button onclick="handleSignIn()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Sign in</button>
+            <button type="button" data-auth-action="forgot-password" style="background:none;border:none;padding:0;text-align:left;color:var(--accent);font-weight:600;cursor:pointer;">Forgot password?</button>
+            <button type="button" data-auth-action="signin" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Sign in</button>
             <p id="auth-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
         </div>
@@ -3764,97 +3891,17 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
             <input id="auth-signup-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <input id="auth-signup-password" type="password" placeholder="Password (min 6 characters)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <div style="display:flex;gap:8px;">
-              <button onclick="setSignupRole('student')" id="role-btn-student" style="flex:1;padding:10px;border:2px solid var(--accent);border-radius:10px;background:#e7eeff;font:inherit;font-weight:700;cursor:pointer;color:var(--accent-deep);">Student</button>
-              ${!joinClassId ? `<button onclick="setSignupRole('teacher')" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
+              <button type="button" data-auth-role="student" id="role-btn-student" style="flex:1;padding:10px;border:2px solid var(--accent);border-radius:10px;background:#e7eeff;font:inherit;font-weight:700;cursor:pointer;color:var(--accent-deep);">Student</button>
+              ${!joinClassId ? `<button type="button" data-auth-role="teacher" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
               </div>
-            <button onclick="handleSignUp()" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Create account</button>
+            <button type="button" data-auth-action="signup" style="background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:white;border:none;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 10px 24px rgba(63,109,246,0.24);">Create account</button>
             <p id="auth-signup-error" style="color:#b34949;font-size:0.85rem;margin:0;display:none;"></p>
           </div>
         </div>
       </div>
     </div>
   `;
-
-  // Inline auth functions — attached to window so onclick works
-  window.signupRole = 'student';
-
-  window.showAuthTab = (tab) => {
-    document.getElementById('auth-signin-form').style.display = tab === 'signin' ? 'block' : 'none';
-    document.getElementById('auth-signup-form').style.display = tab === 'signup' ? 'block' : 'none';
-    document.getElementById('auth-tab-signin').style.background = tab === 'signin' ? '#fff' : '#eef4ff';
-    document.getElementById('auth-tab-signin').style.color = tab === 'signin' ? 'var(--accent)' : '#667063';
-    document.getElementById('auth-tab-signup').style.background = tab === 'signup' ? '#fff' : '#eef4ff';
-    document.getElementById('auth-tab-signup').style.color = tab === 'signup' ? 'var(--accent)' : '#667063';
-  };
-
-  window.setSignupRole = (role) => {
-    window.signupRole = role;
-    document.getElementById('role-btn-student').style.border = role === 'student' ? '2px solid var(--accent)' : '1px solid var(--line)';
-    document.getElementById('role-btn-student').style.background = role === 'student' ? '#e7eeff' : '#fff';
-    document.getElementById('role-btn-student').style.color = role === 'student' ? 'var(--accent-deep)' : '#667063';
-    document.getElementById('role-btn-teacher').style.border = role === 'teacher' ? '2px solid var(--accent)' : '1px solid var(--line)';
-    document.getElementById('role-btn-teacher').style.background = role === 'teacher' ? '#e7eeff' : '#fff';
-    document.getElementById('role-btn-teacher').style.color = role === 'teacher' ? 'var(--accent-deep)' : '#667063';
-  };
-
-  window.handleSignIn = async () => {
-    const email = document.getElementById('auth-email').value.trim();
-    const password = document.getElementById('auth-password').value;
-    const errEl = document.getElementById('auth-error');
-    errEl.style.display = 'none';
-    try {
-      const stayLoggedIn = document.getElementById('stay-logged-in')?.checked !== false;
-      const profile = await Auth.signIn(email, password, stayLoggedIn);
-      await Auth.joinClassIfInvited();
-      await bootApp(profile);
-    } catch (e) {
-      errEl.textContent = e.message;
-      errEl.style.display = 'block';
-    }
-  };
-
-  window.handleForgotPassword = async () => {
-    const email = document.getElementById('auth-email').value.trim();
-    const errEl = document.getElementById('auth-error');
-    errEl.style.display = 'none';
-    if (!email) {
-      errEl.textContent = 'Enter your email first, then click forgot password.';
-      errEl.style.display = 'block';
-      errEl.style.color = 'var(--danger)';
-      return;
-    }
-    try {
-      await Auth.requestPasswordReset(email);
-      errEl.textContent = 'Password reset email sent. Check your inbox.';
-      errEl.style.display = 'block';
-      errEl.style.color = 'var(--sage)';
-    } catch (e) {
-      errEl.textContent = e.message;
-      errEl.style.display = 'block';
-      errEl.style.color = 'var(--danger)';
-    }
-  };
-  
-  window.handleSignUp = async () => {
-    const name = document.getElementById('auth-signup-name').value.trim();
-    const email = document.getElementById('auth-signup-email').value.trim();
-    const password = document.getElementById('auth-signup-password').value;
-    const errEl = document.getElementById('auth-signup-error');
-    errEl.style.display = 'none';
-    if (!name || !email || !password) {
-      errEl.textContent = 'Please fill in all fields.';
-      errEl.style.display = 'block';
-      return;
-    }
-    try {
-      const profile = await Auth.signUp(email, password, name, window.signupRole);
-      await Auth.joinClassIfInvited();
-      await bootApp(profile);
-    } catch (e) {
-      errEl.textContent = e.message;
-      errEl.style.display = 'block';
-    }
-  };
+  bindAuthScreenEvents(joinClassId);
 }
 
 function renderResetPasswordScreen() {
@@ -3876,15 +3923,17 @@ function renderResetPasswordScreen() {
           </div>
           <p id="reset-password-error" style="display:none;margin:0;font-size:0.88rem;"></p>
           <div style="display:flex;gap:10px;justify-content:flex-end;">
-            <button class="button-ghost" onclick="window.location.href='/'">Cancel</button>
-            <button class="button" onclick="handleResetPassword()">Save new password</button>
+            <button class="button-ghost" type="button" data-reset-action="cancel">Cancel</button>
+            <button class="button" type="button" data-reset-action="save">Save new password</button>
           </div>
         </div>
       </div>
     </div>
   `;
-
-  window.handleResetPassword = async () => {
+  appEl.querySelector("[data-reset-action='cancel']")?.addEventListener("click", () => {
+    window.location.href = "/";
+  });
+  appEl.querySelector("[data-reset-action='save']")?.addEventListener("click", async () => {
     const password = document.getElementById('reset-password-input').value;
     const confirm = document.getElementById('reset-password-confirm').value;
     const errEl = document.getElementById('reset-password-error');
@@ -3915,7 +3964,7 @@ function renderResetPasswordScreen() {
       errEl.style.display = 'block';
       errEl.style.color = 'var(--danger)';
     }
-  };
+  });
 }
 
 window.handleRubricDrop = async (event) => {
@@ -4784,7 +4833,10 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-            <div id="student-text-annotate" onmouseup="captureAnnotationSelection()" onkeyup="captureAnnotationSelection()" ontouchend="captureAnnotationSelection()" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:320px;max-height:min(78vh,900px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+            <div class="editor-with-lines review-editor-with-lines">
+              <div class="line-gutter" id="student-text-annotate-gutter" aria-hidden="true"></div>
+              <div id="student-text-annotate" data-line-gutter="student-text-annotate-gutter" onmouseup="captureAnnotationSelection()" onkeyup="captureAnnotationSelection()" ontouchend="captureAnnotationSelection()" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:320px;max-height:min(78vh,900px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+            </div>
           </div>
 
           <div style="margin-bottom:16px;">
@@ -5193,7 +5245,8 @@ function renderStudentIdeasStep(assignment, submission) {
 }
 
 function renderStudentDraftStep(assignment, submission) {
-  const feedbackUsed = Number(submission.feedbackHistory.length || 0);
+  const feedbackEntries = getRenderableDraftFeedbackEntries(assignment, submission);
+  const feedbackUsed = Number(safeArray(submission.feedbackHistory).length || 0);
   const feedbackLimit = Number(assignment.feedbackRequestLimit || 0);
   const feedbackDisabled = feedbackUsed >= feedbackLimit;
   return `
@@ -5217,7 +5270,10 @@ function renderStudentDraftStep(assignment, submission) {
         <button class="button-ghost" data-action="scroll-editor-top" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
         <button class="button-ghost" data-action="scroll-editor-bottom" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
       </div>
-      <textarea id="draft-editor" class="draft-editor" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
+      <div class="editor-with-lines">
+        <div class="line-gutter" id="draft-editor-gutter" aria-hidden="true"></div>
+        <textarea id="draft-editor" class="draft-editor" data-line-gutter="draft-editor-gutter" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
+      </div>
       <div class="pill-row">
         <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
         <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
@@ -5226,18 +5282,19 @@ function renderStudentDraftStep(assignment, submission) {
       <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
       <div class="feedback-list">
         ${
-          submission.feedbackHistory.length
-            ? submission.feedbackHistory.slice().reverse().map((entry) => {
+          feedbackEntries.length
+            ? feedbackEntries.slice().reverse().map((entry) => {
                 const errorCodes = getErrorCodes();
-                const hasCode = errorCodes.some(({code}) => entry.items.some(i => i.includes(`[${code}]`)));
+                const items = safeArray(entry.items).map((item) => String(item || "").trim()).filter(Boolean);
+                const hasCode = errorCodes.some(({code}) => items.some((item) => item.includes(`[${code}]`)));
                 return `
                   <div class="feedback-card">
                     <strong>${escapeHtml(formatDateTime(entry.timestamp))}</strong>
-                    <ul>${entry.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+                    <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
                     ${hasCode ? `
                       <div class="error-code-key">
                         <p>Code key</p>
-                        <dl>${errorCodes.filter(({code}) => entry.items.some(i => i.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
+                        <dl>${errorCodes.filter(({code}) => items.some((item) => item.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
                       </div>` : ""}
                   </div>`;
               }).join("")
@@ -5349,7 +5406,10 @@ function renderStudentFinalStep(assignment, submission) {
         <button class="button-ghost" data-action="scroll-editor-top" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
         <button class="button-ghost" data-action="scroll-editor-bottom" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
       </div>
-      <textarea id="final-editor" class="final-editor" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
+      <div class="editor-with-lines">
+        <div class="line-gutter" id="final-editor-gutter" aria-hidden="true"></div>
+        <textarea id="final-editor" class="final-editor" data-line-gutter="final-editor-gutter" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
+      </div>
       <div class="pill-row">
         <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
         <span class="pill">Status: ${escapeHtml(titleCase(submission.status))}</span>
@@ -5711,11 +5771,39 @@ async function handleFeedbackRequest() {
     timestamp: new Date().toISOString(),
     items,
   });
+  ui.latestDraftFeedbackByAssignmentId[assignment.id] = safeArray(items).slice();
   submission.updatedAt = new Date().toISOString();
   ui.notice = "Draft check added. Use it to improve your own writing.";
   persistState();
-  flushCurrentStudentWork();
+  await flushCurrentStudentWork();
   render();
+}
+
+function getRenderableDraftFeedbackEntries(assignment, submission) {
+  const history = safeArray(submission?.feedbackHistory)
+    .map((entry) => ({
+      id: entry?.id || uid("feedback"),
+      timestamp: entry?.timestamp || new Date().toISOString(),
+      items: safeArray(entry?.items).map((item) => String(item || "").trim()).filter(Boolean),
+    }))
+    .filter((entry) => entry.items.length);
+
+  if (history.length) {
+    return history;
+  }
+
+  const latestItems = safeArray(ui.latestDraftFeedbackByAssignmentId?.[assignment?.id])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  if (!latestItems.length) {
+    return [];
+  }
+
+  return [{
+    id: uid("feedback"),
+    timestamp: new Date().toISOString(),
+    items: latestItems,
+  }];
 }
 
 function handleSubmission() {
@@ -6546,20 +6634,13 @@ function buildDraftLinesWithPasteMarkers(submission) {
       start: Number(event.start || 0),
       end: Number(event.end ?? event.start ?? 0) + String(event.insertedText || "").length,
     }));
-
-  let cursor = 0;
-  return text.split("\n").map((lineText, index) => {
-    const lineLength = lineText.length;
-    const start = cursor;
-    const end = start + lineLength;
-    const pasted = flaggedRanges.some((range) => start < range.end && end > range.start);
-    cursor = end + 1;
-    return {
-      number: index + 1,
-      text: lineText,
-      pasted,
-    };
-  });
+  const editor = document.getElementById("draft-editor");
+  const metrics = getElementLineWrapMetrics(editor);
+  return buildWrappedLineEntries(text, metrics).map((entry) => ({
+    number: entry.number,
+    text: entry.text,
+    pasted: flaggedRanges.some((range) => entry.start < range.end && entry.end > range.start),
+  }));
 }
 
 function buildAiIdeaRequest(assignment, submission) {
@@ -6850,7 +6931,11 @@ function sentenceExcerpt(sentence = "", maxLength = 48) {
 }
 
 function getFeedbackLineNumber(text = "", startIndex = 0) {
-  return String(text || "").slice(0, Math.max(0, startIndex)).split("\n").length;
+  const editor = document.getElementById("draft-editor");
+  const metrics = getElementLineWrapMetrics(editor);
+  const entries = buildWrappedLineEntries(text, metrics);
+  const matchingEntry = entries.find((entry) => startIndex >= entry.start && startIndex <= entry.end);
+  return matchingEntry?.number || 1;
 }
 
 function buildFeedbackSentenceEntries(text = "", pasteEvents = []) {
@@ -8371,6 +8456,166 @@ function splitLines(text) {
 
 function splitParagraphs(text) {
   return String(text || "").split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+}
+
+let lineMeasureCanvas = null;
+
+function getLineMeasureContext() {
+  if (!lineMeasureCanvas) {
+    lineMeasureCanvas = document.createElement("canvas");
+  }
+  return lineMeasureCanvas.getContext("2d");
+}
+
+function getElementLineWrapMetrics(element) {
+  if (!element) return null;
+  const style = window.getComputedStyle(element);
+  const fontSize = parseFloat(style.fontSize || "16") || 16;
+  const lineHeight = parseFloat(style.lineHeight) || (fontSize * 1.65);
+  const paddingLeft = parseFloat(style.paddingLeft || "0") || 0;
+  const paddingRight = parseFloat(style.paddingRight || "0") || 0;
+  const availableWidth = Math.max(80, element.clientWidth - paddingLeft - paddingRight);
+  return {
+    font: style.font || `${style.fontWeight || "400"} ${fontSize}px ${style.fontFamily || "sans-serif"}`,
+    lineHeight,
+    width: availableWidth,
+  };
+}
+
+function splitTokenToFitWidth(token, ctx, maxWidth) {
+  const pieces = [];
+  let current = "";
+  for (const char of token) {
+    const candidate = current + char;
+    if (current && ctx.measureText(candidate).width > maxWidth) {
+      pieces.push(current);
+      current = char;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) {
+    pieces.push(current);
+  }
+  return pieces.length ? pieces : [token];
+}
+
+function buildWrappedLineEntries(text = "", metrics) {
+  const value = String(text || "");
+  if (!metrics) {
+    return [{ number: 1, text: value, start: 0, end: value.length }];
+  }
+
+  const ctx = getLineMeasureContext();
+  ctx.font = metrics.font;
+
+  const entries = [];
+  let visibleNumber = 1;
+  let cursor = 0;
+  const logicalLines = value.split("\n");
+
+  logicalLines.forEach((logicalLine, logicalIndex) => {
+    if (!logicalLine.length) {
+      entries.push({ number: visibleNumber++, text: "", start: cursor, end: cursor });
+      cursor += 1;
+      return;
+    }
+
+    const tokens = logicalLine.match(/\S+\s*|\s+/g) || [logicalLine];
+    let currentText = "";
+    let currentStart = cursor;
+    let currentEnd = cursor;
+
+    const pushCurrent = () => {
+      entries.push({
+        number: visibleNumber++,
+        text: currentText.replace(/\s+$/g, ""),
+        start: currentStart,
+        end: currentEnd,
+      });
+    };
+
+    tokens.forEach((token) => {
+      const tokenStart = cursor;
+      cursor += token.length;
+
+      if (!currentText && /^\s+$/.test(token)) {
+        currentStart = cursor;
+        currentEnd = cursor;
+        return;
+      }
+
+      const candidate = `${currentText}${token}`;
+      if (currentText && ctx.measureText(candidate).width > metrics.width) {
+        pushCurrent();
+        currentText = "";
+        currentStart = tokenStart + (token.match(/^\s+/)?.[0]?.length || 0);
+        currentEnd = currentStart;
+      }
+
+      if (!currentText && ctx.measureText(token).width > metrics.width) {
+        const tokenPieces = splitTokenToFitWidth(token.trimStart(), ctx, metrics.width);
+        tokenPieces.forEach((piece, pieceIndex) => {
+          const pieceStart = pieceIndex === 0 ? currentStart : currentEnd;
+          const pieceEnd = pieceStart + piece.length;
+          entries.push({
+            number: visibleNumber++,
+            text: piece,
+            start: pieceStart,
+            end: pieceEnd,
+          });
+          currentEnd = pieceEnd;
+        });
+        currentText = "";
+        currentStart = currentEnd;
+        return;
+      }
+
+      currentText += currentText ? token : token.trimStart();
+      if (!currentText.trim()) {
+        currentStart = cursor;
+        currentEnd = cursor;
+      } else {
+        currentEnd = tokenStart + token.length;
+      }
+    });
+
+    if (currentText || !entries.length) {
+      pushCurrent();
+    }
+
+    if (logicalIndex < logicalLines.length - 1) {
+      cursor += 1;
+    }
+  });
+
+  return entries.length ? entries : [{ number: 1, text: "", start: 0, end: 0 }];
+}
+
+function renderLineNumberGutter(entries = []) {
+  return safeArray(entries).map((entry) => {
+    const label = entry.number % 5 === 0 || entry.number === 1 ? String(entry.number) : "";
+    return `<div class="line-gutter-row">${escapeHtml(label)}</div>`;
+  }).join("");
+}
+
+function refreshLineNumberGutterForElement(element) {
+  if (!element) return;
+  const gutterId = element.dataset.lineGutter;
+  if (!gutterId) return;
+  const gutter = document.getElementById(gutterId);
+  if (!gutter) return;
+  const text = element.value ?? element.textContent ?? "";
+  const metrics = getElementLineWrapMetrics(element);
+  const entries = buildWrappedLineEntries(text, metrics);
+  gutter.innerHTML = renderLineNumberGutter(entries);
+  gutter.scrollTop = element.scrollTop;
+}
+
+function refreshAllLineNumberGutters() {
+  document.querySelectorAll("[data-line-gutter]").forEach((element) => {
+    refreshLineNumberGutterForElement(element);
+  });
 }
 
 function splitSentences(text) {
