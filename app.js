@@ -118,6 +118,7 @@ const ui = {
   pendingPaste: null,
   notice: "",
   draftSaveMessage: "",
+  studentStepOverrides: {},
   expandedContextCol: null,
   chatInput: "",
   chatLoading: false,
@@ -1577,6 +1578,7 @@ function resetAppShellState() {
   ui.teacherDraft = createBlankTeacherDraft();
   ui.teacherAssist = null;
   ui.studentStep = 1;
+  ui.studentStepOverrides = {};
   ui.showDraftFeedbackPrompt = false;
   ui.latestDraftFeedbackByAssignmentId = {};
   ui.notice = "";
@@ -1957,6 +1959,9 @@ function syncTeacherReviewPolling() {
 
 let autoSaveTimer = null;
 let submissionSyncTimer = null;
+let submissionSyncInFlight = null;
+let queuedSubmissionSyncKey = "";
+let queuedSubmissionSyncResolvers = [];
 let lifecycleEventsBound = false;
 function showAutosaveIndicator(message = "Saved") {
   const indicator = document.getElementById("autosave-indicator");
@@ -1995,7 +2000,7 @@ function pauseActiveChatSession() {
   submission.updatedAt = new Date().toISOString();
   persistState();
   if (currentProfile?.role === "student") {
-    syncSubmissionToServer(submission);
+    queueSubmissionSync(submission);
   }
 }
 
@@ -2116,6 +2121,7 @@ function startChatTimer() {
 
 function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
+  autoSaveTimer = null;
   showAutosaveIndicator("Saving...");
   setDraftSaveMessage("Saving…");
   autoSaveTimer = setTimeout(() => {
@@ -2131,12 +2137,87 @@ function scheduleAutoSave() {
 
 function scheduleSubmissionSync(delay = 1800) {
   clearTimeout(submissionSyncTimer);
+  submissionSyncTimer = null;
   submissionSyncTimer = setTimeout(() => {
     const submission = getStudentSubmission();
     if (!submission) return;
     persistState();
-    syncSubmissionToServer(submission);
+    queueSubmissionSync(submission);
   }, delay);
+}
+
+function getSubmissionSyncKey(submission) {
+  if (!submission?.assignmentId || !submission?.studentId) return "";
+  return `${submission.assignmentId}:${submission.studentId}`;
+}
+
+function getSubmissionBySyncKey(syncKey) {
+  if (!syncKey) return null;
+  const [assignmentId, studentId] = String(syncKey).split(":");
+  if (!assignmentId || !studentId) return null;
+  return state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === studentId) || null;
+}
+
+async function syncSubmissionToServerWithRetry(submission) {
+  const initialTarget = submission || getStudentSubmission();
+  if (!initialTarget) return false;
+
+  const delays = [0, 900];
+  let saved = false;
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (delays[attempt] > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, delays[attempt]));
+    }
+    const latest = getSubmissionBySyncKey(getSubmissionSyncKey(initialTarget)) || initialTarget;
+    saved = await syncSubmissionToServer(latest);
+    if (saved) return true;
+  }
+  return false;
+}
+
+async function drainSubmissionSyncQueue() {
+  if (submissionSyncInFlight) {
+    return submissionSyncInFlight;
+  }
+  if (!queuedSubmissionSyncKey) {
+    return false;
+  }
+
+  const syncKey = queuedSubmissionSyncKey;
+  const resolvers = queuedSubmissionSyncResolvers.splice(0, queuedSubmissionSyncResolvers.length);
+  queuedSubmissionSyncKey = "";
+  submissionSyncInFlight = syncSubmissionToServerWithRetry(getSubmissionBySyncKey(syncKey))
+    .finally(() => {
+      submissionSyncInFlight = null;
+    });
+
+  const saved = await submissionSyncInFlight;
+  resolvers.forEach((resolve) => resolve(saved));
+
+  if (queuedSubmissionSyncKey) {
+    return drainSubmissionSyncQueue();
+  }
+
+  return saved;
+}
+
+function queueSubmissionSync(submission) {
+  if (!submission || currentProfile?.role !== "student") {
+    return Promise.resolve(false);
+  }
+  const syncKey = getSubmissionSyncKey(submission);
+  if (!syncKey) {
+    return Promise.resolve(false);
+  }
+  queuedSubmissionSyncKey = syncKey;
+  return new Promise((resolve) => {
+    queuedSubmissionSyncResolvers.push(resolve);
+    drainSubmissionSyncQueue().catch((error) => {
+      console.error("Could not drain submission sync queue:", error);
+      const pendingResolvers = queuedSubmissionSyncResolvers.splice(0, queuedSubmissionSyncResolvers.length);
+      pendingResolvers.forEach((pendingResolve) => pendingResolve(false));
+    });
+  });
 }
 
 function flushCurrentStudentWork(options = {}) {
@@ -2144,11 +2225,15 @@ function flushCurrentStudentWork(options = {}) {
   if (!submission || currentProfile?.role !== "student") {
     return Promise.resolve(false);
   }
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = null;
+  clearTimeout(submissionSyncTimer);
+  submissionSyncTimer = null;
   persistState();
   if (options.preferKeepalive) {
     submission.updatedAt = new Date().toISOString();
   }
-  return syncSubmissionToServer(submission).then((saved) => {
+  return queueSubmissionSync(submission).then((saved) => {
     setDraftSaveMessage(saved ? "Saved just now." : "Saved on this device.");
     return saved;
   });
@@ -2542,13 +2627,13 @@ if (action === "switch-class") {
     saveActiveClassId(currentProfile, currentClassId);
     ui.selectedStudentAssignmentId = target.dataset.assignmentId;
     saveStudentAssignmentId(ui.selectedStudentAssignmentId);
-    ui.studentStep = 1;
+    rememberStudentStep(1, ui.selectedStudentAssignmentId);
     ui.notice = "";
     ensureStudentSubmission();
     render();
     loadStudentAssignmentsForCurrentClass().then(async () => {
       const loaded = await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
-      ui.studentStep = getStudentStepForSubmission(loaded || getStudentSubmission());
+      rememberStudentStep(getStudentStepForSubmission(loaded || getStudentSubmission()), ui.selectedStudentAssignmentId);
       render();
     });
     return;
@@ -2764,7 +2849,7 @@ if (action === "sign-out") {
 
   if (action === "continue-without-feedback") {
     ui.showDraftFeedbackPrompt = false;
-    ui.studentStep = 3;
+    rememberStudentStep(3);
     ui.notice = "";
     render();
     return;
@@ -2986,7 +3071,7 @@ if (action === "select-assignment") {
       if (ui.studentStep === 1 && nextStep !== 1) {
         pauseActiveChatSession();
       }
-      ui.studentStep = nextStep;
+      rememberStudentStep(nextStep);
       ui.notice = "";
     } else {
       render();
@@ -3004,7 +3089,7 @@ if (action === "select-assignment") {
     if (notes) {
       submission.outline.partOne = notes.value.trim();
     }
-    ui.studentStep = 2;
+    rememberStudentStep(2);
     ui.notice = "You can return to the chat later if you want more idea help.";
     persistState();
     scheduleSubmissionSync();
@@ -3020,7 +3105,7 @@ if (action === "select-assignment") {
     if (targetStep === 1) {
       resumeActiveChatSession();
     }
-    ui.studentStep = targetStep;
+    rememberStudentStep(targetStep);
     ui.notice = "";
     render();
     return;
@@ -3496,11 +3581,11 @@ if (target.id === "student-class-select") {
     await flushCurrentStudentWork();
     ui.selectedStudentAssignmentId = target.value;
     saveStudentAssignmentId(ui.selectedStudentAssignmentId);
-    ui.studentStep = 1;
+    rememberStudentStep(1, ui.selectedStudentAssignmentId);
     ui.notice = "";
     ensureStudentSubmission();
     const loaded = await loadStudentSubmissionForAssignment(target.value);
-    ui.studentStep = getStudentStepForSubmission(loaded || getStudentSubmission());
+    rememberStudentStep(getStudentStepForSubmission(loaded || getStudentSubmission()), ui.selectedStudentAssignmentId);
     render();
     return;
   }
@@ -5806,7 +5891,7 @@ function getRenderableDraftFeedbackEntries(assignment, submission) {
   }];
 }
 
-function handleSubmission() {
+async function handleSubmission() {
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
   const finalEditor = document.getElementById("final-editor");
@@ -5842,9 +5927,17 @@ function handleSubmission() {
   const previousUpdatedAt = submission.updatedAt;
   const attemptedSubmittedAt = new Date().toISOString();
   submission.updatedAt = attemptedSubmittedAt;
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = null;
+  clearTimeout(submissionSyncTimer);
+  submissionSyncTimer = null;
   ui.notice = "Submitting...";
+  setDraftSaveMessage("Submitting…");
   persistState();
   render();
+
+  await flushCurrentStudentWork();
+
   submitStudentSubmissionToServer({
     ...submission,
     status: "submitted",
@@ -5857,7 +5950,8 @@ function handleSubmission() {
         submission.submittedAt = previousSubmittedAt || null;
         submission.updatedAt = new Date().toISOString();
         persistState();
-        await syncSubmissionToServer(submission);
+        await queueSubmissionSync(submission);
+        setDraftSaveMessage("Saved on this device.");
         ui.notice = "Submission failed. Your writing was saved, but it was not sent to your teacher. Please try Submit again.";
         render();
         window.requestAnimationFrame(() => {
@@ -5872,7 +5966,9 @@ function handleSubmission() {
         refreshed.submittedAt = refreshed.submittedAt || attemptedSubmittedAt;
         refreshed.updatedAt = refreshed.submittedAt;
       }
+      rememberStudentStep(3);
       ui.notice = "";
+      setDraftSaveMessage("Submitted successfully.");
       persistState();
       render();
       window.requestAnimationFrame(() => {
@@ -5885,7 +5981,8 @@ function handleSubmission() {
       submission.submittedAt = previousSubmittedAt || null;
       submission.updatedAt = previousUpdatedAt || new Date().toISOString();
       persistState();
-      await syncSubmissionToServer(submission);
+      await queueSubmissionSync(submission);
+      setDraftSaveMessage("Saved on this device.");
       ui.notice = "Submission failed. Your writing was saved, but it was not sent to your teacher. Please try Submit again.";
       render();
       window.requestAnimationFrame(() => {
@@ -6198,6 +6295,21 @@ function getStudentSubmission() {
   return state.submissions.find((submission) => submission.assignmentId === ui.selectedStudentAssignmentId && submission.studentId === ui.activeUserId) || null;
 }
 
+function rememberStudentStep(step, assignmentId = ui.selectedStudentAssignmentId) {
+  const nextStep = clamp(Number(step || 1), 1, 3);
+  ui.studentStep = nextStep;
+  if (!assignmentId) return nextStep;
+  ui.studentStepOverrides = ui.studentStepOverrides || {};
+  ui.studentStepOverrides[assignmentId] = nextStep;
+  return nextStep;
+}
+
+function getRememberedStudentStep(assignmentId = ui.selectedStudentAssignmentId) {
+  if (!assignmentId) return null;
+  const remembered = Number(ui.studentStepOverrides?.[assignmentId] || 0);
+  return remembered >= 1 && remembered <= 3 ? remembered : null;
+}
+
 function getStudentStepForSubmission(submission) {
   if (submission?.status === "submitted" || submission?.submittedAt) return 3;
   const hasFinalWork = Boolean(
@@ -6255,7 +6367,9 @@ function hydrateSelections() {
   ui.studentStep = clamp(ui.studentStep, 1, 3);
   const studentSubmission = ensureStudentSubmission();
   if (studentSubmission) {
-    ui.studentStep = Math.max(ui.studentStep, getStudentStepForSubmission(studentSubmission));
+    const rememberedStep = getRememberedStudentStep(ui.selectedStudentAssignmentId);
+    const derivedStep = getStudentStepForSubmission(studentSubmission);
+    ui.studentStep = rememberedStep || derivedStep;
   }
 
   const reviewRoster = getReviewRoster(ui.selectedAssignmentId);
