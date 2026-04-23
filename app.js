@@ -6268,36 +6268,73 @@ function sentenceExcerpt(sentence = "", maxLength = 48) {
   return trimTo(clean, maxLength);
 }
 
-function sentenceReference(index, sentence) {
-  const excerpt = sentenceExcerpt(sentence);
-  return excerpt ? `Sentence ${index + 1} ("${excerpt}")` : `Sentence ${index + 1}`;
+function getFeedbackLineNumber(text = "", startIndex = 0) {
+  return String(text || "").slice(0, Math.max(0, startIndex)).split("\n").length;
 }
 
-function findSpecificSentenceFeedback(sentences = [], { singleParagraphTask = false, rubricFeedbackText = "", processTask = false } = {}) {
+function buildFeedbackSentenceEntries(text = "", pasteEvents = []) {
+  const draftText = String(text || "");
+  const rawSentences = splitSentences(draftText);
+  const flaggedRanges = safeArray(pasteEvents)
+    .filter((event) => event?.flagged && typeof event?.start === "number")
+    .map((event) => ({
+      start: Number(event.start || 0),
+      end: Number(event.end ?? event.start ?? 0) + String(event.insertedText || "").length,
+    }));
+
+  let cursor = 0;
+  return rawSentences.map((sentence) => {
+    const trimmed = String(sentence || "").trim();
+    const start = trimmed ? draftText.indexOf(trimmed, cursor) : -1;
+    const safeStart = start >= 0 ? start : cursor;
+    const end = safeStart + trimmed.length;
+    cursor = Math.max(cursor, end);
+    const lineNumber = getFeedbackLineNumber(draftText, safeStart);
+    const overlapsPaste = flaggedRanges.some((range) => safeStart < range.end && end > range.start);
+    return {
+      text: trimmed,
+      start: safeStart,
+      end,
+      lineNumber,
+      overlapsPaste,
+    };
+  }).filter((entry) => entry.text);
+}
+
+function sentenceReference(entry, snippet = "") {
+  const excerpt = snippet || sentenceExcerpt(entry?.text || "");
+  const lineNumber = Number(entry?.lineNumber || 0) || 1;
+  return excerpt ? `Line ${lineNumber} ("${excerpt}")` : `Line ${lineNumber}`;
+}
+
+function findSpecificSentenceFeedback(sentenceEntries = [], { singleParagraphTask = false, rubricFeedbackText = "", processTask = false } = {}) {
   const specifics = [];
 
   const pushIssue = (message) => {
     if (message) specifics.push(message);
   };
 
-  sentences.forEach((sentence, index) => {
-    const label = sentenceReference(index, sentence);
+  sentenceEntries.forEach((entry) => {
+    const sentence = entry.text;
+    const label = sentenceReference(entry);
 
     if (/^[a-z]/.test(sentence)) {
       pushIssue(`${label} starts with a lowercase letter. Fix the first word and then check whether the rest of the sentence also needs grammar or punctuation corrections.`);
     }
 
-    if (/\bi\b/.test(sentence)) {
-      pushIssue(`${label} uses "i" in lowercase. Check every use of "I" in that sentence and correct the capitalization.`);
+    const lowercaseIMatch = sentence.match(/\bi(?:\s+\w+){0,2}/);
+    if (lowercaseIMatch) {
+      pushIssue(`${sentenceReference(entry, lowercaseIMatch[0])} uses "i" in lowercase. Check that exact phrase and correct the capitalization.`);
     }
 
     const repeatedWordMatch = sentence.match(/\b([a-z']+)\s+\1\b/i);
     if (repeatedWordMatch) {
-      pushIssue(`${label} repeats "${repeatedWordMatch[1]}" twice in a row. Remove the repetition and make sure the sentence still sounds natural.`);
+      pushIssue(`${sentenceReference(entry, repeatedWordMatch[0])} repeats a word. Remove the repetition and make sure the sentence still sounds natural.`);
     }
 
-    if (/\bto conclusion\b|\bin other hand\b|\bon other hand\b|\bin the another hand\b/i.test(sentence)) {
-      pushIssue(`${label} uses a transition phrase that does not sound correct. Recheck the opening phrase and the punctuation around it.`);
+    const weakTransitionMatch = sentence.match(/\bto conclusion\b|\bin other hand\b|\bon other hand\b|\bin the another hand\b/i);
+    if (weakTransitionMatch) {
+      pushIssue(`${sentenceReference(entry, weakTransitionMatch[0])} uses a transition phrase that does not sound correct. Recheck that phrase and the punctuation around it.`);
     }
 
     if (wordCount(sentence) > 28) {
@@ -6314,7 +6351,8 @@ function findSpecificSentenceFeedback(sentences = [], { singleParagraphTask = fa
 
     for (const issue of SPECIFIC_FEEDBACK_SPELLING_PATTERNS) {
       if (issue.pattern.test(sentence)) {
-        pushIssue(`${label} may have a spelling problem in ${issue.hint}. Check that exact word carefully and correct it.`);
+        const match = sentence.match(issue.pattern);
+        pushIssue(`${sentenceReference(entry, match?.[0] || issue.hint)} may have a spelling problem. Check that exact word carefully and correct it.`);
         break;
       }
     }
@@ -6324,21 +6362,22 @@ function findSpecificSentenceFeedback(sentences = [], { singleParagraphTask = fa
     }
   });
 
-  if (singleParagraphTask && /topic sentence|main idea/.test(rubricFeedbackText) && sentences[0] && wordCount(sentences[0]) < 6) {
-    pushIssue(`${sentenceReference(0, sentences[0])} is too short to clearly introduce the paragraph. Make the main idea more precise there.`);
+  if (singleParagraphTask && /topic sentence|main idea/.test(rubricFeedbackText) && sentenceEntries[0]?.text && wordCount(sentenceEntries[0].text) < 6) {
+    pushIssue(`${sentenceReference(sentenceEntries[0])} is too short to clearly introduce the paragraph. Make the main idea more precise there.`);
   }
 
-  if (singleParagraphTask && /concluding sentence|restates? the main idea|final comment/.test(rubricFeedbackText) && sentences.length) {
-    const finalSentence = sentences[sentences.length - 1];
+  if (singleParagraphTask && /concluding sentence|restates? the main idea|final comment/.test(rubricFeedbackText) && sentenceEntries.length) {
+    const finalEntry = sentenceEntries[sentenceEntries.length - 1];
+    const finalSentence = finalEntry.text;
     if (wordCount(finalSentence) < 7) {
-      pushIssue(`${sentenceReference(sentences.length - 1, finalSentence)} feels too brief to work as a conclusion. Add a clearer final thought there.`);
+      pushIssue(`${sentenceReference(finalEntry)} feels too brief to work as a conclusion. Add a clearer final thought there.`);
     }
   }
 
-  if (processTask && sentences.length) {
-    const missingStepWordSentence = sentences.findIndex((sentence) => !/\bfirst\b|\bnext\b|\bthen\b|\bafter that\b|\bfinally\b|\blast\b/i.test(sentence));
-    if (missingStepWordSentence !== -1 && sentences.length > 1) {
-      pushIssue(`${sentenceReference(missingStepWordSentence, sentences[missingStepWordSentence])} could use a clearer step signal so the reader can follow the order more easily.`);
+  if (processTask && sentenceEntries.length) {
+    const missingStepWordEntry = sentenceEntries.find((entry) => !/\bfirst\b|\bnext\b|\bthen\b|\bafter that\b|\bfinally\b|\blast\b/i.test(entry.text));
+    if (missingStepWordEntry && sentenceEntries.length > 1) {
+      pushIssue(`${sentenceReference(missingStepWordEntry)} could use a clearer step signal so the reader can follow the order more easily.`);
     }
   }
 
@@ -6346,18 +6385,15 @@ function findSpecificSentenceFeedback(sentences = [], { singleParagraphTask = fa
 }
 
 function generateFeedback(assignment, submission) {
-  // Strip out any flagged paste sections from the text used for feedback
   const pasteEvents = (submission.writingEvents || []).filter(e => e.type === "paste" && e.flagged);
-  let text = submission.draftText.trim();
-  for (const paste of pasteEvents) {
-    if (paste.insertedText && text.includes(paste.insertedText)) {
-      text = text.replace(paste.insertedText, "[pasted section removed]");
-    }
-  }
+  const originalText = String(submission.draftText || "").trim();
   const hasFlaggedPaste = pasteEvents.length > 0;
+  const sentenceEntries = buildFeedbackSentenceEntries(originalText, pasteEvents);
+  const nonPastedSentenceEntries = sentenceEntries.filter((entry) => !entry.overlapsPaste);
+  const text = nonPastedSentenceEntries.map((entry) => entry.text).join(" ").trim();
   const words = wordCount(text);
   const paragraphs = splitParagraphs(text);
-  const sentences = splitSentences(text);
+  const sentences = nonPastedSentenceEntries.map((entry) => entry.text);
   const singleParagraphTask = assignmentUsesSingleParagraph(assignment);
   const finalSentence = sentences[sentences.length - 1] || "";
   const processTask = assignment?.assignmentType === "process";
@@ -6376,7 +6412,7 @@ function generateFeedback(assignment, submission) {
   const primaryPool = [];
   const mechanicsFocused = /mechanics|punctuation|spelling|grammar/.test(rubricFeedbackText);
 
-  primaryPool.push(...findSpecificSentenceFeedback(sentences, {
+  primaryPool.push(...findSpecificSentenceFeedback(nonPastedSentenceEntries, {
     singleParagraphTask,
     rubricFeedbackText,
     processTask,
@@ -6419,7 +6455,8 @@ function generateFeedback(assignment, submission) {
 
   const missingEndPunctuationIndex = sentences.findIndex((sentence, index) => index === sentences.length - 1 && !/[.!?]["')\]]?$/.test(sentence));
   if (missingEndPunctuationIndex !== -1) {
-    primaryPool.push(`${sentenceReference(missingEndPunctuationIndex, sentences[missingEndPunctuationIndex])} does not end with clear punctuation. Add the correct end mark and then reread the whole sentence.`);
+    const entry = nonPastedSentenceEntries[missingEndPunctuationIndex];
+    primaryPool.push(`${sentenceReference(entry, sentences[missingEndPunctuationIndex])} does not end with clear punctuation. Add the correct end mark and then reread the whole sentence.`);
   }
 
   if (!/\bbecause\b|\bfor example\b|\bfor instance\b|\bsuch as\b/i.test(text)) {
@@ -6443,11 +6480,9 @@ function generateFeedback(assignment, submission) {
   }
 
   if (mechanicsFocused) {
-    const shortFragments = sentences
-      .map((sentence, index) => ({ sentence, index }))
-      .find(({ sentence }) => wordCount(sentence) > 0 && wordCount(sentence) < 4);
+    const shortFragments = nonPastedSentenceEntries.find(({ text: sentence }) => wordCount(sentence) > 0 && wordCount(sentence) < 4);
     if (shortFragments) {
-      primaryPool.push(`${sentenceReference(shortFragments.index, shortFragments.sentence)} is very short. Check whether it is a complete sentence with both a subject and a verb.`);
+      primaryPool.push(`${sentenceReference(shortFragments, shortFragments.text)} is very short. Check whether it is a complete sentence with both a subject and a verb.`);
     }
   }
 
