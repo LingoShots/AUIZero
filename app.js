@@ -6306,56 +6306,60 @@ function sentenceReference(entry, snippet = "") {
 
 function findSpecificSentenceFeedback(sentenceEntries = [], { singleParagraphTask = false, rubricFeedbackText = "", processTask = false } = {}) {
   const specifics = [];
+  const seenIssueKeys = new Set();
 
-  const pushIssue = (message) => {
-    if (message) specifics.push(message);
+  const pushIssue = (message, issueKey = message) => {
+    if (!message || seenIssueKeys.has(issueKey)) return;
+    seenIssueKeys.add(issueKey);
+    specifics.push(message);
   };
 
   sentenceEntries.forEach((entry) => {
     const sentence = entry.text;
     const label = sentenceReference(entry);
+    const isVeryShortSentence = wordCount(sentence) > 0 && wordCount(sentence) < 4;
 
     if (/^[a-z]/.test(sentence)) {
-      pushIssue(`${label} starts with a lowercase letter. Fix the first word and then check whether the rest of the sentence also needs grammar or punctuation corrections.`);
+      pushIssue(`${label} starts with a lowercase letter. Fix the first word and then check whether the rest of the sentence also needs grammar or punctuation corrections.`, `lowercase-start:${entry.lineNumber}`);
     }
 
     const lowercaseIMatch = sentence.match(/\bi(?:\s+\w+){0,2}/);
     if (lowercaseIMatch) {
-      pushIssue(`${sentenceReference(entry, lowercaseIMatch[0])} uses "i" in lowercase. Check that exact phrase and correct the capitalization.`);
+      pushIssue(`${sentenceReference(entry, lowercaseIMatch[0])} uses "i" in lowercase. Check that exact phrase and correct the capitalization.`, `lowercase-i:${entry.lineNumber}`);
     }
 
     const repeatedWordMatch = sentence.match(/\b([a-z']+)\s+\1\b/i);
     if (repeatedWordMatch) {
-      pushIssue(`${sentenceReference(entry, repeatedWordMatch[0])} repeats a word. Remove the repetition and make sure the sentence still sounds natural.`);
+      pushIssue(`${sentenceReference(entry, repeatedWordMatch[0])} repeats a word. Remove the repetition and make sure the sentence still sounds natural.`, `repeat-word:${entry.lineNumber}`);
     }
 
     const weakTransitionMatch = sentence.match(/\bto conclusion\b|\bin other hand\b|\bon other hand\b|\bin the another hand\b/i);
     if (weakTransitionMatch) {
-      pushIssue(`${sentenceReference(entry, weakTransitionMatch[0])} uses a transition phrase that does not sound correct. Recheck that phrase and the punctuation around it.`);
+      pushIssue(`${sentenceReference(entry, weakTransitionMatch[0])} uses a transition phrase that does not sound correct. Recheck that phrase and the punctuation around it.`, `weak-transition:${entry.lineNumber}`);
     }
 
     if (wordCount(sentence) > 28) {
-      pushIssue(`${label} is very long. Break it into two clearer sentences and check where the punctuation should go.`);
+      pushIssue(`${label} is very long. Break it into two clearer sentences and check where the punctuation should go.`, `long-sentence:${entry.lineNumber}`);
     }
 
     if (wordCount(sentence) > 20 && (sentence.match(/,/g) || []).length >= 2) {
-      pushIssue(`${label} has several commas and may be joining too many ideas together. Check whether one comma should become a full stop instead.`);
+      pushIssue(`${label} has several commas and may be joining too many ideas together. Check whether one comma should become a full stop instead.`, `comma-heavy:${entry.lineNumber}`);
     }
 
-    if (wordCount(sentence) > 0 && wordCount(sentence) < 4 && /mechanics|punctuation|spelling|grammar/.test(rubricFeedbackText)) {
-      pushIssue(`${label} is very short. Check whether it is a complete sentence with both a subject and a verb.`);
+    if (isVeryShortSentence && /mechanics|punctuation|spelling|grammar/.test(rubricFeedbackText)) {
+      pushIssue(`${label} is very short. Check whether it is a complete sentence with both a subject and a verb.`, `short-sentence:${entry.lineNumber}`);
     }
 
     for (const issue of SPECIFIC_FEEDBACK_SPELLING_PATTERNS) {
       if (issue.pattern.test(sentence)) {
         const match = sentence.match(issue.pattern);
-        pushIssue(`${sentenceReference(entry, match?.[0] || issue.hint)} may have a spelling problem. Check that exact word carefully and correct it.`);
+        pushIssue(`${sentenceReference(entry, match?.[0] || issue.hint)} may have a spelling problem. Check that exact word carefully and correct it.`, `spelling:${entry.lineNumber}`);
         break;
       }
     }
 
     if (/[a-z][.!?][A-Z]/.test(sentence.replace(/\s+/g, ""))) {
-      pushIssue(`${label} may be missing a space after punctuation. Check the place where one sentence seems to run straight into the next one.`);
+      pushIssue(`${label} may be missing a space after punctuation. Check the place where one sentence seems to run straight into the next one.`, `missing-space:${entry.lineNumber}`);
     }
   });
 
@@ -6366,8 +6370,8 @@ function findSpecificSentenceFeedback(sentenceEntries = [], { singleParagraphTas
   if (singleParagraphTask && /concluding sentence|restates? the main idea|final comment/.test(rubricFeedbackText) && sentenceEntries.length) {
     const finalEntry = sentenceEntries[sentenceEntries.length - 1];
     const finalSentence = finalEntry.text;
-    if (wordCount(finalSentence) < 7) {
-      pushIssue(`${sentenceReference(finalEntry)} feels too brief to work as a conclusion. Add a clearer final thought there.`);
+    if (wordCount(finalSentence) < 7 && wordCount(finalSentence) >= 4) {
+      pushIssue(`${sentenceReference(finalEntry)} feels too brief to work as a conclusion. Add a clearer final thought there.`, `weak-conclusion:${finalEntry.lineNumber}`);
     }
   }
 
@@ -6408,6 +6412,7 @@ function generateFeedback(assignment, submission) {
   // Primary checks — triggered by what's actually in the draft
   const primaryPool = [];
   const mechanicsFocused = /mechanics|punctuation|spelling|grammar/.test(rubricFeedbackText);
+  const veryShortResponse = sentences.length <= 2 || words < Math.max(80, Number(assignment.wordCountMin || 0) * 0.4);
 
   primaryPool.push(...findSpecificSentenceFeedback(nonPastedSentenceEntries, {
     singleParagraphTask,
@@ -6513,6 +6518,19 @@ function generateFeedback(assignment, submission) {
   };
   const freshPrimary = dedupeFeedbackList(primaryPool);
   const freshSecondary = dedupeFeedbackList(secondaryPool);
+
+  if (veryShortResponse) {
+    const shortDraftPrompts = dedupeFeedbackList([
+      essayTask
+        ? "Your draft is still too short to show a full essay structure. Add more writing before you ask for another detailed check."
+        : "Your draft is still very short. Add at least one or two more complete sentences before your next feedback check.",
+      singleParagraphTask
+        ? "Focus first on finishing the paragraph: a clear topic sentence, supporting detail, and a stronger final sentence."
+        : "Focus first on finishing the structure of the piece before worrying about smaller grammar details.",
+    ]);
+    const targeted = freshPrimary.slice(0, 2);
+    return [...targeted, ...shortDraftPrompts].slice(0, 4);
+  }
 
   const combined = [...freshPrimary, ...freshSecondary];
 
