@@ -1,4 +1,14 @@
-(function initDeadlineUtils(global) {
+(function initDeadlineUtils(global, factory) {
+  const utils = factory();
+  if (global) {
+    global.DeadlineUtils = utils;
+  }
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = utils;
+  }
+})(
+  typeof window !== "undefined" ? window : globalThis,
+  function deadlineUtilsFactory() {
   function getDeadlineDatePart(value) {
     return value ? String(value).slice(0, 10) : "";
   }
@@ -28,10 +38,11 @@
     }).join("");
   }
 
-  global.DeadlineUtils = {
+  return {
     getDeadlineDatePart,
     getDeadlineTimePart,
     combineDeadlineParts,
     buildDeadlineTimeOptions,
   };
-})(window);
+  }
+);
