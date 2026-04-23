@@ -2006,6 +2006,7 @@ function bindEvents() {
   appEl.addEventListener("click", handleClick);
   appEl.addEventListener("change", handleChange);
   appEl.addEventListener("input", handleInput);
+  appEl.addEventListener("scroll", handleScroll, true);
   appEl.addEventListener("paste", handlePaste, true);
   appEl.addEventListener("keydown", handleKeydown);
 }
@@ -2015,6 +2016,17 @@ function handleKeydown(event) {
     event.preventDefault();
     const btn = document.querySelector("[data-action='send-chat-message']");
     if (btn && !btn.disabled) btn.click();
+  }
+}
+
+function handleScroll(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const gutterId = target.dataset.lineGutter;
+  if (!gutterId) return;
+  const gutter = document.getElementById(gutterId);
+  if (gutter) {
+    gutter.scrollTop = target.scrollTop;
   }
 }
 
@@ -3531,6 +3543,7 @@ function handleInput(event) {
   if (target.id === "draft-editor") {
     updateDraftSubmission(target.value);
     updateDraftMeters();
+    refreshLineNumberGutterForElement(target);
     scheduleAutoSave();
     return;
   }
@@ -3545,6 +3558,7 @@ function handleInput(event) {
     submission.updatedAt = new Date().toISOString();
     persistState();
     scheduleSubmissionSync();
+    refreshLineNumberGutterForElement(target);
     updateFinalMeters();
     return;
   }
@@ -3646,6 +3660,10 @@ function render() {
       }
     });
   }
+
+  window.requestAnimationFrame(() => {
+    refreshAllLineNumberGutters();
+  });
 
   syncTeacherReviewPolling();
 }
@@ -4742,7 +4760,10 @@ function renderTeacherGrading(assignment, submission) {
 
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
-            <div id="student-text-annotate" onmouseup="captureAnnotationSelection()" onkeyup="captureAnnotationSelection()" ontouchend="captureAnnotationSelection()" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:320px;max-height:min(78vh,900px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+            <div class="editor-with-lines review-editor-with-lines">
+              <div class="line-gutter" id="student-text-annotate-gutter" aria-hidden="true"></div>
+              <div id="student-text-annotate" data-line-gutter="student-text-annotate-gutter" onmouseup="captureAnnotationSelection()" onkeyup="captureAnnotationSelection()" ontouchend="captureAnnotationSelection()" style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.85;white-space:pre-wrap;word-break:break-word;min-height:320px;max-height:min(78vh,900px);overflow-y:auto;cursor:text;">${renderAnnotatedText(submission)}</div>
+            </div>
           </div>
 
           <div style="margin-bottom:16px;">
@@ -5176,7 +5197,10 @@ function renderStudentDraftStep(assignment, submission) {
         <button class="button-ghost" data-action="scroll-editor-top" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
         <button class="button-ghost" data-action="scroll-editor-bottom" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
       </div>
-      <textarea id="draft-editor" class="draft-editor" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
+      <div class="editor-with-lines">
+        <div class="line-gutter" id="draft-editor-gutter" aria-hidden="true"></div>
+        <textarea id="draft-editor" class="draft-editor" data-line-gutter="draft-editor-gutter" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
+      </div>
       <div class="pill-row">
         <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
         <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
@@ -5307,7 +5331,10 @@ function renderStudentFinalStep(assignment, submission) {
         <button class="button-ghost" data-action="scroll-editor-top" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
         <button class="button-ghost" data-action="scroll-editor-bottom" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
       </div>
-      <textarea id="final-editor" class="final-editor" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
+      <div class="editor-with-lines">
+        <div class="line-gutter" id="final-editor-gutter" aria-hidden="true"></div>
+        <textarea id="final-editor" class="final-editor" data-line-gutter="final-editor-gutter" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
+      </div>
       <div class="pill-row">
         <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
         <span class="pill">Status: ${escapeHtml(titleCase(submission.status))}</span>
@@ -6521,20 +6548,13 @@ function buildDraftLinesWithPasteMarkers(submission) {
       start: Number(event.start || 0),
       end: Number(event.end ?? event.start ?? 0) + String(event.insertedText || "").length,
     }));
-
-  let cursor = 0;
-  return text.split("\n").map((lineText, index) => {
-    const lineLength = lineText.length;
-    const start = cursor;
-    const end = start + lineLength;
-    const pasted = flaggedRanges.some((range) => start < range.end && end > range.start);
-    cursor = end + 1;
-    return {
-      number: index + 1,
-      text: lineText,
-      pasted,
-    };
-  });
+  const editor = document.getElementById("draft-editor");
+  const metrics = getElementLineWrapMetrics(editor);
+  return buildWrappedLineEntries(text, metrics).map((entry) => ({
+    number: entry.number,
+    text: entry.text,
+    pasted: flaggedRanges.some((range) => entry.start < range.end && entry.end > range.start),
+  }));
 }
 
 function buildAiIdeaRequest(assignment, submission) {
@@ -6825,7 +6845,11 @@ function sentenceExcerpt(sentence = "", maxLength = 48) {
 }
 
 function getFeedbackLineNumber(text = "", startIndex = 0) {
-  return String(text || "").slice(0, Math.max(0, startIndex)).split("\n").length;
+  const editor = document.getElementById("draft-editor");
+  const metrics = getElementLineWrapMetrics(editor);
+  const entries = buildWrappedLineEntries(text, metrics);
+  const matchingEntry = entries.find((entry) => startIndex >= entry.start && startIndex <= entry.end);
+  return matchingEntry?.number || 1;
 }
 
 function buildFeedbackSentenceEntries(text = "", pasteEvents = []) {
@@ -8345,6 +8369,166 @@ function splitLines(text) {
 
 function splitParagraphs(text) {
   return String(text || "").split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+}
+
+let lineMeasureCanvas = null;
+
+function getLineMeasureContext() {
+  if (!lineMeasureCanvas) {
+    lineMeasureCanvas = document.createElement("canvas");
+  }
+  return lineMeasureCanvas.getContext("2d");
+}
+
+function getElementLineWrapMetrics(element) {
+  if (!element) return null;
+  const style = window.getComputedStyle(element);
+  const fontSize = parseFloat(style.fontSize || "16") || 16;
+  const lineHeight = parseFloat(style.lineHeight) || (fontSize * 1.65);
+  const paddingLeft = parseFloat(style.paddingLeft || "0") || 0;
+  const paddingRight = parseFloat(style.paddingRight || "0") || 0;
+  const availableWidth = Math.max(80, element.clientWidth - paddingLeft - paddingRight);
+  return {
+    font: style.font || `${style.fontWeight || "400"} ${fontSize}px ${style.fontFamily || "sans-serif"}`,
+    lineHeight,
+    width: availableWidth,
+  };
+}
+
+function splitTokenToFitWidth(token, ctx, maxWidth) {
+  const pieces = [];
+  let current = "";
+  for (const char of token) {
+    const candidate = current + char;
+    if (current && ctx.measureText(candidate).width > maxWidth) {
+      pieces.push(current);
+      current = char;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) {
+    pieces.push(current);
+  }
+  return pieces.length ? pieces : [token];
+}
+
+function buildWrappedLineEntries(text = "", metrics) {
+  const value = String(text || "");
+  if (!metrics) {
+    return [{ number: 1, text: value, start: 0, end: value.length }];
+  }
+
+  const ctx = getLineMeasureContext();
+  ctx.font = metrics.font;
+
+  const entries = [];
+  let visibleNumber = 1;
+  let cursor = 0;
+  const logicalLines = value.split("\n");
+
+  logicalLines.forEach((logicalLine, logicalIndex) => {
+    if (!logicalLine.length) {
+      entries.push({ number: visibleNumber++, text: "", start: cursor, end: cursor });
+      cursor += 1;
+      return;
+    }
+
+    const tokens = logicalLine.match(/\S+\s*|\s+/g) || [logicalLine];
+    let currentText = "";
+    let currentStart = cursor;
+    let currentEnd = cursor;
+
+    const pushCurrent = () => {
+      entries.push({
+        number: visibleNumber++,
+        text: currentText.replace(/\s+$/g, ""),
+        start: currentStart,
+        end: currentEnd,
+      });
+    };
+
+    tokens.forEach((token) => {
+      const tokenStart = cursor;
+      cursor += token.length;
+
+      if (!currentText && /^\s+$/.test(token)) {
+        currentStart = cursor;
+        currentEnd = cursor;
+        return;
+      }
+
+      const candidate = `${currentText}${token}`;
+      if (currentText && ctx.measureText(candidate).width > metrics.width) {
+        pushCurrent();
+        currentText = "";
+        currentStart = tokenStart + (token.match(/^\s+/)?.[0]?.length || 0);
+        currentEnd = currentStart;
+      }
+
+      if (!currentText && ctx.measureText(token).width > metrics.width) {
+        const tokenPieces = splitTokenToFitWidth(token.trimStart(), ctx, metrics.width);
+        tokenPieces.forEach((piece, pieceIndex) => {
+          const pieceStart = pieceIndex === 0 ? currentStart : currentEnd;
+          const pieceEnd = pieceStart + piece.length;
+          entries.push({
+            number: visibleNumber++,
+            text: piece,
+            start: pieceStart,
+            end: pieceEnd,
+          });
+          currentEnd = pieceEnd;
+        });
+        currentText = "";
+        currentStart = currentEnd;
+        return;
+      }
+
+      currentText += currentText ? token : token.trimStart();
+      if (!currentText.trim()) {
+        currentStart = cursor;
+        currentEnd = cursor;
+      } else {
+        currentEnd = tokenStart + token.length;
+      }
+    });
+
+    if (currentText || !entries.length) {
+      pushCurrent();
+    }
+
+    if (logicalIndex < logicalLines.length - 1) {
+      cursor += 1;
+    }
+  });
+
+  return entries.length ? entries : [{ number: 1, text: "", start: 0, end: 0 }];
+}
+
+function renderLineNumberGutter(entries = []) {
+  return safeArray(entries).map((entry) => {
+    const label = entry.number % 5 === 0 || entry.number === 1 ? String(entry.number) : "";
+    return `<div class="line-gutter-row">${escapeHtml(label)}</div>`;
+  }).join("");
+}
+
+function refreshLineNumberGutterForElement(element) {
+  if (!element) return;
+  const gutterId = element.dataset.lineGutter;
+  if (!gutterId) return;
+  const gutter = document.getElementById(gutterId);
+  if (!gutter) return;
+  const text = element.value ?? element.textContent ?? "";
+  const metrics = getElementLineWrapMetrics(element);
+  const entries = buildWrappedLineEntries(text, metrics);
+  gutter.innerHTML = renderLineNumberGutter(entries);
+  gutter.scrollTop = element.scrollTop;
+}
+
+function refreshAllLineNumberGutters() {
+  document.querySelectorAll("[data-line-gutter]").forEach((element) => {
+    refreshLineNumberGutterForElement(element);
+  });
 }
 
 function splitSentences(text) {
