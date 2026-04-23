@@ -1543,6 +1543,7 @@ function resetAppShellState() {
   ui.notice = "";
 }
 async function bootApp(profile) {
+  state = loadState();
   ui.teacherDraft = createBlankTeacherDraft();
   currentProfile = profile;
   ui.role = profile.role;
@@ -1814,9 +1815,15 @@ async function loadTeacherSubmissionsForAssignments(assignmentIds) {
 
 async function loadStudentSubmissionForAssignment(assignmentId) {
   if (!assignmentId) return null;
+  const localSubmission = state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === ui.activeUserId) || null;
   try {
     const result = await Auth.apiFetch(`/api/assignments/${assignmentId}/my-submission`);
-    if (result?.error || !result?.submission) return null;
+    if (result?.error || !result?.submission) {
+      if (result?.error) {
+        ui.notice = "We couldn't refresh your work from the server just now. Showing your saved device copy.";
+      }
+      return localSubmission;
+    }
     const mapped = mapServerSubmission(result.submission);
     const index = state.submissions.findIndex((submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId);
     if (index >= 0) {
@@ -1828,7 +1835,8 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
     return index >= 0 ? state.submissions[index] : mapped;
   } catch (error) {
     console.error("Could not load student submission:", error.message, error);
-    return null;
+    ui.notice = "We couldn't refresh your work from the server just now. Showing your saved device copy.";
+    return localSubmission;
   }
 }
 
@@ -5459,6 +5467,14 @@ function handleSubmission() {
   syncSubmissionToServer(submission)
   .then((result) => {
     console.log("Sync result:", result);
+    if (!result) {
+      ui.notice = "We couldn't send your work to the teacher yet. Your writing is still saved on this device.";
+      render();
+      window.requestAnimationFrame(() => {
+        document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+      return;
+    }
     ui.notice = "";
     render();
     window.requestAnimationFrame(() => {
@@ -5467,7 +5483,7 @@ function handleSubmission() {
   })
   .catch(e => {
     console.error("Submit sync failed:", e);
-    ui.notice = "Submitted locally but could not reach server. Please try again.";
+    ui.notice = "We couldn't send your work to the teacher yet. Your writing is still saved on this device.";
     render();
     window.requestAnimationFrame(() => {
       document.getElementById("submitted-confirmation")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -7499,9 +7515,13 @@ async function syncSubmissionToServer(submission) {
   if (!submission?.assignmentId || currentProfile?.role !== "student") return;
   try {
     const existing = await Auth.apiFetch(`/api/assignments/${submission.assignmentId}/my-submission`);
-    if (existing.error) return;
+    if (existing?.error) {
+      throw new Error(existing.error);
+    }
     const serverId = existing.submission?.id;
-    if (!serverId) return;
+    if (!serverId) {
+      throw new Error("Submission record was not created on the server.");
+    }
     const payload = buildSubmissionServerPayload(submission);
     const result = await Auth.apiFetch(`/api/submissions/${serverId}`, {
       method: 'PATCH',
@@ -7512,6 +7532,16 @@ async function syncSubmissionToServer(submission) {
     }
     // Update local submission ID to match server
     submission.id = serverId;
+    if (result?.submission) {
+      const mapped = mapServerSubmission(result.submission);
+      const index = state.submissions.findIndex((entry) => entry.assignmentId === mapped.assignmentId && entry.studentId === mapped.studentId);
+      if (index >= 0) {
+        state.submissions[index] = mergeStudentSubmission(state.submissions[index], mapped);
+      } else {
+        state.submissions.push(mapped);
+      }
+      persistState();
+    }
     return true;
   } catch (e) {
     console.error("Could not sync submission to server:", e.message, e);
