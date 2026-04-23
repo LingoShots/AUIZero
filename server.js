@@ -660,6 +660,32 @@ app.delete('/api/classes/:classId/members/:studentId', async (req, res) => {
   }
 });
 
+app.patch('/api/classes/:classId/members/:studentId', async (req, res) => {
+  try {
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
+    if (!ownedClass) return res.status(403).json({ error: 'You can only rename students in your own classes.' });
+    const enrolledStudent = await ensureStudentBelongsToClass(req.params.classId, req.params.studentId);
+    if (!enrolledStudent) return res.status(404).json({ error: 'That student is not enrolled in this class.' });
+
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'A student name is required.' });
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ name })
+      .eq('id', req.params.studentId)
+      .select('id, name, role');
+    if (error) return res.status(400).json({ error: error.message });
+    const profile = Array.isArray(data) ? data[0] : data;
+    if (!profile) return res.status(404).json({ error: 'Student profile not found after rename.' });
+    res.json({ profile });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get classes for a student
 app.get('/api/student/classes', async (req, res) => {
   try {
