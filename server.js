@@ -676,10 +676,11 @@ app.patch('/api/classes/:classId/members/:studentId', async (req, res) => {
       .from('profiles')
       .update({ name })
       .eq('id', req.params.studentId)
-      .select('id, name, role')
-      .single();
+      .select('id, name, role');
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ profile: data });
+    const profile = Array.isArray(data) ? data[0] : data;
+    if (!profile) return res.status(404).json({ error: 'Student profile not found after rename.' });
+    res.json({ profile });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
