@@ -30,7 +30,7 @@
     function buildWrappedLineEntries(text = "", metrics = {}, measureText = (value) => String(value || "").length) {
       const value = String(text || "");
       if (!metrics || !Number.isFinite(Number(metrics.width))) {
-        return [{ number: 1, text: value, start: 0, end: value.length }];
+        return [{ number: 1, logicalNumber: 1, isFirstVisualRow: true, text: value, start: 0, end: value.length }];
       }
 
       const maxWidth = Math.max(1, Number(metrics.width));
