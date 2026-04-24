@@ -8610,7 +8610,7 @@ function buildWrappedLineEntries(text = "", metrics) {
 
 function renderLineNumberGutter(entries = []) {
   return safeArray(entries).map((entry) => {
-    const label = entry.number % 5 === 0 || entry.number === 1 ? String(entry.number) : "";
+    const label = entry.isFirstVisualRow && (entry.logicalNumber % 5 === 0 || entry.logicalNumber === 1) ? String(entry.logicalNumber) : "";
     return `<div class="line-gutter-row">${escapeHtml(label)}</div>`;
   }).join("");
 }
