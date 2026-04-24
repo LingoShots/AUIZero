@@ -4386,7 +4386,7 @@ function renderTopbar() {
       </div>
       <div class="toolbar">
         ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
-       ${ui.role === "teacher" ? `
+       ${ui.role === "teacher" || ui.adminViewingAsTeacher ? `
           <button class="button-ghost" data-action="open-tutorial" style="font-size:0.82rem;">Tutorial</button>
           ${currentClassId ? `<span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>` : ""}
           ${currentClasses.length === 0 ? `
