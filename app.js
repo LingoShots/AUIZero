@@ -123,6 +123,13 @@ const ui = {
   chatInput: "",
   chatLoading: false,
   latestDraftFeedbackByAssignmentId: {},
+  adminView: "teachers",
+  adminSelectedTeacherId: null,
+  adminSelectedClassId: null,
+  adminSelectedClassName: "",
+  adminViewingAsTeacher: false,
+  adminTeachers: [],
+  adminClassDetail: null,
 };
 
 let state = { assignments: [], submissions: [], users: [] };
@@ -1594,7 +1601,13 @@ async function bootApp(profile) {
   // Auto-join class if arriving via invite link
   try { await Auth.joinClassIfInvited(); } catch(e) { console.warn("Join class skipped:", e.message); }
 
-  if (profile.role === 'teacher') {
+  if (profile.role === 'admin' && !ui.adminViewingAsTeacher) {
+    await loadAdminData();
+    render();
+    return;
+  }
+
+  if (profile.role === 'teacher' || (profile.role === 'admin' && ui.adminViewingAsTeacher)) {
     const data = await Auth.apiFetch('/api/classes');
     currentClasses = data.classes || [];
     currentClassId = await resolveTeacherStartingClass(profile, currentClasses);
@@ -1614,6 +1627,11 @@ async function bootApp(profile) {
     await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
   }
   render();
+}
+
+async function loadAdminData() {
+  const data = await Auth.apiFetch('/api/admin/teachers');
+  ui.adminTeachers = data.teachers || [];
 }
 
 async function loadTeacherClassContext(classId) {
@@ -3810,7 +3828,7 @@ function render() {
     <div class="app-shell">
       ${renderTopbar()}
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
-      ${ui.role === "teacher" ? renderTeacherWorkspace() : renderStudentWorkspace()}
+      ${ui.role === "admin" && !ui.adminViewingAsTeacher ? renderAdminWorkspace() : ui.role === "teacher" || ui.adminViewingAsTeacher ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
   ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderTutorialModal() + renderDraftFeedbackModal();
 
@@ -4332,6 +4350,7 @@ function renderTopbar() {
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
           `}
         ` : ""}
+        ${ui.adminViewingAsTeacher ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
         <button class="button-ghost" data-action="sign-out">Sign out</button>
       </div>
     </header>
@@ -4349,6 +4368,142 @@ function renderHero() {
         </div>
         <h2>Build the task quickly. Guide the student clearly. Review the real writing process.</h2>
         <p class="subtle">This version keeps the teacher side lighter and turns the student side into a step-by-step path instead of one long page.</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminWorkspace() {
+  if (ui.adminViewingAsTeacher) return renderTeacherWorkspace();
+
+  if (ui.adminView === "class" && ui.adminSelectedClassId) {
+    return renderAdminClassDetail();
+  }
+
+  if (ui.adminView === "teacher" && ui.adminSelectedTeacherId) {
+    return renderAdminTeacherDetail();
+  }
+
+  return renderAdminTeacherList();
+}
+
+function renderAdminTeacherList() {
+  const teachers = ui.adminTeachers || [];
+  return `
+    <section class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <h2 style="margin:0;">Admin — All Teachers</h2>
+        <button class="button-secondary" data-action="admin-view-as-teacher">Switch to my teacher view</button>
+      </div>
+      ${teachers.length === 0
+        ? `<div class="empty-state"><p>No teachers found.</p></div>`
+        : `<div class="assignment-list">
+            ${teachers.map(teacher => `
+              <div class="assignment-card simple-card">
+                <div class="card-top">
+                  <div style="flex:1;">
+                    <h3 style="margin:0 0 4px;">${escapeHtml(teacher.name)}</h3>
+                    <div class="pill-row" style="flex-wrap:wrap;">
+                      <span class="pill">${teacher.classCount} class${teacher.classCount !== 1 ? "es" : ""}</span>
+                      <span class="pill">${teacher.assignmentCount} assignment${teacher.assignmentCount !== 1 ? "s" : ""}</span>
+                      <span class="pill">${teacher.publishedCount} published</span>
+                      <span class="pill">${teacher.studentCount} student${teacher.studentCount !== 1 ? "s" : ""}</span>
+                    </div>
+                  </div>
+                  <button class="button" data-action="admin-select-teacher" data-teacher-id="${teacher.id}">View →</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>`
+      }
+    </section>
+  `;
+}
+
+function renderAdminTeacherDetail() {
+  const teacher = (ui.adminTeachers || []).find(t => t.id === ui.adminSelectedTeacherId);
+  if (!teacher) return `<div class="empty-state"><p>Teacher not found.</p></div>`;
+  return `
+    <section class="panel">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+        <button class="button-ghost" data-action="admin-back-to-teachers" style="font-size:0.85rem;">← All teachers</button>
+        <span style="color:var(--muted);">/</span>
+        <span style="font-weight:600;">${escapeHtml(teacher.name)}</span>
+      </div>
+      ${(teacher.classes || []).length === 0
+        ? `<div class="empty-state"><p>This teacher has no classes yet.</p></div>`
+        : `<div class="assignment-list">
+            ${(teacher.classes || []).map(cls => `
+              <div class="assignment-card simple-card">
+                <div class="card-top">
+                  <h3 style="margin:0;">${escapeHtml(cls.name)}</h3>
+                  <button class="button" data-action="admin-select-class" data-class-id="${cls.id}" data-teacher-id="${teacher.id}">View →</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>`
+      }
+    </section>
+  `;
+}
+
+function renderAdminClassDetail() {
+  const detail = ui.adminClassDetail;
+  if (!detail) return `<div class="empty-state"><p>Loading...</p></div>`;
+  const teacher = (ui.adminTeachers || []).find(t => t.id === ui.adminSelectedTeacherId);
+  return `
+    <section class="panel">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+        <button class="button-ghost" data-action="admin-back-to-teachers" style="font-size:0.85rem;">← All teachers</button>
+        <span style="color:var(--muted);">/</span>
+        <button class="button-ghost" data-action="admin-back-to-teacher" style="font-size:0.85rem;">${escapeHtml(teacher?.name || "Teacher")}</button>
+        <span style="color:var(--muted);">/</span>
+        <span style="font-weight:600;">${escapeHtml(ui.adminSelectedClassName || "Class")}</span>
+      </div>
+
+      <div style="margin-bottom:24px;">
+        <p class="mini-label" style="margin-bottom:10px;">Assignments</p>
+        ${(detail.assignments || []).length === 0
+          ? `<p class="subtle">No assignments yet.</p>`
+          : detail.assignments.map(a => {
+              const subs = (detail.submissions || []).filter(s => s.assignment_id === a.id);
+              const submitted = subs.filter(s => s.status === "submitted").length;
+              const graded = subs.filter(s => s.teacher_review?.savedAt).length;
+              return `
+                <div class="assignment-card simple-card" style="margin-bottom:8px;">
+                  <div class="card-top">
+                    <div style="flex:1;">
+                      <h3 style="margin:0 0 4px;">${escapeHtml(a.title)}</h3>
+                      <div class="pill-row">
+                        <span class="${a.status === "published" ? "pill" : "warning-pill"}">${a.status}</span>
+                        <span class="pill">${submitted} submitted</span>
+                        <span class="pill">${graded} graded</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join("")
+        }
+      </div>
+
+      <div>
+        <p class="mini-label" style="margin-bottom:10px;">Students (${(detail.members || []).length})</p>
+        ${(detail.members || []).length === 0
+          ? `<p class="subtle">No students enrolled.</p>`
+          : detail.members.map(m => {
+              const studentSubs = (detail.submissions || []).filter(s => s.student_id === m.id);
+              const submitted = studentSubs.filter(s => s.status === "submitted").length;
+              return `
+                <div class="submission-card simple-card" style="margin-bottom:6px;">
+                  <div class="card-top">
+                    <h3 style="margin:0;">${escapeHtml(m.name)}</h3>
+                    <span class="pill">${submitted} submission${submitted !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+              `;
+            }).join("")
+        }
       </div>
     </section>
   `;
