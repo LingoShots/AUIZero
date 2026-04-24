@@ -1001,7 +1001,7 @@ button.rubric-level-cell:hover {
 }
 
 .line-gutter-row {
-  min-height: calc(1em * 1.65);
+  min-height: calc(1rem * 1.65);
 }
 
 .editor-with-lines .draft-editor,
