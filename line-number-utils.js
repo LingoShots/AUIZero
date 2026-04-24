@@ -36,14 +36,16 @@
       const maxWidth = Math.max(1, Number(metrics.width));
       const entries = [];
       let visibleNumber = 1;
+      let logicalNumber = 0;
       let cursor = 0;
       const logicalLines = value.split("\n");
 
       logicalLines.forEach((logicalLine, logicalIndex) => {
         const isLastLogicalLine = logicalIndex === logicalLines.length - 1;
+        logicalNumber += 1;
         if (!logicalLine.length) {
           if (!isLastLogicalLine || value.length === 0) {
-            entries.push({ number: visibleNumber++, text: "", start: cursor, end: cursor });
+            entries.push({ number: visibleNumber++, logicalNumber, isFirstVisualRow: true, text: "", start: cursor, end: cursor });
           }
           cursor += 1;
           return;
@@ -53,14 +55,18 @@
         let currentText = "";
         let currentStart = cursor;
         let currentEnd = cursor;
+        let isFirstVisualRow = true;
 
         const pushCurrent = () => {
           entries.push({
             number: visibleNumber++,
+            logicalNumber,
+            isFirstVisualRow,
             text: currentText.replace(/\s+$/g, ""),
             start: currentStart,
             end: currentEnd,
           });
+          isFirstVisualRow = false;
         };
 
         tokens.forEach((token) => {
@@ -88,10 +94,13 @@
               const pieceEnd = pieceStart + piece.length;
               entries.push({
                 number: visibleNumber++,
+                logicalNumber,
+                isFirstVisualRow,
                 text: piece,
                 start: pieceStart,
                 end: pieceEnd,
               });
+              isFirstVisualRow = false;
               currentEnd = pieceEnd;
             });
             currentText = "";
