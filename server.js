@@ -1161,6 +1161,99 @@ app.patch('/api/submissions/:id', async (req, res) => {
   }
 });
 
+// ── Admin endpoints ──────────────────────────────────────────
+
+async function requireAdmin(req, res) {
+  const user = await getUser(req);
+  if (!user) { res.status(401).json({ error: 'Not authenticated' }); return null; }
+  const profile = await getProfile(user.id);
+  if (profile?.role !== 'admin') { res.status(403).json({ error: 'Admin only' }); return null; }
+  return user;
+}
+
+app.get('/api/admin/teachers', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, created_at')
+      .eq('role', 'teacher')
+      .order('created_at', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    // Get class counts per teacher
+    const { data: classes } = await supabase
+      .from('classes')
+      .select('id, teacher_id, name');
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select('id, class_id, status');
+    const { data: members } = await supabase
+      .from('class_members')
+      .select('class_id, student_id');
+    const teachers = (data || []).map(teacher => {
+      const teacherClasses = (classes || []).filter(c => c.teacher_id === teacher.id);
+      const classIds = teacherClasses.map(c => c.id);
+      const teacherAssignments = (assignments || []).filter(a => classIds.includes(a.class_id));
+      const teacherStudents = new Set((members || []).filter(m => classIds.includes(m.class_id)).map(m => m.student_id));
+      return {
+        ...teacher,
+        classCount: teacherClasses.length,
+        assignmentCount: teacherAssignments.length,
+        publishedCount: teacherAssignments.filter(a => a.status === 'published').length,
+        studentCount: teacherStudents.size,
+        classes: teacherClasses,
+      };
+    });
+    res.json({ teachers });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/teachers/:teacherId/classes', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const { data: classes, error } = await supabase
+      .from('classes')
+      .select('*, class_members(student_id, profiles(id, name))')
+      .eq('teacher_id', req.params.teacherId)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ classes });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/classes/:classId/detail', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const [assignData, memberData] = await Promise.all([
+      supabase.from('assignments').select('*').eq('class_id', req.params.classId).order('created_at', { ascending: false }),
+      supabase.from('class_members').select('student_id, profiles(id, name)').eq('class_id', req.params.classId)
+    ]);
+    if (assignData.error) return res.status(400).json({ error: assignData.error.message });
+    const assignments = assignData.data || [];
+    const members = (memberData.data || []).map(m => m.profiles);
+    // Get submissions for all assignments in this class
+    const assignmentIds = assignments.map(a => a.id);
+    let submissions = [];
+    if (assignmentIds.length) {
+      const { data: subs } = await supabase
+        .from('submissions')
+        .select('*, profiles(id, name)')
+        .in('assignment_id', assignmentIds);
+      submissions = subs || [];
+    }
+    res.json({ assignments, members, submissions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
