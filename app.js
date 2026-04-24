@@ -1656,7 +1656,8 @@ async function loadTeacherClassContext(classId) {
     wordCountMin: a.word_count_min || 250,
     wordCountMax: a.word_count_max || 400,
     feedbackRequestLimit: a.feedback_request_limit || 2,
-    chatTimeLimit: a.chat_time_limit || 0,
+    chatTimeLimit: Math.max(0, Number(a.chat_time_limit || 0)),
+    disableChatbot: Boolean(a.disable_chatbot || false),
     studentFocus: a.student_focus || [],
     rubric: a.rubric || [],
     deadline: a.deadline || '',
@@ -1717,7 +1718,8 @@ async function loadStudentAssignmentsForCurrentClass() {
         wordCountMin: a.word_count_min || 250,
         wordCountMax: a.word_count_max || 400,
         feedbackRequestLimit: a.feedback_request_limit || 2,
-        chatTimeLimit: a.chat_time_limit || 0,
+        chatTimeLimit: Math.max(0, Number(a.chat_time_limit || 0)),
+        disableChatbot: Boolean(a.disable_chatbot || false),
         studentFocus: a.student_focus || [],
         rubric: a.rubric || [],
         deadline: a.deadline || '',
@@ -3707,7 +3709,8 @@ function handleInput(event) {
   if (target.id === "draft-editor") {
     updateDraftSubmission(target.value);
     updateDraftMeters();
-    refreshLineNumberGutterForElement(target);
+    // Use setTimeout to ensure pasted content is in the DOM before measuring
+    setTimeout(() => refreshLineNumberGutterForElement(target), 0);
     scheduleAutoSave();
     return;
   }
@@ -3722,7 +3725,7 @@ function handleInput(event) {
     submission.updatedAt = new Date().toISOString();
     persistState();
     scheduleSubmissionSync();
-    refreshLineNumberGutterForElement(target);
+    setTimeout(() => refreshLineNumberGutterForElement(target), 0);
     scheduleAutoSave();
     updateFinalMeters();
     return;
