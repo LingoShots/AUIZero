@@ -4673,28 +4673,6 @@ function renderAdminClassDetail() {
   `;
 }
 
-      <div>
-        <p class="mini-label" style="margin-bottom:10px;">Students (${(detail.members || []).length})</p>
-        ${(detail.members || []).length === 0
-          ? `<p class="subtle">No students enrolled.</p>`
-          : detail.members.map(m => {
-              const studentSubs = (detail.submissions || []).filter(s => s.student_id === m.id);
-              const submitted = studentSubs.filter(s => s.status === "submitted").length;
-              return `
-                <div class="submission-card simple-card" style="margin-bottom:6px;">
-                  <div class="card-top">
-                    <h3 style="margin:0;">${escapeHtml(m.name)}</h3>
-                    <span class="pill">${submitted} submission${submitted !== 1 ? "s" : ""}</span>
-                  </div>
-                </div>
-              `;
-            }).join("")
-        }
-      </div>
-    </section>
-  `;
-}
-
 function renderTeacherWorkspace() {
   const assignments = state.assignments;
   const classRoster = currentClassMembers.filter((member) => member?.id !== currentProfile?.id);
