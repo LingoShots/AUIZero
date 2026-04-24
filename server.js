@@ -1177,8 +1177,8 @@ app.get('/api/admin/teachers', async (req, res) => {
     if (!user) return;
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, name, created_at')
-      .eq('role', 'teacher')
+      .select('id, name, role, created_at')
+      .in('role', ['teacher', 'admin'])
       .order('created_at', { ascending: false });
     if (error) return res.status(400).json({ error: error.message });
     // Get class counts per teacher
