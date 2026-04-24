@@ -8596,114 +8596,16 @@ function getElementLineWrapMetrics(element) {
   };
 }
 
-function splitTokenToFitWidth(token, ctx, maxWidth) {
-  const pieces = [];
-  let current = "";
-  for (const char of token) {
-    const candidate = current + char;
-    if (current && ctx.measureText(candidate).width > maxWidth) {
-      pieces.push(current);
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current) {
-    pieces.push(current);
-  }
-  return pieces.length ? pieces : [token];
-}
-
 function buildWrappedLineEntries(text = "", metrics) {
-  const value = String(text || "");
-  if (!metrics) {
-    return [{ number: 1, text: value, start: 0, end: value.length }];
-  }
-
   const ctx = getLineMeasureContext();
-  ctx.font = metrics.font;
-
-  const entries = [];
-  let visibleNumber = 1;
-  let cursor = 0;
-  const logicalLines = value.split("\n");
-
-  logicalLines.forEach((logicalLine, logicalIndex) => {
-    if (!logicalLine.length) {
-      entries.push({ number: visibleNumber++, text: "", start: cursor, end: cursor });
-      cursor += 1;
-      return;
-    }
-
-    const tokens = logicalLine.match(/\S+\s*|\s+/g) || [logicalLine];
-    let currentText = "";
-    let currentStart = cursor;
-    let currentEnd = cursor;
-
-    const pushCurrent = () => {
-      entries.push({
-        number: visibleNumber++,
-        text: currentText.replace(/\s+$/g, ""),
-        start: currentStart,
-        end: currentEnd,
-      });
-    };
-
-    tokens.forEach((token) => {
-      const tokenStart = cursor;
-      cursor += token.length;
-
-      if (!currentText && /^\s+$/.test(token)) {
-        currentStart = cursor;
-        currentEnd = cursor;
-        return;
-      }
-
-      const candidate = `${currentText}${token}`;
-      if (currentText && ctx.measureText(candidate).width > metrics.width) {
-        pushCurrent();
-        currentText = "";
-        currentStart = tokenStart + (token.match(/^\s+/)?.[0]?.length || 0);
-        currentEnd = currentStart;
-      }
-
-      if (!currentText && ctx.measureText(token).width > metrics.width) {
-        const tokenPieces = splitTokenToFitWidth(token.trimStart(), ctx, metrics.width);
-        tokenPieces.forEach((piece, pieceIndex) => {
-          const pieceStart = pieceIndex === 0 ? currentStart : currentEnd;
-          const pieceEnd = pieceStart + piece.length;
-          entries.push({
-            number: visibleNumber++,
-            text: piece,
-            start: pieceStart,
-            end: pieceEnd,
-          });
-          currentEnd = pieceEnd;
-        });
-        currentText = "";
-        currentStart = currentEnd;
-        return;
-      }
-
-      currentText += currentText ? token : token.trimStart();
-      if (!currentText.trim()) {
-        currentStart = cursor;
-        currentEnd = cursor;
-      } else {
-        currentEnd = tokenStart + token.length;
-      }
-    });
-
-    if (currentText || !entries.length) {
-      pushCurrent();
-    }
-
-    if (logicalIndex < logicalLines.length - 1) {
-      cursor += 1;
-    }
-  });
-
-  return entries.length ? entries : [{ number: 1, text: "", start: 0, end: 0 }];
+  if (ctx && metrics?.font) {
+    ctx.font = metrics.font;
+  }
+  const measureText = (value) => {
+    if (!ctx) return String(value || "").length;
+    return ctx.measureText(String(value || "")).width;
+  };
+  return LineNumberUtils.buildWrappedLineEntries(text, metrics, measureText);
 }
 
 function renderLineNumberGutter(entries = []) {
