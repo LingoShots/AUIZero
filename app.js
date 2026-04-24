@@ -130,6 +130,7 @@ const ui = {
   adminViewingAsTeacher: false,
   adminTeachers: [],
   adminClassDetail: null,
+  adminSelectedAssignmentId: null,
 };
 
 let state = { assignments: [], submissions: [], users: [] };
@@ -2836,11 +2837,24 @@ if (action === "admin-select-teacher") {
 
   if (action === "admin-back-to-teacher") {
     ui.adminSelectedClassId = null;
+    ui.adminSelectedAssignmentId = null;
     ui.adminView = "teacher";
     render();
     return;
   }
 
+if (action === "admin-select-assignment") {
+    ui.adminSelectedAssignmentId = target.dataset.assignmentId;
+    render();
+    return;
+  }
+
+  if (action === "admin-back-to-class") {
+    ui.adminSelectedAssignmentId = null;
+    render();
+    return;
+  }
+  
   if (action === "admin-select-class") {
     ui.adminSelectedClassId = target.dataset.classId;
     ui.adminSelectedTeacherId = target.dataset.teacherId;
@@ -4501,6 +4515,100 @@ function renderAdminClassDetail() {
   const detail = ui.adminClassDetail;
   if (!detail) return `<div class="empty-state"><p>Loading...</p></div>`;
   const teacher = (ui.adminTeachers || []).find(t => t.id === ui.adminSelectedTeacherId);
+
+  // If an assignment is selected, show the gradebook for that assignment
+  if (ui.adminSelectedAssignmentId) {
+    const assignment = (detail.assignments || []).find(a => a.id === ui.adminSelectedAssignmentId);
+    const subs = (detail.submissions || []).filter(s => s.assignment_id === ui.adminSelectedAssignmentId);
+    const rubric = assignment?.rubric || [];
+
+    return `
+      <section class="panel">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+          <button class="button-ghost" data-action="admin-back-to-teachers" style="font-size:0.85rem;">← All teachers</button>
+          <span style="color:var(--muted);">/</span>
+          <button class="button-ghost" data-action="admin-back-to-teacher" style="font-size:0.85rem;">${escapeHtml(teacher?.name || "Teacher")}</button>
+          <span style="color:var(--muted);">/</span>
+          <button class="button-ghost" data-action="admin-back-to-class" style="font-size:0.85rem;">${escapeHtml(ui.adminSelectedClassName || "Class")}</button>
+          <span style="color:var(--muted);">/</span>
+          <span style="font-weight:600;">${escapeHtml(assignment?.title || "Assignment")}</span>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <p class="subtle">${escapeHtml(assignment?.prompt || "")}</p>
+          <div class="pill-row" style="margin-top:8px;">
+            <span class="${assignment?.status === "published" ? "pill" : "warning-pill"}">${escapeHtml(assignment?.status || "draft")}</span>
+            <span class="pill">${assignment?.word_count_min || 0}–${assignment?.word_count_max || 0} words</span>
+            <span class="pill">${subs.length} submission${subs.length !== 1 ? "s" : ""}</span>
+            ${assignment?.deadline ? `<span class="pill">Due: ${escapeHtml(new Date(assignment.deadline).toLocaleDateString(undefined, {day:"numeric",month:"short"}))}</span>` : ""}
+          </div>
+        </div>
+
+        ${subs.length === 0
+          ? `<div class="empty-state compact-empty"><p>No submissions yet for this assignment.</p></div>`
+          : `<div style="display:grid;gap:10px;">
+              ${(detail.members || []).map(member => {
+                const sub = subs.find(s => s.student_id === member.id);
+                const review = sub?.teacher_review;
+                const rowScores = review?.rowScores || [];
+                const finalScore = review?.finalScore ?? "";
+                const status = sub?.status || "not started";
+                const wordCount = sub?.final_text?.trim()
+                  ? sub.final_text.trim().split(/\s+/).length
+                  : sub?.draft_text?.trim()
+                    ? sub.draft_text.trim().split(/\s+/).length
+                    : 0;
+                const pasteFlags = (sub?.writing_events || []).filter(e => e.flagged).length;
+                const statusColour = status === "submitted" ? "var(--sage)" : status === "not started" ? "var(--muted)" : "var(--accent)";
+
+                return `
+                  <div style="border:1px solid var(--line);border-radius:14px;padding:16px;background:#fff;">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+                      <div>
+                        <strong style="display:block;margin-bottom:4px;">${escapeHtml(member.name)}</strong>
+                        <span style="font-size:0.82rem;color:${statusColour};">${escapeHtml(status)}</span>
+                      </div>
+                      <div style="text-align:right;flex-shrink:0;">
+                        ${finalScore !== "" ? `<div style="font-size:1.4rem;font-weight:800;color:var(--accent-deep);">${escapeHtml(String(finalScore))}</div><div style="font-size:0.75rem;color:var(--muted);">score</div>` : `<div style="font-size:0.85rem;color:var(--muted);">Not graded</div>`}
+                      </div>
+                    </div>
+
+                    ${sub ? `
+                      <div class="pill-row" style="margin-top:10px;">
+                        <span class="pill">${wordCount} words</span>
+                        <span class="pill">${(sub.writing_events || []).length} edits</span>
+                        ${pasteFlags ? `<span class="warning-pill">⚠ ${pasteFlags} paste flag${pasteFlags > 1 ? "s" : ""}</span>` : ""}
+                        ${(sub.feedback_history || []).length ? `<span class="pill">${sub.feedback_history.length} feedback check${sub.feedback_history.length > 1 ? "s" : ""}</span>` : ""}
+                      </div>
+
+                      ${rowScores.length ? `
+                        <div style="margin-top:12px;display:grid;gap:6px;">
+                          ${rowScores.map(row => `
+                            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#f8fbff;font-size:0.84rem;">
+                              <span>${escapeHtml(row.criterionName || "")}</span>
+                              <strong style="white-space:nowrap;">${escapeHtml(row.label || "")} · ${row.points}/${row.maxPoints}</strong>
+                            </div>
+                          `).join("")}
+                        </div>
+                      ` : ""}
+
+                      ${review?.finalNotes ? `
+                        <div style="margin-top:10px;padding:10px 12px;border-left:3px solid var(--accent);background:#f4f8ff;border-radius:0 8px 8px 0;font-size:0.85rem;">
+                          <span class="mini-label" style="display:block;margin-bottom:4px;">Teacher feedback</span>
+                          ${escapeHtml(review.finalNotes)}
+                        </div>
+                      ` : ""}
+                    ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No work started yet.</p>`}
+                  </div>
+                `;
+              }).join("")}
+            </div>`
+        }
+      </section>
+    `;
+  }
+
+  // Default: class overview with assignments and students
   return `
     <section class="panel">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
@@ -4525,10 +4633,35 @@ function renderAdminClassDetail() {
                     <div style="flex:1;">
                       <h3 style="margin:0 0 4px;">${escapeHtml(a.title)}</h3>
                       <div class="pill-row">
-                        <span class="${a.status === "published" ? "pill" : "warning-pill"}">${a.status}</span>
-                        <span class="pill">${submitted} submitted</span>
+                        <span class="${a.status === "published" ? "pill" : "warning-pill"}">${escapeHtml(a.status)}</span>
+                        <span class="pill">${submitted}/${(detail.members || []).length} submitted</span>
                         <span class="pill">${graded} graded</span>
                       </div>
+                    </div>
+                    <button class="button" data-action="admin-select-assignment" data-assignment-id="${a.id}">Gradebook →</button>
+                  </div>
+                </div>
+              `;
+            }).join("")
+        }
+      </div>
+
+      <div>
+        <p class="mini-label" style="margin-bottom:10px;">Students (${(detail.members || []).length})</p>
+        ${(detail.members || []).length === 0
+          ? `<p class="subtle">No students enrolled.</p>`
+          : detail.members.map(m => {
+              const studentSubs = (detail.submissions || []).filter(s => s.student_id === m.id);
+              const submitted = studentSubs.filter(s => s.status === "submitted").length;
+              const graded = studentSubs.filter(s => s.teacher_review?.savedAt).length;
+              const totalScore = studentSubs.reduce((sum, s) => sum + Number(s.teacher_review?.finalScore || 0), 0);
+              return `
+                <div class="submission-card simple-card" style="margin-bottom:6px;">
+                  <div class="card-top">
+                    <h3 style="margin:0;">${escapeHtml(m.name)}</h3>
+                    <div class="pill-row">
+                      <span class="pill">${submitted} submitted</span>
+                      ${graded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${graded} graded · ${totalScore} pts total</span>` : ""}
                     </div>
                   </div>
                 </div>
@@ -4536,6 +4669,9 @@ function renderAdminClassDetail() {
             }).join("")
         }
       </div>
+    </section>
+  `;
+}
 
       <div>
         <p class="mini-label" style="margin-bottom:10px;">Students (${(detail.members || []).length})</p>
