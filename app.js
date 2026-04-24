@@ -2818,6 +2818,56 @@ if (action === "toggle-full-rubric") {
     }
     return;
   }
+
+if (action === "admin-select-teacher") {
+    ui.adminSelectedTeacherId = target.dataset.teacherId;
+    ui.adminView = "teacher";
+    render();
+    return;
+  }
+
+  if (action === "admin-back-to-teachers") {
+    ui.adminSelectedTeacherId = null;
+    ui.adminSelectedClassId = null;
+    ui.adminView = "teachers";
+    render();
+    return;
+  }
+
+  if (action === "admin-back-to-teacher") {
+    ui.adminSelectedClassId = null;
+    ui.adminView = "teacher";
+    render();
+    return;
+  }
+
+  if (action === "admin-select-class") {
+    ui.adminSelectedClassId = target.dataset.classId;
+    ui.adminSelectedTeacherId = target.dataset.teacherId;
+    ui.adminSelectedClassName = target.closest(".assignment-card")?.querySelector("h3")?.textContent || "";
+    ui.adminView = "class";
+    ui.adminClassDetail = null;
+    render();
+    Auth.apiFetch(`/api/admin/classes/${ui.adminSelectedClassId}/detail`).then(data => {
+      ui.adminClassDetail = data;
+      render();
+    });
+    return;
+  }
+
+  if (action === "admin-view-as-teacher") {
+    ui.adminViewingAsTeacher = true;
+    await bootApp(currentProfile);
+    return;
+  }
+
+  if (action === "admin-exit-teacher-view") {
+    ui.adminViewingAsTeacher = false;
+    ui.adminView = "teachers";
+    await loadAdminData();
+    render();
+    return;
+  }
   
 if (action === "sign-out") {
     if (currentProfile?.role === "student") {
