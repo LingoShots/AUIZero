@@ -3058,6 +3058,13 @@ if (action === "select-assignment") {
     if (nextStep === 3) {
       const assignment = getStudentAssignment();
       const submission = getStudentSubmission();
+
+      if (submission && !submission.finalText?.trim() && submission.draftText?.trim()) {
+        submission.finalText = submission.draftText;
+        submission.updatedAt = new Date().toISOString();
+        persistState();
+      }
+      
       const shouldPromptForFeedback = assignment && submission
         ? Number(submission.feedbackHistory.length || 0) < Number(assignment.feedbackRequestLimit || 0)
         : false;
@@ -5498,7 +5505,9 @@ function renderStudentFinalStep(assignment, submission) {
       <div class="pill-row">
         <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
         <span class="pill">Status: ${escapeHtml(titleCase(submission.status))}</span>
+        <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
       </div>
+      <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
       <div class="teacher-ready-card">
         <p class="mini-label">Self-assessment — rate yourself against the rubric</p>
         <p class="subtle" style="margin:4px 0 14px;">Be honest. Your teacher will see your ratings alongside their own assessment.</p>
