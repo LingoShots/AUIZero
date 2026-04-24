@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const deadlineUtils = require("../deadline-utils.js");
 const storageUtils = require("../storage-utils.js");
 const aiAssistUtils = require("../ai-assist-utils.js");
+const lineNumberUtils = require("../line-number-utils.js");
 
 function createMemoryStorage({ failFirstWrite = false } = {}) {
   const store = new Map();
@@ -103,4 +104,31 @@ test("persistStateSnapshot falls back to a smaller backup when quota is exceeded
   const stored = JSON.parse(global.localStorage.getItem("primary"));
   assert.deepEqual(stored.submissions[0].writingEvents, []);
   assert.deepEqual(stored.submissions[0].chatHistory, []);
+});
+
+test("line number utils ignore a trailing newline when numbering visible lines", () => {
+  const entries = lineNumberUtils.buildWrappedLineEntries(
+    "Line one\nLine two\nLine three\nLine four\n",
+    { width: 999 },
+    (value) => String(value || "").length
+  );
+
+  assert.deepEqual(entries.map((entry) => entry.number), [1, 2, 3, 4]);
+});
+
+test("line number utils still count intentional blank lines inside the text", () => {
+  const entries = lineNumberUtils.buildWrappedLineEntries(
+    "Line one\n\nLine two",
+    { width: 999 },
+    (value) => String(value || "").length
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({ number: entry.number, text: entry.text })),
+    [
+      { number: 1, text: "Line one" },
+      { number: 2, text: "" },
+      { number: 3, text: "Line two" },
+    ]
+  );
 });
