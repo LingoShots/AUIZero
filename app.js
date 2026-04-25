@@ -890,11 +890,17 @@ function renderWritingBehaviour(submission) {
   const tooltipText = "Based on keystroke-interval analysis grounded in L2 writing research (inputlog group, Révész et al). Healthy ranges reflect published norms for A2 university ESL writers. This indicator is one data point — always interpret alongside the letter-by-letter playback.";
 
   return `
-    <div style="margin-bottom:16px;padding:14px;border:1px solid ${bandBorder};border-radius:12px;background:${bandBg};">
+    <div style="margin-bottom:16px;padding:14px;border:1px solid ${bandBorder};border-radius:12px;background:${bandBg};position:relative;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <p class="mini-label" style="margin:0;">Writing behaviour</p>
         <span style="font-size:0.82rem;font-weight:700;color:${bandColour};padding:2px 10px;border-radius:20px;border:1px solid ${bandBorder};background:#fff;">${escapeHtml(band)}</span>
-        <span title="${escapeAttribute(tooltipText)}" style="cursor:help;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
+        <span onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
+        <div style="display:none;position:absolute;z-index:100;max-width:320px;margin-top:4px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.10);font-size:0.80rem;line-height:1.6;color:var(--ink);">
+          <p style="margin:0 0 8px;">Scores are based on keystroke-interval analysis grounded in L2 writing research. Healthy ranges reflect published norms for ESL writers at this level.</p>
+          <p style="margin:0 0 4px;font-weight:600;">Key references:</p>
+          <p style="margin:0 0 4px;"><a href="https://www.inputlog.net" target="_blank" style="color:var(--accent);">inputlog.net</a> — Keystroke logging research group</p>
+          <p style="margin:0;">Révész, A., Michel, M., & Lee, M. (2019). Investigating the relationship between L2 writing processes and products. <em>Journal of Second Language Writing.</em></p>
+        </div>
       </div>
       ${indicator("Typing rhythm", burst, 3, 15, "Hesitant", "Unusually fast")}
       ${indicator("Thinking pauses", pauses, 8, 35, "Very few", "Frequent")}
