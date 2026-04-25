@@ -6415,7 +6415,7 @@ function recordKeystrokeInterval() {
   const now = Date.now();
   if (lastKeystrokeAt !== null) {
     const interval = now - lastKeystrokeAt;
-    if (interval >= 300) {
+    if (interval >= 300 && interval <= 120000) {
       keystrokeBuffer.push({ gap: interval, at: now });
     }
   }
