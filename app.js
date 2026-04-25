@@ -815,6 +815,63 @@ function renderRubricMatrixTable(matrixData, options = {}) {
   `;
 }
 
+function fluencyBadgeStyle(value, low, high) {
+  if (value === null || value === undefined) return "background:#f0f0f0;color:#888;";
+  if (value >= low && value <= high) return "background:#eef9f1;color:#1f5c38;border:1px solid #cdece2;";
+  if (value >= low * 0.6 && value <= high * 1.4) return "background:#fff8e8;color:#9a6512;border:1px solid #f0d080;";
+  return "background:#fff1f1;color:#962f2f;border:1px solid #f4c7c7;";
+}
+
+function renderFluencyCard(submission, assignmentTitle = "") {
+  const f = submission?.fluency_summary || submission?.fluencySummary || {};
+  if (!Object.keys(f).length) return `<p class="subtle" style="font-size:0.82rem;">No fluency data yet.</p>`;
+
+  const metrics = [
+    {
+      label: "Mean burst length",
+      value: f.meanBurstLength,
+      unit: "chars",
+      low: 3, high: 15,
+      note: "Characters typed between 2s pauses. Low = hesitant, very high = possible paste"
+    },
+    {
+      label: "Pause frequency",
+      value: f.pauseFrequency,
+      unit: "per 100w",
+      low: 8, high: 35,
+      note: "Pauses over 2s per 100 words. Very low = suspicious, very high = struggling"
+    },
+    {
+      label: "Deletion ratio",
+      value: f.deletionRatio,
+      unit: "",
+      low: 0.05, high: 0.20,
+      note: "Deletions vs insertions. Near zero = possible copy-paste, over 0.3 = lots of revision"
+    },
+    {
+      label: "Sessions",
+      value: f.sessionCount,
+      unit: "",
+      low: 1, high: 4,
+      note: "Distinct writing sessions (30min gap = new session)"
+    },
+  ];
+
+  return `
+    <div style="margin-top:10px;">
+      ${assignmentTitle ? `<p style="font-size:0.78rem;color:var(--muted);margin:0 0 8px;">${escapeHtml(assignmentTitle)}</p>` : ""}
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;">
+        ${metrics.map(m => `
+          <div style="padding:8px 10px;border-radius:10px;${fluencyBadgeStyle(m.value, m.low, m.high)}" title="${escapeHtml(m.note)}">
+            <div style="font-size:0.72rem;margin-bottom:2px;">${escapeHtml(m.label)}</div>
+            <strong style="font-size:1rem;">${m.value !== null && m.value !== undefined ? m.value : "—"}${m.unit ? ` <span style="font-size:0.72rem;font-weight:400;">${m.unit}</span>` : ""}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function levelTheme(label = "") {
   const lower = String(label || "").toLowerCase();
   if (lower.includes("excel")) return { ring: "#23824c", bg: "#eef9f1", text: "#1c663d", badge: "#cdeed7" };
@@ -1444,6 +1501,8 @@ function buildSubmissionServerPayload(submission, overrides = {}) {
     chat_elapsed_ms: Math.max(0, Math.round(Number(submission?.chatElapsedMs || 0))),
     started_at: submission?.startedAt || null,
     submitted_at: submission?.submittedAt || null,
+    keystroke_log: safeArray(submission?.keystrokeLog),
+    fluency_summary: submission?.fluencySummary || {},
     ...overrides,
   };
 }
@@ -1851,6 +1910,8 @@ function mapServerSubmission(serverSubmission) {
     updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
     submittedAt: serverSubmission?.submitted_at || null,
     _studentName: serverSubmission?.profiles?.name || "",
+    keystrokeLog: safeArray(serverSubmission?.keystroke_log),
+    fluencySummary: serverSubmission?.fluency_summary || {},
   };
 }
 
@@ -4613,6 +4674,10 @@ function renderAdminClassDetail() {
                           ${escapeHtml(review.finalNotes)}
                         </div>
                       ` : ""}
+                    <div style="margin-top:12px;">
+                        <span class="mini-label">Writing fluency</span>
+                        ${renderFluencyCard(sub)}
+                      </div>
                     ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No work started yet.</p>`}
                   </div>
                 `;
@@ -4672,13 +4737,21 @@ function renderAdminClassDetail() {
               const totalScore = studentSubs.reduce((sum, s) => sum + Number(s.teacher_review?.finalScore || 0), 0);
               return `
                 <div class="submission-card simple-card" style="margin-bottom:6px;">
-                  <div class="card-top">
-                    <h3 style="margin:0;">${escapeHtml(m.name)}</h3>
+                  <div class="card-top" style="flex-wrap:wrap;gap:10px;">
+                    <h3 style="margin:0;flex:1;">${escapeHtml(m.name)}</h3>
                     <div class="pill-row">
                       <span class="pill">${submitted} submitted</span>
                       ${graded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${graded} graded · ${totalScore} pts total</span>` : ""}
                     </div>
                   </div>
+                  ${studentSubs.length ? `
+                    <div style="margin-top:10px;display:grid;gap:8px;">
+                      ${studentSubs.map(sub => {
+                        const a = (detail.assignments || []).find(a => a.id === sub.assignment_id);
+                        return renderFluencyCard(sub, a?.title || "Assignment");
+                      }).join("")}
+                    </div>
+                  ` : ""}
                 </div>
               `;
             }).join("")
@@ -6267,6 +6340,7 @@ async function handleSubmission() {
     return;
   }
   submission.reflections.improved = improved;
+  submission.fluencySummary = calculateFluencySummary(submission);
   submission.finalText = finalText;
   const previousStatus = submission.status;
   const previousSubmittedAt = submission.submittedAt;
@@ -8681,6 +8755,8 @@ function normalizeSubmission(submission) {
     submittedAt: submission?.submittedAt || null,
     selfAssessment: submission?.selfAssessment || {},
     _studentName: submission?._studentName || "",
+    keystrokeLog: safeArray(submission?.keystrokeLog),
+    fluencySummary: submission?.fluencySummary || {},
   };
 }
 
