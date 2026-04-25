@@ -822,13 +822,30 @@ function fluencyBadgeStyle(value, low, high) {
   return "background:#fff1f1;color:#962f2f;border:1px solid #f4c7c7;";
 }
 
-function renderWritingBehaviour(submission) {
+function renderWritingBehaviour(submission, assignment) {
   const f = submission?.fluencySummary || submission?.fluency_summary || {};
   if (!Object.keys(f).length) return "";
 
   const burst = f.meanBurstLength;
   const pauses = f.pauseFrequency;
   const deletion = f.deletionRatio;
+
+  // CEFR-adjusted healthy ranges based on inputlog group published norms
+  // Lower levels: shorter bursts, more pauses; higher levels: longer bursts, fewer pauses
+  const level = (assignment?.languageLevel || "B1").toUpperCase();
+  const ranges = {
+    "A0": { burst: [2,  8],  pauses: [15, 50], deletion: [0.04, 0.18] },
+    "A1": { burst: [2,  8],  pauses: [15, 50], deletion: [0.04, 0.18] },
+    "A2": { burst: [3,  15], pauses: [8,  35], deletion: [0.05, 0.20] },
+    "B1": { burst: [5,  22], pauses: [6,  28], deletion: [0.05, 0.22] },
+    "B2": { burst: [8,  30], pauses: [4,  22], deletion: [0.06, 0.25] },
+    "C1": { burst: [10, 40], pauses: [3,  18], deletion: [0.06, 0.28] },
+    "C2": { burst: [12, 50], pauses: [2,  15], deletion: [0.06, 0.30] },
+  };
+  const r = ranges[level] || ranges["B1"];
+  const burstRange   = r.burst;
+  const pausesRange  = r.pauses;
+  const deletionRange = r.deletion;
 
   // Score each metric: 2 = green, 1 = amber, 0 = red
   function scoreMetric(value, low, high) {
@@ -839,9 +856,9 @@ function renderWritingBehaviour(submission) {
   }
 
   const scores = [
-    scoreMetric(burst, 3, 15),
-    scoreMetric(pauses, 8, 35),
-    scoreMetric(deletion, 0.05, 0.20),
+    scoreMetric(burst, burstRange[0], burstRange[1]),
+    scoreMetric(pauses, pausesRange[0], pausesRange[1]),
+    scoreMetric(deletion, deletionRange[0], deletionRange[1]),
   ].filter(s => s !== null);
 
   if (!scores.length) return "";
@@ -857,12 +874,12 @@ function renderWritingBehaviour(submission) {
   const bandBorder= avg >= 1.7 ? "#cdece2" : avg >= 1.2 ? "#cde0a0" : avg >= 0.6 ? "#f0d080" : "#f4c7c7";
 
   const explanation = avg >= 1.7
-    ? "Typing rhythm and pause patterns are consistent with independent composition at this level."
+    ? `Typing rhythm and pause patterns are consistent with independent composition at ${level}.`
     : avg >= 1.2
-    ? "Mostly natural writing behaviour with some variation — consistent with this level."
+    ? `Mostly natural writing behaviour with some variation — consistent with ${level}.`
     : avg >= 0.6
-    ? "Some indicators fall outside the expected range for this level — worth reviewing alongside the playback."
-    : "Several indicators are outside the expected range — low deletion rate and/or unusual rhythm. Playback recommended.";
+    ? `Some indicators fall outside the expected range for ${level} — worth reviewing alongside the playback.`
+    : `Several indicators are outside the expected range for ${level} — low deletion rate and/or unusual rhythm. Playback recommended.`;
 
   function indicator(label, value, low, high, leftLabel, rightLabel) {
     const score = scoreMetric(value, low, high);
@@ -902,9 +919,9 @@ function renderWritingBehaviour(submission) {
           <p style="margin:0;">Révész, A., Michel, M., & Lee, M. (2019). Investigating the relationship between L2 writing processes and products. <em>Journal of Second Language Writing.</em></p>
         </div>
       </div>
-      ${indicator("Typing rhythm", burst, 3, 15, "Hesitant", "Unusually fast")}
-      ${indicator("Thinking pauses", pauses, 8, 35, "Very few", "Frequent")}
-      ${indicator("Revision pattern", deletion, 0.05, 0.20, "Minimal edits", "Heavy revision")}
+      ${indicator("Typing rhythm", burst, burstRange[0], burstRange[1], "Hesitant", "Unusually fast")}
+      ${indicator("Thinking pauses", pauses, pausesRange[0], pausesRange[1], "Very few", "Frequent")}
+      ${indicator("Revision pattern", deletion, deletionRange[0], deletionRange[1], "Minimal edits", "Heavy revision")}
       <p style="margin:10px 0 0;font-size:0.80rem;color:${bandColour};line-height:1.5;">${escapeHtml(explanation)}</p>
     </div>
   `;
@@ -5421,7 +5438,7 @@ function renderTeacherGrading(assignment, submission) {
             ` : ""}
           </div>
           
-          ${renderWritingBehaviour(submission)}
+          ${renderWritingBehaviour(submission, assignment)}
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
             <div class="editor-with-lines review-editor-with-lines">
