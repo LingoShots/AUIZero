@@ -822,6 +822,88 @@ function fluencyBadgeStyle(value, low, high) {
   return "background:#fff1f1;color:#962f2f;border:1px solid #f4c7c7;";
 }
 
+function renderWritingBehaviour(submission) {
+  const f = submission?.fluencySummary || submission?.fluency_summary || {};
+  if (!Object.keys(f).length) return "";
+
+  const burst = f.meanBurstLength;
+  const pauses = f.pauseFrequency;
+  const deletion = f.deletionRatio;
+
+  // Score each metric: 2 = green, 1 = amber, 0 = red
+  function scoreMetric(value, low, high) {
+    if (value === null || value === undefined) return null;
+    if (value >= low && value <= high) return 2;
+    if (value >= low * 0.6 && value <= high * 1.4) return 1;
+    return 0;
+  }
+
+  const scores = [
+    scoreMetric(burst, 3, 15),
+    scoreMetric(pauses, 8, 35),
+    scoreMetric(deletion, 0.05, 0.20),
+  ].filter(s => s !== null);
+
+  if (!scores.length) return "";
+
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const band = avg >= 1.7 ? "Natural"
+    : avg >= 1.2 ? "Likely natural"
+    : avg >= 0.6 ? "Uncertain"
+    : "Needs review";
+
+  const bandColour = avg >= 1.7 ? "#1f5c38" : avg >= 1.2 ? "#5a7a2e" : avg >= 0.6 ? "#9a6512" : "#962f2f";
+  const bandBg    = avg >= 1.7 ? "#eef9f1" : avg >= 1.2 ? "#f4f9e8" : avg >= 0.6 ? "#fff8e8" : "#fff1f1";
+  const bandBorder= avg >= 1.7 ? "#cdece2" : avg >= 1.2 ? "#cde0a0" : avg >= 0.6 ? "#f0d080" : "#f4c7c7";
+
+  const explanation = avg >= 1.7
+    ? "Typing rhythm and pause patterns are consistent with independent composition at this level."
+    : avg >= 1.2
+    ? "Mostly natural writing behaviour with some variation — consistent with this level."
+    : avg >= 0.6
+    ? "Some indicators fall outside the expected range for this level — worth reviewing alongside the playback."
+    : "Several indicators are outside the expected range — low deletion rate and/or unusual rhythm. Playback recommended.";
+
+  function indicator(label, value, low, high, leftLabel, rightLabel) {
+    const score = scoreMetric(value, low, high);
+    const pct = value === null || value === undefined ? 50
+      : Math.min(100, Math.max(0, ((value - low * 0.4) / (high * 1.6 - low * 0.4)) * 100));
+    const dotColour = score === 2 ? "#2a7a4f" : score === 1 ? "#c8860a" : "#c24d4d";
+    return `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+          <span style="font-size:0.78rem;color:var(--ink);">${escapeHtml(label)}</span>
+          <span style="font-size:0.74rem;color:var(--muted);">${value !== null && value !== undefined ? value : "—"}</span>
+        </div>
+        <div style="position:relative;height:6px;border-radius:3px;background:#e8e8e4;">
+          <div style="position:absolute;left:${(low * 0.4 / (high * 1.6)) * 100}%;width:${((high - low) / (high * 1.6)) * 100}%;height:100%;background:#d4edda;border-radius:3px;opacity:0.7;"></div>
+          <div style="position:absolute;left:calc(${pct}% - 5px);top:-3px;width:12px;height:12px;border-radius:50%;background:${dotColour};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:2px;">
+          <span style="font-size:0.68rem;color:var(--muted);">${escapeHtml(leftLabel)}</span>
+          <span style="font-size:0.68rem;color:var(--muted);">${escapeHtml(rightLabel)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const tooltipText = "Based on keystroke-interval analysis grounded in L2 writing research (inputlog group, Révész et al). Healthy ranges reflect published norms for A2 university ESL writers. This indicator is one data point — always interpret alongside the letter-by-letter playback.";
+
+  return `
+    <div style="margin-bottom:16px;padding:14px;border:1px solid ${bandBorder};border-radius:12px;background:${bandBg};">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <p class="mini-label" style="margin:0;">Writing behaviour</p>
+        <span style="font-size:0.82rem;font-weight:700;color:${bandColour};padding:2px 10px;border-radius:20px;border:1px solid ${bandBorder};background:#fff;">${escapeHtml(band)}</span>
+        <span title="${escapeAttribute(tooltipText)}" style="cursor:help;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
+      </div>
+      ${indicator("Typing rhythm", burst, 3, 15, "Hesitant", "Unusually fast")}
+      ${indicator("Thinking pauses", pauses, 8, 35, "Very few", "Frequent")}
+      ${indicator("Revision pattern", deletion, 0.05, 0.20, "Minimal edits", "Heavy revision")}
+      <p style="margin:10px 0 0;font-size:0.80rem;color:${bandColour};line-height:1.5;">${escapeHtml(explanation)}</p>
+    </div>
+  `;
+}
+
 function renderFluencyCard(submission, assignmentTitle = "") {
   const f = submission?.fluency_summary || submission?.fluencySummary || {};
   if (!Object.keys(f).length) return `<p class="subtle" style="font-size:0.82rem;">No fluency data yet.</p>`;
@@ -5332,7 +5414,8 @@ function renderTeacherGrading(assignment, submission) {
               <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Deadline has passed, so you can mark this student as late or missing.</p>
             ` : ""}
           </div>
-
+          
+          ${renderWritingBehaviour(submission)}
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
             <div class="editor-with-lines review-editor-with-lines">
