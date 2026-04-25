@@ -815,6 +815,8 @@ const SUBMISSION_ALLOWED_FIELDS = new Set([
   'chat_elapsed_ms',
   'started_at',
   'submitted_at',
+  'keystroke_log',
+  'fluency_summary',
 ]);
 
 function sanitizePayload(payload = {}, allowedFields = new Set()) {
