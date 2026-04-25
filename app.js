@@ -1978,6 +1978,9 @@ function syncTeacherReviewPolling() {
   }, REVIEW_REFRESH_MS);
 }
 
+let keystrokeBuffer = [];
+let lastKeystrokeAt = null;
+let keystrokeFlushTimer = null;
 let autoSaveTimer = null;
 let submissionSyncTimer = null;
 let submissionSyncInFlight = null;
@@ -3913,6 +3916,18 @@ function render() {
 
   window.requestAnimationFrame(() => {
     refreshAllLineNumberGutters();
+  });
+
+  window.requestAnimationFrame(() => {
+    ["draft-editor", "final-editor"].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.keystrokeListenerAttached) return;
+      el.addEventListener("keydown", () => {
+        recordKeystrokeInterval();
+        scheduleKeystrokeFlush();
+      });
+      el.dataset.keystrokeListenerAttached = "true";
+    });
   });
 
   syncTeacherReviewPolling();
@@ -6322,6 +6337,33 @@ async function handleSubmission() {
     });
 }
 
+function recordKeystrokeInterval() {
+  const now = Date.now();
+  if (lastKeystrokeAt !== null) {
+    const interval = now - lastKeystrokeAt;
+    if (interval >= 300) {
+      keystrokeBuffer.push({ gap: interval, at: now });
+    }
+  }
+  lastKeystrokeAt = now;
+}
+
+function flushKeystrokeBuffer() {
+  const submission = getStudentSubmission();
+  if (!submission || !keystrokeBuffer.length) return;
+  submission.keystrokeLog = submission.keystrokeLog || [];
+  submission.keystrokeLog.push(...keystrokeBuffer);
+  keystrokeBuffer = [];
+  submission.fluencySummary = calculateFluencySummary(submission);
+  submission.updatedAt = new Date().toISOString();
+  persistState();
+}
+
+function scheduleKeystrokeFlush() {
+  clearTimeout(keystrokeFlushTimer);
+  keystrokeFlushTimer = setTimeout(flushKeystrokeBuffer, 5000);
+}
+
 function updateDraftSubmission(nextText) {
   const submission = getStudentSubmission();
   if (!submission) {
@@ -6820,6 +6862,66 @@ function getNextReviewStudentId(currentStudentId, assignmentId = ui.selectedAssi
   const index = roster.findIndex((student) => student.id === currentStudentId);
   if (index === -1 || index === roster.length - 1) return null;
   return roster[index + 1]?.id || null;
+}
+
+function calculateMeanBurstLength(submission) {
+  const events = safeArray(submission?.writingEvents);
+  if (!events.length) return 0;
+  const pauses = safeArray(submission?.keystrokeLog).map(e => e.gap);
+  if (!pauses.length) {
+    const insertEvents = events.filter(e => e.type === "insert" && e.insertedText);
+    if (!insertEvents.length) return 0;
+    return Math.round(
+      insertEvents.reduce((sum, e) => sum + String(e.insertedText || "").length, 0) / insertEvents.length
+    );
+  }
+  const longPauses = pauses.filter(g => g >= 2000).length;
+  const totalChars = events
+    .filter(e => e.type === "insert")
+    .reduce((sum, e) => sum + String(e.insertedText || "").length, 0);
+  if (!longPauses) return totalChars;
+  return Math.round(totalChars / (longPauses + 1));
+}
+
+function calculatePauseFrequency(submission) {
+  const pauses = safeArray(submission?.keystrokeLog).filter(e => e.gap >= 2000);
+  const finalText = submission?.finalText || submission?.draftText || "";
+  const words = wordCount(finalText);
+  if (!words) return 0;
+  return Math.round((pauses.length / words) * 100);
+}
+
+function calculateDeletionRatio(submission) {
+  const events = safeArray(submission?.writingEvents);
+  const insertions = events
+    .filter(e => e.type === "insert" || e.type === "paste")
+    .reduce((sum, e) => sum + String(e.insertedText || "").length, 0);
+  const deletions = events
+    .filter(e => e.type === "delete" || e.type === "replace")
+    .reduce((sum, e) => sum + String(e.removedText || "").length, 0);
+  if (!insertions) return 0;
+  return Math.round((deletions / insertions) * 100) / 100;
+}
+
+function calculateSessionCount(submission) {
+  const events = safeArray(submission?.writingEvents);
+  if (!events.length) return 1;
+  let sessions = 1;
+  for (let i = 1; i < events.length; i++) {
+    const gap = Date.parse(events[i].timestamp) - Date.parse(events[i - 1].timestamp);
+    if (gap > 30 * 60 * 1000) sessions++;
+  }
+  return sessions;
+}
+
+function calculateFluencySummary(submission) {
+  return {
+    meanBurstLength: calculateMeanBurstLength(submission),
+    pauseFrequency: calculatePauseFrequency(submission),
+    deletionRatio: calculateDeletionRatio(submission),
+    sessionCount: calculateSessionCount(submission),
+    calculatedAt: new Date().toISOString(),
+  };
 }
 
 function computeProcessMetrics(assignment, submission) {
