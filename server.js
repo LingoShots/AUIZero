@@ -331,7 +331,7 @@ async function requireTeacherProfile(req) {
   const user = await getUser(req);
   if (!user) return { user: null, profile: null, error: 'Not authenticated', status: 401 };
   const profile = await getProfile(user.id);
-  if (profile?.role !== 'teacher') {
+ if (profile?.role !== 'teacher' && profile?.role !== 'admin') {
     return { user, profile, error: 'Teacher access required', status: 403 };
   }
   return { user, profile, error: null, status: 200 };
