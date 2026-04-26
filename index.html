@@ -16,11 +16,12 @@
     <script src="line-number-utils.js" defer></script>
     <script src="app.js" defer></script>
     <script>
-      document.addEventListener('click', function(e) {
-        document.querySelectorAll('.fluency-tooltip').forEach(function(tip) {
-          if (!tip.contains(e.target)) tip.style.display = 'none';
-        });
-      });
-    </script>
+  document.addEventListener('click', function(e) {
+    if (e.target.closest('[onclick*="nextElementSibling"]')) return;
+    document.querySelectorAll('.fluency-tooltip').forEach(function(tip) {
+      if (!tip.contains(e.target)) tip.style.display = 'none';
+    });
+  });
+</script>
   </body>
 </html>
