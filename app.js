@@ -6094,29 +6094,15 @@ function renderStudentFinalStep(assignment, submission) {
     <div class="step-card wizard-card">
       <div class="step-head">
         <div>
-          <div class="step-number">3</div>
-          <h3>Write your final piece and reflect</h3>
-          <p class="subtle">Write or paste your final version, then rate yourself honestly against the rubric before you submit.</p>
+          <div class="step-number">4</div>
+          <h3>Rate yourself and submit</h3>
+          <p class="subtle">Rate yourself honestly against the rubric, then submit your work.</p>
         </div>
         ${assignment.deadline && new Date(assignment.deadline) < new Date() && submission.status !== "submitted"
           ? `<div style="font-size:0.82rem;color:var(--danger);font-weight:600;text-align:right;">Deadline passed</div>`
           : ``
         }
       </div>
-      <div class="pill-row" style="margin-bottom:8px;">
-        <button class="button-ghost" data-action="scroll-editor-top" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
-        <button class="button-ghost" data-action="scroll-editor-bottom" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
-      </div>
-      <div class="editor-with-lines">
-        <div class="line-gutter" id="final-editor-gutter" aria-hidden="true"></div>
-        <textarea id="final-editor" class="final-editor" data-line-gutter="final-editor-gutter" placeholder="Write your final piece here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
-      </div>
-      <div class="pill-row">
-        <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
-        <span class="pill">Status: ${escapeHtml(titleCase(submission.status))}</span>
-        <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
-      </div>
-      <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
       <div class="teacher-ready-card">
         <p class="mini-label">Self-assessment — rate yourself against the rubric</p>
         <p class="subtle" style="margin:4px 0 14px;">Be honest. Your teacher will see your ratings alongside their own assessment.</p>
@@ -6133,13 +6119,9 @@ function renderStudentFinalStep(assignment, submission) {
             })}
           </div>
         ` : `<p class="subtle">No rubric available for self-assessment yet.</p>`}
-        <div class="field" style="margin-top:14px;">
-          <label for="student-reflection-improved">Reflection — what did you improve from draft to final? <span style="color:var(--danger);">*</span></label>
-          <textarea id="student-reflection-improved" rows="4" data-reflection-field="improved" required placeholder="Explain what you changed and why.">${escapeHtml(submission.reflections.improved || "")}</textarea>
-        </div>
       </div>
       <div class="wizard-nav">
-        <button class="button-ghost" data-action="student-prev-step" data-step="2">Back</button>
+        <button class="button-ghost" data-action="student-prev-step" data-step="3">Back</button>
         <span></span>
         <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit assignment</button>
       </div>
@@ -6158,7 +6140,7 @@ function renderStudentFinalStep(assignment, submission) {
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
               <div>
                 <p class="mini-label">Teacher feedback</p>
-                <p class="subtle" style="margin:4px 0 0;">Your teacher’s score, comments, rubric breakdown, and marked copy are below.</p>
+                <p class="subtle" style="margin:4px 0 0;">Your teacher's score, comments, rubric breakdown, and marked copy are below.</p>
               </div>
               <button class="button-ghost" data-action="download-work" style="font-size:0.82rem;">⬇ Download graded report</button>
             </div>
