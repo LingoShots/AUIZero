@@ -5905,7 +5905,7 @@ function renderStudentDraftStep(assignment, submission) {
   const feedbackLimit = Number(assignment.feedbackRequestLimit || 0);
   const feedbackDisabled = feedbackUsed >= feedbackLimit;
   return `
-    <div class="step-card wizard-card">
+   <div class="step-card wizard-card">
       <div class="step-head">
         <div>
           <div class="step-number">2</div>
@@ -5913,53 +5913,35 @@ function renderStudentDraftStep(assignment, submission) {
           <p class="subtle">Write in your own words. The tool keeps track of your writing process while you work.</p>
         </div>
       </div>
-      <div class="field-grid compact-grid">
-        <div class="field inline-end">
-          <button class="button-ghost" data-action="save-draft">Save Draft</button>
+      ${submission.finalUnlocked ? `
+        <div style="background:#f5f5f3;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px;">
+          <p style="margin:0;font-size:0.88rem;color:var(--muted);">You've started your final version. Your draft is saved here for your teacher but can no longer be edited.</p>
         </div>
-        <div class="field inline-end">
-          <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
+        <div style="background:#f5f5f3;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.8;white-space:pre-wrap;word-break:break-word;color:var(--muted);min-height:200px;">${escapeHtml(submission.draftText || "")}</div>
+      ` : `
+        <div class="field-grid compact-grid">
+          <div class="field inline-end">
+            <button class="button-ghost" data-action="save-draft">Save Draft</button>
+          </div>
         </div>
-      </div>
-      <div class="pill-row" style="margin-bottom:8px;">
-        <button class="button-ghost" data-action="scroll-editor-top" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
-        <button class="button-ghost" data-action="scroll-editor-bottom" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
-      </div>
-      <div class="editor-with-lines">
-        <div class="line-gutter" id="draft-editor-gutter" aria-hidden="true"></div>
-        <textarea id="draft-editor" class="draft-editor" data-line-gutter="draft-editor-gutter" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
-      </div>
-      <div class="pill-row">
-        <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
-        <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
-        <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
-      </div>
-      <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
-      <div class="feedback-list">
-        ${
-          feedbackEntries.length
-            ? feedbackEntries.slice().reverse().map((entry) => {
-                const errorCodes = getErrorCodes();
-                const items = safeArray(entry.items).map((item) => String(item || "").trim()).filter(Boolean);
-                const hasCode = errorCodes.some(({code}) => items.some((item) => item.includes(`[${code}]`)));
-                return `
-                  <div class="feedback-card">
-                    <strong>${escapeHtml(formatDateTime(entry.timestamp))}</strong>
-                    <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-                    ${hasCode ? `
-                      <div class="error-code-key">
-                        <p>Code key</p>
-                        <dl>${errorCodes.filter(({code}) => items.some((item) => item.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
-                      </div>` : ""}
-                  </div>`;
-              }).join("")
-            : `<div class="empty-state compact-empty"><h3>No AI draft feedback yet</h3><p>When you click "Get AI feedback," you will get short questions and reminders, not rewritten text.</p></div>`
-        }
-      </div>
+        <div class="pill-row" style="margin-bottom:8px;">
+          <button class="button-ghost" data-action="scroll-editor-top" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
+          <button class="button-ghost" data-action="scroll-editor-bottom" data-target="draft-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
+        </div>
+        <div class="editor-with-lines">
+          <div class="line-gutter" id="draft-editor-gutter" aria-hidden="true"></div>
+          <textarea id="draft-editor" class="draft-editor" data-line-gutter="draft-editor-gutter" placeholder="Start your draft here.">${escapeHtml(submission.draftText)}</textarea>
+        </div>
+        <div class="pill-row">
+          <span class="pill">Words: <strong id="draft-word-count">${wordCount(submission.draftText)}</strong></span>
+          <span class="pill">Tracked edits: <strong id="draft-event-count">${submission.writingEvents.length}</strong></span>
+          <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
+        </div>
+        <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
+      `}
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="1">Back</button>
-        <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
-        <button class="button" data-action="student-next-step" data-step="3">Next</button>
+        <button class="button" data-action="student-next-step" data-step="3" ${!submission.draftText?.trim() ? "disabled title='Write your draft first'" : ""}>Next</button>
       </div>
       ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
     </div>
