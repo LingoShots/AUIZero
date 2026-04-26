@@ -83,6 +83,24 @@
     `;
   }
 
+  function renderManualProxyHtml() {
+    return `
+      <div id="manual-assignment-proxy" class="teacher-ready-card" style="padding:16px;border-color:var(--line);background:#fff;">
+        <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
+        <h3 style="font-size:1.05rem;margin:0 0 6px;color:var(--ink);">Write the student-facing task</h3>
+        <p class="subtle" style="margin:0 0 14px;">This uses the same save, rubric, level, chatbot, and grading setup as the AI-assisted path.</p>
+        <label style="font-size:0.85rem;font-weight:700;color:var(--ink);display:block;margin-bottom:6px;">Assignment title</label>
+        <input id="manual-assignment-title" placeholder="e.g. Process paragraph: how to make Moroccan mint tea" style="width:100%;margin-bottom:12px;" />
+        <label style="font-size:0.85rem;font-weight:700;color:var(--ink);display:block;margin-bottom:6px;">Student instructions</label>
+        <textarea id="manual-assignment-prompt" rows="8" placeholder="Write the instructions students will see..." style="width:100%;resize:vertical;margin-bottom:12px;"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <p id="manual-assignment-save-hint" class="subtle" style="margin:0;font-size:0.82rem;">Add a title and instructions to save.</p>
+          <button class="button" type="button" data-manual-proxy-save disabled>Save assignment</button>
+        </div>
+      </div>
+    `;
+  }
+
   function relabelTeacherButtons() {
     document.querySelectorAll('[data-action="generate-teacher-assist"]').forEach((button) => {
       button.textContent = button.disabled ? "Creating…" : "Create student-ready version";
@@ -99,34 +117,72 @@
     }
   }
 
+  function getManualProxyValues() {
+    return {
+      title: document.getElementById("manual-assignment-title")?.value?.trim() || "",
+      prompt: document.getElementById("manual-assignment-prompt")?.value?.trim() || "",
+    };
+  }
+
   function manualTitleAndPromptAreReady() {
-    const title = document.getElementById("teacher-title")?.value?.trim() || "";
-    const prompt = document.getElementById("teacher-prompt")?.value?.trim() || "";
-    return Boolean(title && prompt);
+    const proxyValues = getManualProxyValues();
+    const hiddenTitle = document.getElementById("teacher-title")?.value?.trim() || "";
+    const hiddenPrompt = document.getElementById("teacher-prompt")?.value?.trim() || "";
+    return Boolean((proxyValues.title || hiddenTitle) && (proxyValues.prompt || hiddenPrompt));
+  }
+
+  function syncManualProxyToHiddenFields() {
+    const titleField = document.getElementById("teacher-title");
+    const promptField = document.getElementById("teacher-prompt");
+    const { title, prompt } = getManualProxyValues();
+
+    if (titleField && titleField.value !== title) {
+      titleField.value = title;
+      titleField.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (promptField && promptField.value !== prompt) {
+      promptField.value = prompt;
+      promptField.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function syncHiddenFieldsToManualProxy() {
+    const proxyTitle = document.getElementById("manual-assignment-title");
+    const proxyPrompt = document.getElementById("manual-assignment-prompt");
+    const hiddenTitle = document.getElementById("teacher-title")?.value || "";
+    const hiddenPrompt = document.getElementById("teacher-prompt")?.value || "";
+
+    if (proxyTitle && !proxyTitle.value && hiddenTitle) proxyTitle.value = hiddenTitle;
+    if (proxyPrompt && !proxyPrompt.value && hiddenPrompt) proxyPrompt.value = hiddenPrompt;
   }
 
   function updateManualSaveButtons(currentFlow) {
     if (currentFlow !== "manual") return;
     const ready = manualTitleAndPromptAreReady();
-    document.querySelectorAll('[data-action="save-assignment"]').forEach((button) => {
+    document.querySelectorAll('[data-action="save-assignment"], [data-manual-proxy-save]').forEach((button) => {
       button.disabled = !ready;
       button.title = ready ? "" : "Add a student-facing title and prompt first.";
     });
+
+    const hint = document.getElementById("manual-assignment-save-hint");
+    if (hint) {
+      hint.textContent = ready ? "Ready to save using the same assignment settings below." : "Add a title and instructions to save.";
+    }
   }
 
-  function placeGeneratedPanel(currentFlow, fieldStack, settings, generated) {
-    const manualDetails = generated?.querySelector("details");
-    if (!generated || !fieldStack || !settings) return;
-
-    if (currentFlow === "manual" && manualDetails) {
-      fieldStack.insertBefore(generated, settings);
-      return;
+  function ensureManualProxy(fieldStack, settings) {
+    if (!fieldStack || !settings) return null;
+    let proxy = document.getElementById("manual-assignment-proxy");
+    if (!proxy) {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderManualProxyHtml().trim();
+      proxy = wrapper.firstElementChild;
+      fieldStack.insertBefore(proxy, settings);
+    } else if (proxy.parentElement !== fieldStack) {
+      fieldStack.insertBefore(proxy, settings);
     }
-
-    const setupPanel = fieldStack.closest(".panel") || fieldStack.parentElement;
-    if (setupPanel && generated.parentElement === fieldStack) {
-      setupPanel.insertBefore(generated, fieldStack.nextSibling);
-    }
+    syncHiddenFieldsToManualProxy();
+    return proxy;
   }
 
   function applyWorkflowVisibility(currentFlow, fieldStack, settings) {
@@ -135,18 +191,20 @@
     const generated = document.getElementById("teacher-generated-assignment");
     const manualDetails = generated?.querySelector("details");
     const hasAiDraft = Boolean(generated?.querySelector("#teacher-assist-prompt"));
+    const manualProxy = ensureManualProxy(fieldStack, settings);
 
-    placeGeneratedPanel(currentFlow, fieldStack, settings, generated);
     setDisplay(briefCard, currentFlow === "ai");
+    setDisplay(manualProxy, currentFlow === "manual");
 
     if (manualDetails) {
-      setDisplay(generated, currentFlow === "manual");
+      // Keep the original manual form in place for app logic, but hide it from the visible workflow.
+      setDisplay(generated, false);
       if (currentFlow === "manual") {
         manualDetails.open = true;
       }
     } else if (generated) {
       // If an AI draft exists, keep it visible so the teacher can review/save it.
-      setDisplay(generated, hasAiDraft || currentFlow === "manual");
+      setDisplay(generated, currentFlow === "ai" && hasAiDraft);
     }
 
     updateManualSaveButtons(currentFlow);
@@ -197,15 +255,29 @@
   }
 
   document.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-assignment-flow-choice]");
-    if (!button) return;
-    const flow = button.dataset.assignmentFlowChoice;
-    if (flow !== "ai" && flow !== "manual") return;
-    setFlow(flow);
-    enhanceTeacherAssignmentSetup();
+    const flowButton = event.target.closest("[data-assignment-flow-choice]");
+    if (flowButton) {
+      const flow = flowButton.dataset.assignmentFlowChoice;
+      if (flow !== "ai" && flow !== "manual") return;
+      setFlow(flow);
+      enhanceTeacherAssignmentSetup();
+      return;
+    }
+
+    const saveButton = event.target.closest("[data-manual-proxy-save]");
+    if (!saveButton) return;
+    syncManualProxyToHiddenFields();
+    const originalSave = Array.from(document.querySelectorAll('[data-action="save-assignment"]'))
+      .find((button) => !button.matches("[data-manual-proxy-save]"));
+    originalSave?.click();
   });
 
   document.addEventListener("input", (event) => {
+    if (event.target.closest("#manual-assignment-proxy")) {
+      syncManualProxyToHiddenFields();
+      updateManualSaveButtons(getFlow());
+      return;
+    }
     if (!event.target.closest("#teacher-generated-assignment")) return;
     updateManualSaveButtons(getFlow());
   });
