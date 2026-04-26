@@ -1653,6 +1653,7 @@ function buildSubmissionServerPayload(submission, overrides = {}) {
     submitted_at: submission?.submittedAt || null,
     keystroke_log: safeArray(submission?.keystrokeLog),
     fluency_summary: submission?.fluencySummary || {},
+    final_unlocked: submission.finalUnlocked || false,
     ...overrides,
   };
 }
@@ -2027,6 +2028,7 @@ function mapServerSubmission(serverSubmission) {
     ideaResponses: Array.isArray(serverSubmission?.idea_responses) ? serverSubmission.idea_responses : [],
     draftText: serverSubmission?.draft_text || "",
     finalText: serverSubmission?.final_text || "",
+    finalUnlocked: serverSubmission?.final_unlocked || false,
     reflections: serverSubmission?.reflections || { improved: "" },
     outline: serverSubmission?.outline || {
       partOne: "",
@@ -8938,6 +8940,7 @@ function normalizeSubmission(submission) {
     })),
     draftText: submission?.draftText || "",
     finalText: submission?.finalText || "",
+    finalUnlocked: raw.finalUnlocked || false,
     reflections: {
       improved: submission?.reflections?.improved || "",
     },
