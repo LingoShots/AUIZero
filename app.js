@@ -8974,7 +8974,7 @@ function normalizeSubmission(submission) {
     })),
     draftText: submission?.draftText || "",
     finalText: submission?.finalText || "",
-    finalUnlocked: raw.finalUnlocked || false,
+    finalUnlocked: submission?.finalUnlocked || false,
     reflections: {
       improved: submission?.reflections?.improved || "",
     },
