@@ -18,14 +18,36 @@
     return Boolean(element && element.offsetParent !== null);
   }
 
+  function codeButtonCount(element) {
+    return Array.from(element?.querySelectorAll?.("button") || [])
+      .filter((btn) => CODE_RE.test((btn.textContent || "").trim()))
+      .length;
+  }
+
+  function looksLikeAnnotationArea(element) {
+    const text = (element?.textContent || "").toLowerCase();
+    return text.includes("annotate")
+      || text.includes("annotation")
+      || text.includes("select text")
+      || text.includes("student text")
+      || text.includes("+ note")
+      || text.includes("+ code")
+      || codeButtonCount(element) >= 4;
+  }
+
   function getCodeButtons() {
     return Array.from(document.querySelectorAll("button"))
       .filter(isVisible)
       .filter((button) => CODE_RE.test((button.textContent || "").trim()))
       .filter((button) => {
-        const area = button.closest(".panel, .teacher-ready-card, section, article, div");
-        const text = (area?.textContent || "").toLowerCase();
-        return text.includes("annotation") || text.includes("select") || text.includes("student text") || text.includes("comment");
+        let node = button.parentElement;
+        let depth = 0;
+        while (node && depth < 7) {
+          if (looksLikeAnnotationArea(node)) return true;
+          node = node.parentElement;
+          depth += 1;
+        }
+        return false;
       });
   }
 
@@ -35,10 +57,8 @@
     buttons.forEach((button) => {
       let node = button.parentElement;
       let depth = 0;
-      while (node && depth < 5) {
-        const count = Array.from(node.querySelectorAll("button"))
-          .filter((btn) => CODE_RE.test((btn.textContent || "").trim()))
-          .length;
+      while (node && depth < 7) {
+        const count = codeButtonCount(node);
         if (count >= Math.min(3, buttons.length)) {
           candidateCounts.set(node, count);
         }
