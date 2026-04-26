@@ -99,13 +99,44 @@
     }
   }
 
-  function applyWorkflowVisibility(currentFlow) {
+  function manualTitleAndPromptAreReady() {
+    const title = document.getElementById("teacher-title")?.value?.trim() || "";
+    const prompt = document.getElementById("teacher-prompt")?.value?.trim() || "";
+    return Boolean(title && prompt);
+  }
+
+  function updateManualSaveButtons(currentFlow) {
+    if (currentFlow !== "manual") return;
+    const ready = manualTitleAndPromptAreReady();
+    document.querySelectorAll('[data-action="save-assignment"]').forEach((button) => {
+      button.disabled = !ready;
+      button.title = ready ? "" : "Add a student-facing title and prompt first.";
+    });
+  }
+
+  function placeGeneratedPanel(currentFlow, fieldStack, settings, generated) {
+    const manualDetails = generated?.querySelector("details");
+    if (!generated || !fieldStack || !settings) return;
+
+    if (currentFlow === "manual" && manualDetails) {
+      fieldStack.insertBefore(generated, settings);
+      return;
+    }
+
+    const setupPanel = fieldStack.closest(".panel") || fieldStack.parentElement;
+    if (setupPanel && generated.parentElement === fieldStack) {
+      setupPanel.insertBefore(generated, fieldStack.nextSibling);
+    }
+  }
+
+  function applyWorkflowVisibility(currentFlow, fieldStack, settings) {
     const brief = document.getElementById("teacher-brief");
     const briefCard = brief?.closest(".teacher-ready-card");
     const generated = document.getElementById("teacher-generated-assignment");
     const manualDetails = generated?.querySelector("details");
     const hasAiDraft = Boolean(generated?.querySelector("#teacher-assist-prompt"));
 
+    placeGeneratedPanel(currentFlow, fieldStack, settings, generated);
     setDisplay(briefCard, currentFlow === "ai");
 
     if (manualDetails) {
@@ -117,6 +148,8 @@
       // If an AI draft exists, keep it visible so the teacher can review/save it.
       setDisplay(generated, hasAiDraft || currentFlow === "manual");
     }
+
+    updateManualSaveButtons(currentFlow);
   }
 
   function enhanceTeacherAssignmentSetup() {
@@ -147,7 +180,7 @@
         choice.outerHTML = renderChoiceHtml(currentFlow).trim();
       }
 
-      applyWorkflowVisibility(currentFlow);
+      applyWorkflowVisibility(currentFlow, fieldStack, settings);
       relabelTeacherButtons();
     } finally {
       isEnhancing = false;
@@ -170,6 +203,11 @@
     if (flow !== "ai" && flow !== "manual") return;
     setFlow(flow);
     enhanceTeacherAssignmentSetup();
+  });
+
+  document.addEventListener("input", (event) => {
+    if (!event.target.closest("#teacher-generated-assignment")) return;
+    updateManualSaveButtons(getFlow());
   });
 
   const observer = new MutationObserver(scheduleEnhancement);
