@@ -897,6 +897,20 @@ function renderWritingBehaviour(submission, assignment) {
   const bandBg     = avg >= 1.7 ? "#eef9f1" : avg >= 1.2 ? "#f4f9e8" : avg >= 0.6 ? "#fff8e8" : "#fff1f1";
   const bandBorder = avg >= 1.7 ? "#cdece2" : avg >= 1.2 ? "#cde0a0" : avg >= 0.6 ? "#f0d080" : "#f4c7c7";
 
+  const bandScale = ["Natural", "Likely natural", "Uncertain", "Needs review"].map(label => {
+    const active = label === band;
+    return `<span style="
+      font-size:0.70rem;
+      padding:2px 8px;
+      border-radius:999px;
+      border:1px solid ${active ? bandBorder : "var(--line)"};
+      background:${active ? "#fff" : "rgba(255,255,255,0.55)"};
+      color:${active ? bandColour : "var(--muted)"};
+      font-weight:${active ? "700" : "500"};
+      white-space:nowrap;
+    ">${escapeHtml(label)}</span>`;
+  }).join(`<span style="color:var(--muted);font-size:0.70rem;">→</span>`);
+
   const explanation = avg >= 1.7
     ? `Typing rhythm, pause patterns, and revision behaviour are consistent with independent composition at ${level}.`
     : avg >= 1.2
@@ -949,7 +963,7 @@ function renderWritingBehaviour(submission, assignment) {
 
   return `
     <div style="margin-bottom:16px;padding:14px;border:1px solid ${bandBorder};border-radius:12px;background:${bandBg};position:relative;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <p class="mini-label" style="margin:0;">Writing behaviour</p>
         <span style="font-size:0.82rem;font-weight:700;color:${bandColour};padding:2px 10px;border-radius:20px;border:1px solid ${bandBorder};background:#fff;">${escapeHtml(band)}</span>
         <span onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
@@ -961,6 +975,9 @@ function renderWritingBehaviour(submission, assignment) {
           <p style="margin:0 0 4px;">Barkaoui, K. (2019). L2 writers' pausing behaviour. <em>Studies in Second Language Acquisition, 41(3).</em> — 2-second threshold; lower proficiency = more pauses.</p>
           <p style="margin:0;color:var(--muted);font-style:italic;">This panel is one signal — always interpret alongside the letter-by-letter playback. No single indicator is conclusive.</p>
         </div>
+      </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 12px;">
+        ${bandScale}
       </div>
       ${indicator("Typing rhythm",      burst,  r.burst[0],  r.burst[1],  "Hesitant", "Unusually fast")}
       ${indicator("Thinking pauses",    pauses, r.pauses[0], r.pauses[1], "Very few",  "Frequent")}
