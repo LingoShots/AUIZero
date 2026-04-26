@@ -5173,6 +5173,12 @@ function renderTeacherWorkspace() {
                     `
                   }
                 </div>
+
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+                  <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>
+                    ${ui.editingAssignmentId ? "Update assignment" : "Save assignment"}
+                  </button>
+                </div>
               </div>
             `
             : `
