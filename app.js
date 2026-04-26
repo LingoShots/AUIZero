@@ -4019,6 +4019,8 @@ function handleInput(event) {
       return;
     }
 
+    if (!submission.finalUnlocked) submission.finalUnlocked = true;
+    
     submission.finalText = target.value;
     submission.updatedAt = new Date().toISOString();
     persistState();
@@ -5816,11 +5818,12 @@ function renderStudentStep(assignment, submission) {
   if (ui.studentStep === 1) {
     return renderStudentIdeasStep(assignment, submission);
   }
-
   if (ui.studentStep === 2) {
     return renderStudentDraftStep(assignment, submission);
   }
-
+  if (ui.studentStep === 3) {
+    return renderStudentReviewStep(assignment, submission);
+  }
   return renderStudentFinalStep(assignment, submission);
 }
 
@@ -6207,11 +6210,16 @@ function canAdvanceToStep(nextStep) {
 
   if (nextStep === 3) {
     if (!submission.draftText.trim()) {
-      ui.notice = "Write a draft before moving to the final step.";
+      ui.notice = "Write a draft before moving on.";
       return false;
     }
   }
-
+  if (nextStep === 4) {
+    if (!submission.finalText?.trim() && !submission.draftText?.trim()) {
+      ui.notice = "Please write your final version before continuing.";
+      return false;
+    }
+  }
   return true;
 }
 
