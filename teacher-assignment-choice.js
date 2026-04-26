@@ -60,7 +60,7 @@
           <div>
             <p class="mini-label" style="margin-bottom:4px;">Create assignment</p>
             <h3 style="font-size:1.08rem;margin:0 0 5px;color:var(--ink);">How would you like to start?</h3>
-            <p class="subtle" style="margin:0;max-width:620px;">Both paths use the same rubric, CEFR level, chatbot settings, feedback limits, and grading workflow. You are only choosing how to create the student-facing task.</p>
+            <p class="subtle" style="margin:0;max-width:620px;">Choose AI-assisted setup or manual setup. Both paths use the same rubric, CEFR level, chatbot settings, feedback limits, and grading workflow.</p>
           </div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;">
@@ -68,14 +68,14 @@
             "ai",
             currentFlow,
             "Create with AI support",
-            "Describe your assignment in plain English, then let Praxis turn it into clear student-ready instructions that you can review and edit before saving.",
+            "Add a rough brief, let Praxis create a student-ready version, then review the settings before saving.",
             "Use AI-assisted setup"
           )}
           ${workflowCard(
             "manual",
             currentFlow,
             "Set up manually",
-            "Write the student title and instructions yourself while still using the same rubric parsing, level settings, chatbot controls, and grading tools.",
+            "Write the student title and instructions yourself, then review the same rubric, level, chatbot, and grading settings before saving.",
             "Use manual setup"
           )}
         </div>
@@ -112,6 +112,20 @@
     `;
   }
 
+  function renderAiSaveBarHtml() {
+    return `
+      <div id="ai-assignment-save-bar" class="teacher-ready-card" style="padding:14px 16px;border-color:var(--line);background:#fffefb;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div>
+            <p class="mini-label" style="margin-bottom:3px;">Final step</p>
+            <p id="ai-assignment-save-hint" class="subtle" style="margin:0;font-size:0.84rem;">Review the student-ready version and settings above, then save when ready.</p>
+          </div>
+          <button class="button" type="button" data-ai-settings-save>Save assignment</button>
+        </div>
+      </div>
+    `;
+  }
+
   function relabelTeacherButtons() {
     document.querySelectorAll('[data-action="generate-teacher-assist"]').forEach((button) => {
       button.textContent = button.disabled ? "Creating…" : "Create student-ready version";
@@ -122,9 +136,14 @@
       if (text === "Save") button.textContent = "Save assignment";
     });
 
-    const briefHelp = document.querySelector("#teacher-brief")?.closest(".teacher-ready-card")?.querySelector(".subtle");
+    const briefCard = document.querySelector("#teacher-brief")?.closest(".teacher-ready-card");
+    const briefHeading = briefCard?.querySelector("h3, h2");
+    if (briefHeading && briefHeading.textContent.trim() === "Describe the assignment in plain English") {
+      briefHeading.textContent = "AI-assisted setup";
+    }
+    const briefHelp = briefCard?.querySelector(".subtle");
     if (briefHelp && briefHelp.textContent.includes("Format With AI")) {
-      briefHelp.textContent = "Describe the assignment in plain English, then create a student-ready version for review.";
+      briefHelp.textContent = "Add your rough brief, then create a student-ready version for review.";
     }
   }
 
@@ -212,18 +231,67 @@
     return saveBar;
   }
 
+  function ensureAiSaveBar(fieldStack, settings) {
+    if (!fieldStack || !settings) return null;
+    let saveBar = document.getElementById("ai-assignment-save-bar");
+    if (!saveBar) {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderAiSaveBarHtml().trim();
+      saveBar = wrapper.firstElementChild;
+    }
+    const manualSaveBar = document.getElementById("manual-assignment-save-bar");
+    const anchor = manualSaveBar?.parentElement === fieldStack ? manualSaveBar.nextSibling : settings.nextSibling;
+    if (saveBar.parentElement !== fieldStack || saveBar.previousElementSibling !== settings) {
+      fieldStack.insertBefore(saveBar, anchor);
+    }
+    return saveBar;
+  }
+
+  function originalSaveButtons() {
+    return Array.from(document.querySelectorAll('[data-action="save-assignment"]'))
+      .filter((button) => !button.matches("[data-manual-settings-save], [data-ai-settings-save]"));
+  }
+
+  function setOriginalSaveVisibility(shouldShow) {
+    originalSaveButtons().forEach((button) => {
+      button.style.display = shouldShow ? "" : "none";
+    });
+  }
+
+  function aiDraftExists(generated) {
+    return Boolean(generated?.querySelector("#teacher-assist-prompt"));
+  }
+
+  function updateAiSaveBar(currentFlow, generated) {
+    const saveBar = document.getElementById("ai-assignment-save-bar");
+    if (!saveBar || currentFlow !== "ai") return;
+    const ready = aiDraftExists(generated);
+    saveBar.querySelectorAll("[data-ai-settings-save]").forEach((button) => {
+      button.disabled = !ready;
+      button.title = ready ? "" : "Create a student-ready version first.";
+    });
+    const hint = document.getElementById("ai-assignment-save-hint");
+    if (hint) {
+      hint.textContent = ready
+        ? "Review the student-ready version and assignment settings above, then save when ready."
+        : "Create a student-ready version first, then review settings before saving.";
+    }
+  }
+
   function applyWorkflowVisibility(currentFlow, fieldStack, settings) {
     const brief = document.getElementById("teacher-brief");
     const briefCard = brief?.closest(".teacher-ready-card");
     const generated = document.getElementById("teacher-generated-assignment");
     const manualDetails = generated?.querySelector("details");
-    const hasAiDraft = Boolean(generated?.querySelector("#teacher-assist-prompt"));
+    const hasAiDraft = aiDraftExists(generated);
     const manualProxy = ensureManualProxy(fieldStack, settings);
     const manualSaveBar = ensureManualSaveBar(fieldStack, settings);
+    const aiSaveBar = ensureAiSaveBar(fieldStack, settings);
 
     setDisplay(briefCard, currentFlow === "ai");
     setDisplay(manualProxy, currentFlow === "manual");
     setDisplay(manualSaveBar, currentFlow === "manual");
+    setDisplay(aiSaveBar, currentFlow === "ai");
 
     if (manualDetails) {
       // Keep the original manual form in place for app logic, but hide it from the visible workflow.
@@ -231,12 +299,15 @@
       if (currentFlow === "manual") {
         manualDetails.open = true;
       }
+      setOriginalSaveVisibility(false);
     } else if (generated) {
-      // If an AI draft exists, keep it visible so the teacher can review/save it.
+      // If an AI draft exists, keep it visible so the teacher can review it.
       setDisplay(generated, currentFlow === "ai" && hasAiDraft);
+      setOriginalSaveVisibility(currentFlow !== "ai");
     }
 
     updateManualSaveButtons(currentFlow);
+    updateAiSaveBar(currentFlow, generated);
   }
 
   function enhanceTeacherAssignmentSetup() {
@@ -293,12 +364,16 @@
       return;
     }
 
-    const saveButton = event.target.closest("[data-manual-settings-save]");
-    if (!saveButton) return;
-    syncManualProxyToHiddenFields();
-    const originalSave = Array.from(document.querySelectorAll('[data-action="save-assignment"]'))
-      .find((button) => !button.matches("[data-manual-settings-save]"));
-    originalSave?.click();
+    const manualSaveButton = event.target.closest("[data-manual-settings-save]");
+    if (manualSaveButton) {
+      syncManualProxyToHiddenFields();
+      originalSaveButtons()[0]?.click();
+      return;
+    }
+
+    const aiSaveButton = event.target.closest("[data-ai-settings-save]");
+    if (!aiSaveButton) return;
+    originalSaveButtons()[0]?.click();
   });
 
   document.addEventListener("input", (event) => {
@@ -309,6 +384,7 @@
     }
     if (!event.target.closest("#teacher-generated-assignment")) return;
     updateManualSaveButtons(getFlow());
+    updateAiSaveBar(getFlow(), document.getElementById("teacher-generated-assignment"));
   });
 
   const observer = new MutationObserver(scheduleEnhancement);
