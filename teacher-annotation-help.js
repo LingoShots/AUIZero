@@ -38,73 +38,56 @@
   }
 
   function shortLabel(label) {
-    return String(label || "Custom code").split(":")[0]
+    return String(label || "Custom code")
+      .split(":")[0]
       .replace(/^Wrong\s+/i, "")
       .replace(/^Missing\s+/i, "")
       .trim();
+  }
+
+  function isVisible(element) {
+    return Boolean(element && element.offsetParent !== null);
   }
 
   function codeSet() {
     return new Set(cleanCodes().map((entry) => entry.code));
   }
 
-  function isCodeButton(button) {
+  function isOriginalCodeButton(button) {
     if (!button || button.matches("[data-annotation-proxy-code]")) return false;
-    const text = String(button.textContent || "").trim().toUpperCase();
-    return codeSet().has(text);
+    return codeSet().has(String(button.textContent || "").trim().toUpperCase());
   }
 
-  function toolbarLooksRight(element) {
-    const text = String(element?.textContent || "").toLowerCase();
-    return text.includes("annotate") || text.includes("+ note") || text.includes("+ code");
-  }
-
-  function findOriginalButtons() {
+  function findAnnotateActionButton() {
     return Array.from(document.querySelectorAll("button"))
-      .filter(isCodeButton)
-      .filter((button) => {
-        let node = button.parentElement;
-        for (let i = 0; node && i < 7; i += 1) {
-          if (toolbarLooksRight(node)) return true;
-          node = node.parentElement;
-        }
-        return false;
-      });
+      .filter(isVisible)
+      .find((button) => {
+        const text = String(button.textContent || "").trim().toLowerCase();
+        return text === "+ note" || text === "+ code";
+      }) || null;
   }
 
-  function findToolbarFromButtons(buttons) {
-    const first = buttons[0];
-    if (!first) return null;
-    let node = first.parentElement;
-    let best = node;
-    for (let i = 0; node && i < 7; i += 1) {
-      if (toolbarLooksRight(node)) best = node;
+  function findAnnotateRow() {
+    const actionButton = findAnnotateActionButton();
+    if (!actionButton) return null;
+
+    let node = actionButton.parentElement;
+    let best = actionButton.parentElement;
+    for (let i = 0; node && i < 8; i += 1) {
+      const text = String(node.textContent || "").toLowerCase();
+      if (text.includes("annotate:") || text.includes("annotate")) {
+        best = node;
+        if (text.includes("+ note") && text.includes("+ code")) break;
+      }
       node = node.parentElement;
     }
     return best;
   }
 
-  function findToolbarFromVisibleControls() {
-    const controls = Array.from(document.querySelectorAll("button"))
-      .filter((button) => {
-        const text = String(button.textContent || "").trim().toLowerCase();
-        return text === "+ note" || text === "+ code";
-      });
-
-    for (const control of controls) {
-      let node = control.parentElement;
-      for (let i = 0; node && i < 7; i += 1) {
-        if (toolbarLooksRight(node)) return node;
-        node = node.parentElement;
-      }
-    }
-    return null;
-  }
-
   function renderGuide(codes) {
     const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
     return `
-      <div id="annotation-code-help" data-code-signature="${signature}" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;">
+      <div id="annotation-code-help" data-code-signature="${signature}" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;display:block;">
         <p class="mini-label" style="margin-bottom:4px;">Annotation tools</p>
         <p class="subtle" style="margin:0 0 10px;font-size:0.84rem;line-height:1.45;">Select part of the student's text, then choose a feedback code.</p>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
@@ -130,19 +113,22 @@
     `;
   }
 
-  function insertOrUpdateGuide(toolbar, codes) {
+  function insertOrUpdateGuide() {
+    const codes = cleanCodes();
     const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
+    const row = findAnnotateRow();
     let guide = document.getElementById("annotation-code-help");
 
     if (!guide) {
-      if (!toolbar || !toolbar.parentElement) return;
+      if (!row || !row.parentElement) return false;
       const wrapper = document.createElement("div");
       wrapper.innerHTML = renderGuide(codes).trim();
       guide = wrapper.firstElementChild;
-      toolbar.parentElement.insertBefore(guide, toolbar);
-      return;
+      row.parentElement.insertBefore(guide, row);
+      return true;
     }
 
+    guide.style.display = "block";
     if (guide.dataset.codeSignature !== signature) {
       const open = Boolean(guide.querySelector("details")?.open);
       const wrapper = document.createElement("div");
@@ -152,22 +138,28 @@
       if (details) details.open = open;
       guide.replaceWith(next);
     }
+    return true;
+  }
+
+  function hideOriginalCodeButtons() {
+    Array.from(document.querySelectorAll("button"))
+      .filter(isOriginalCodeButton)
+      .forEach((button) => {
+        button.style.display = "none";
+        button.tabIndex = -1;
+        button.setAttribute("aria-hidden", "true");
+      });
+  }
+
+  function findOriginalCodeButton(code) {
+    return Array.from(document.querySelectorAll("button"))
+      .filter(isOriginalCodeButton)
+      .find((button) => String(button.textContent || "").trim().toUpperCase() === code);
   }
 
   function enhance() {
-    const codes = cleanCodes();
-    const buttons = findOriginalButtons();
-    const toolbar = findToolbarFromButtons(buttons) || findToolbarFromVisibleControls();
-
-    if (!toolbar && !document.getElementById("annotation-code-help")) return;
-
-    insertOrUpdateGuide(toolbar, codes);
-
-    findOriginalButtons().forEach((button) => {
-      button.style.display = "none";
-      button.tabIndex = -1;
-      button.setAttribute("aria-hidden", "true");
-    });
+    const inserted = insertOrUpdateGuide();
+    if (inserted) hideOriginalCodeButtons();
   }
 
   function schedule() {
@@ -182,16 +174,13 @@
   document.addEventListener("click", (event) => {
     const proxy = event.target.closest("[data-annotation-proxy-code]");
     if (!proxy) return;
-    const targetCode = proxy.dataset.annotationProxyCode;
-    const original = findOriginalButtons().find((button) => String(button.textContent || "").trim().toUpperCase() === targetCode);
+    const original = findOriginalCodeButton(proxy.dataset.annotationProxyCode);
     original?.click();
   });
-
-  const observer = new MutationObserver(schedule);
 
   window.addEventListener("DOMContentLoaded", () => {
     enhance();
     const app = document.getElementById("app");
-    if (app) observer.observe(app, { childList: true, subtree: true });
+    if (app) new MutationObserver(schedule).observe(app, { childList: true, subtree: true });
   });
 })();
