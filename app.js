@@ -5959,8 +5959,8 @@ function renderStudentDraftStep(assignment, submission) {
 }
 
 function renderStudentReviewStep(assignment, submission) {
-  const feedbackEntries = safeArray(submission?.aiFeedback);
-  const feedbackLimit = assignment?.feedbackLimit ?? 3;
+  const feedbackEntries = safeArray(submission?.feedbackHistory);
+  const feedbackLimit = Number(assignment?.feedbackRequestLimit ?? 3);
   const feedbackUsed = feedbackEntries.length;
   const feedbackDisabled = feedbackUsed >= feedbackLimit;
 
