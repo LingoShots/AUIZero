@@ -532,6 +532,21 @@ app.post('/api/auth/signin', async (req, res) => {
   }
 });
 
+// Refresh expired Supabase session
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    const { refresh_token } = req.body;
+    if (!refresh_token) return res.status(400).json({ error: 'refresh_token required' });
+
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+    if (error) return res.status(401).json({ error: error.message });
+
+    res.json({ session: data.session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Sign out
 app.post('/api/auth/signout', async (req, res) => {
   try {
