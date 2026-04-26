@@ -817,6 +817,7 @@ const SUBMISSION_ALLOWED_FIELDS = new Set([
   'submitted_at',
   'keystroke_log',
   'fluency_summary',
+  'final_unlocked',
 ]);
 
 function sanitizePayload(payload = {}, allowedFields = new Set()) {
