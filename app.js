@@ -5846,6 +5846,8 @@ function renderStudentIdeasStep(assignment, submission) {
     persistState();
   }
 
+  const locked = submission.finalUnlocked;
+
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -5855,7 +5857,20 @@ function renderStudentIdeasStep(assignment, submission) {
           <p class="subtle">${chatDisabled ? "Your teacher has turned off the chatbot for this assignment. You can move straight to drafting when you are ready." : "Step 1: use the coach to build your outline and test your ideas. When you feel ready, click Next to move to drafting."}</p>
         </div>
       </div>
-      ${chatDisabled ? `
+      ${locked ? `
+        <div style="background:#f5f5f3;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px;">
+          <p style="margin:0;font-size:0.88rem;color:var(--muted);">You've started your final version — the coach is no longer available. Your conversation is saved below for reference.</p>
+        </div>
+        <div style="opacity:0.4;pointer-events:none;">
+          <div class="chatbot-window">
+            ${chatHistory.map((msg) => `
+              <div class="chat-message chat-${escapeHtml(msg.role)}">
+                <div class="chat-bubble">${escapeHtml(msg.content)}</div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      ` : chatDisabled ? `
         <div class="teacher-ready-card">
           <p class="mini-label">Planning prompt</p>
           <p class="subtle" style="margin-bottom:10px;">Take a minute to jot down your main idea and one example you might use before you start drafting.</p>
@@ -5886,7 +5901,7 @@ function renderStudentIdeasStep(assignment, submission) {
         ` : `<div class="notice" style="margin-top:12px;">Your chat session has ended. Click Next to continue to your draft.</div>`}
       `}
       <div class="wizard-nav">
-        ${chatDisabled ? `<span></span>` : `
+        ${locked || chatDisabled ? `<span></span>` : `
           <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;flex-wrap:wrap;">
             ${timeLimit > 0 && minsRemaining !== null ? `
               <div class="chat-timer ${minsRemaining <= 5 ? "chat-timer-urgent" : ""}">
@@ -6503,14 +6518,10 @@ async function handleSubmission() {
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
   const finalEditor = document.getElementById("final-editor");
-  const reflectionEditor = document.getElementById("student-reflection-improved");
   if (!submission || !finalEditor || !assignment) {
     return;
   }
-
   const finalText = finalEditor.value.trim();
-  const improved = (reflectionEditor ? reflectionEditor.value : submission.reflections.improved || "").trim();
-
   if (!finalText) {
     ui.notice = "Write your final text before submitting.";
     render();
@@ -6519,16 +6530,6 @@ async function handleSubmission() {
     });
     return;
   }
-  if (!improved) {
-    ui.notice = "Complete the reflection before submitting.";
-    render();
-    reflectionEditor?.focus();
-    window.requestAnimationFrame(() => {
-      reflectionEditor?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-    return;
-  }
-  submission.reflections.improved = improved;
   submission.fluencySummary = calculateFluencySummary(submission);
   submission.finalText = finalText;
   const previousStatus = submission.status;
@@ -6544,9 +6545,7 @@ async function handleSubmission() {
   setDraftSaveMessage("Submitting…");
   persistState();
   render();
-
   await flushCurrentStudentWork();
-
   submitStudentSubmissionToServer({
     ...submission,
     status: "submitted",
@@ -6568,14 +6567,13 @@ async function handleSubmission() {
         });
         return;
       }
-
       const refreshed = getStudentSubmission();
       if (refreshed) {
         refreshed.status = "submitted";
         refreshed.submittedAt = refreshed.submittedAt || attemptedSubmittedAt;
         refreshed.updatedAt = refreshed.submittedAt;
       }
-      rememberStudentStep(3);
+      rememberStudentStep(4);
       ui.notice = "";
       setDraftSaveMessage("Submitted successfully.");
       persistState();
