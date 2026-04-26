@@ -88,14 +88,25 @@
       <div id="manual-assignment-proxy" class="teacher-ready-card" style="padding:16px;border-color:var(--line);background:#fff;">
         <p class="mini-label" style="margin-bottom:4px;">Manual assignment setup</p>
         <h3 style="font-size:1.05rem;margin:0 0 6px;color:var(--ink);">Write the student-facing task</h3>
-        <p class="subtle" style="margin:0 0 14px;">This uses the same save, rubric, level, chatbot, and grading setup as the AI-assisted path.</p>
+        <p class="subtle" style="margin:0 0 14px;">Write the task first, then check the assignment settings below before saving.</p>
         <label style="font-size:0.85rem;font-weight:700;color:var(--ink);display:block;margin-bottom:6px;">Assignment title</label>
         <input id="manual-assignment-title" placeholder="e.g. Process paragraph: how to make Moroccan mint tea" style="width:100%;margin-bottom:12px;" />
         <label style="font-size:0.85rem;font-weight:700;color:var(--ink);display:block;margin-bottom:6px;">Student instructions</label>
-        <textarea id="manual-assignment-prompt" rows="8" placeholder="Write the instructions students will see..." style="width:100%;resize:vertical;margin-bottom:12px;"></textarea>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-          <p id="manual-assignment-save-hint" class="subtle" style="margin:0;font-size:0.82rem;">Add a title and instructions to save.</p>
-          <button class="button" type="button" data-manual-proxy-save disabled>Save assignment</button>
+        <textarea id="manual-assignment-prompt" rows="8" placeholder="Write the instructions students will see..." style="width:100%;resize:vertical;margin-bottom:10px;"></textarea>
+        <p class="subtle" style="margin:0;font-size:0.82rem;">Next: review the rubric and assignment settings, then save below.</p>
+      </div>
+    `;
+  }
+
+  function renderManualSaveBarHtml() {
+    return `
+      <div id="manual-assignment-save-bar" class="teacher-ready-card" style="padding:14px 16px;border-color:var(--line);background:#fffefb;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div>
+            <p class="mini-label" style="margin-bottom:3px;">Final step</p>
+            <p id="manual-assignment-save-hint" class="subtle" style="margin:0;font-size:0.84rem;">Add a title and instructions, then check the settings above before saving.</p>
+          </div>
+          <button class="button" type="button" data-manual-settings-save disabled>Save assignment</button>
         </div>
       </div>
     `;
@@ -159,14 +170,16 @@
   function updateManualSaveButtons(currentFlow) {
     if (currentFlow !== "manual") return;
     const ready = manualTitleAndPromptAreReady();
-    document.querySelectorAll('[data-action="save-assignment"], [data-manual-proxy-save]').forEach((button) => {
+    document.querySelectorAll('[data-action="save-assignment"], [data-manual-settings-save]').forEach((button) => {
       button.disabled = !ready;
       button.title = ready ? "" : "Add a student-facing title and prompt first.";
     });
 
     const hint = document.getElementById("manual-assignment-save-hint");
     if (hint) {
-      hint.textContent = ready ? "Ready to save using the same assignment settings below." : "Add a title and instructions to save.";
+      hint.textContent = ready
+        ? "Review the assignment settings above, then save when ready."
+        : "Add a title and instructions, then check the settings above before saving.";
     }
   }
 
@@ -185,6 +198,20 @@
     return proxy;
   }
 
+  function ensureManualSaveBar(fieldStack, settings) {
+    if (!fieldStack || !settings) return null;
+    let saveBar = document.getElementById("manual-assignment-save-bar");
+    if (!saveBar) {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderManualSaveBarHtml().trim();
+      saveBar = wrapper.firstElementChild;
+    }
+    if (saveBar.parentElement !== fieldStack || saveBar.previousElementSibling !== settings) {
+      fieldStack.insertBefore(saveBar, settings.nextSibling);
+    }
+    return saveBar;
+  }
+
   function applyWorkflowVisibility(currentFlow, fieldStack, settings) {
     const brief = document.getElementById("teacher-brief");
     const briefCard = brief?.closest(".teacher-ready-card");
@@ -192,9 +219,11 @@
     const manualDetails = generated?.querySelector("details");
     const hasAiDraft = Boolean(generated?.querySelector("#teacher-assist-prompt"));
     const manualProxy = ensureManualProxy(fieldStack, settings);
+    const manualSaveBar = ensureManualSaveBar(fieldStack, settings);
 
     setDisplay(briefCard, currentFlow === "ai");
     setDisplay(manualProxy, currentFlow === "manual");
+    setDisplay(manualSaveBar, currentFlow === "manual");
 
     if (manualDetails) {
       // Keep the original manual form in place for app logic, but hide it from the visible workflow.
@@ -264,11 +293,11 @@
       return;
     }
 
-    const saveButton = event.target.closest("[data-manual-proxy-save]");
+    const saveButton = event.target.closest("[data-manual-settings-save]");
     if (!saveButton) return;
     syncManualProxyToHiddenFields();
     const originalSave = Array.from(document.querySelectorAll('[data-action="save-assignment"]'))
-      .find((button) => !button.matches("[data-manual-proxy-save]"));
+      .find((button) => !button.matches("[data-manual-settings-save]"));
     originalSave?.click();
   });
 
