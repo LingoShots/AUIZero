@@ -252,6 +252,15 @@
       .filter((button) => !button.matches("[data-manual-settings-save], [data-ai-settings-save]"));
   }
 
+  function clickBestOriginalSaveButton() {
+    const buttons = originalSaveButtons().filter((button) => !button.disabled);
+    const preferred = buttons.find((button) => button.closest("#teacher-generated-assignment"))
+      || buttons[buttons.length - 1]
+      || originalSaveButtons()[0]
+      || null;
+    preferred?.click();
+  }
+
   function setOriginalSaveVisibility(shouldShow) {
     originalSaveButtons().forEach((button) => {
       button.style.display = shouldShow ? "" : "none";
@@ -367,13 +376,13 @@
     const manualSaveButton = event.target.closest("[data-manual-settings-save]");
     if (manualSaveButton) {
       syncManualProxyToHiddenFields();
-      originalSaveButtons()[0]?.click();
+      clickBestOriginalSaveButton();
       return;
     }
 
     const aiSaveButton = event.target.closest("[data-ai-settings-save]");
     if (!aiSaveButton) return;
-    originalSaveButtons()[0]?.click();
+    clickBestOriginalSaveButton();
   });
 
   document.addEventListener("input", (event) => {
