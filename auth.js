@@ -86,7 +86,21 @@ const Auth = (() => {
     if (!stored) return null;
     try {
       session = JSON.parse(stored);
-      const data = await fetch('/api/auth/me', { headers: authHeaders() }).then(r => r.json());
+      let data = await fetch('/api/auth/me', { headers: authHeaders() }).then(r => r.json());
+      if (data.error && session?.refresh_token) {
+        // Access token expired — try refreshing with the refresh token
+        const refreshData = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: session.refresh_token })
+        }).then(r => r.json());
+        if (refreshData.session) {
+          session = refreshData.session;
+          const storage = localStorage.getItem('auizero_session') ? localStorage : sessionStorage;
+          storage.setItem('auizero_session', JSON.stringify(session));
+          data = await fetch('/api/auth/me', { headers: authHeaders() }).then(r => r.json());
+        }
+      }
       if (data.error) {
         session = null;
         profile = null;
