@@ -72,7 +72,7 @@
       });
   }
 
-  function findToolbar(buttons) {
+  function findToolbarFromButtons(buttons) {
     const first = buttons[0];
     if (!first) return null;
     let node = first.parentElement;
@@ -82,6 +82,23 @@
       node = node.parentElement;
     }
     return best;
+  }
+
+  function findToolbarFromVisibleControls() {
+    const controls = Array.from(document.querySelectorAll("button"))
+      .filter((button) => {
+        const text = String(button.textContent || "").trim().toLowerCase();
+        return text === "+ note" || text === "+ code";
+      });
+
+    for (const control of controls) {
+      let node = control.parentElement;
+      for (let i = 0; node && i < 7; i += 1) {
+        if (toolbarLooksRight(node)) return node;
+        node = node.parentElement;
+      }
+    }
+    return null;
   }
 
   function renderGuide(codes) {
@@ -113,22 +130,20 @@
     `;
   }
 
-  function enhance() {
-    const buttons = findOriginalButtons();
-    if (!buttons.length && !document.getElementById("annotation-code-help")) return;
-
-    const codes = cleanCodes();
+  function insertOrUpdateGuide(toolbar, codes) {
     const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
     let guide = document.getElementById("annotation-code-help");
 
     if (!guide) {
-      const toolbar = findToolbar(buttons);
       if (!toolbar || !toolbar.parentElement) return;
       const wrapper = document.createElement("div");
       wrapper.innerHTML = renderGuide(codes).trim();
       guide = wrapper.firstElementChild;
       toolbar.parentElement.insertBefore(guide, toolbar);
-    } else if (guide.dataset.codeSignature !== signature) {
+      return;
+    }
+
+    if (guide.dataset.codeSignature !== signature) {
       const open = Boolean(guide.querySelector("details")?.open);
       const wrapper = document.createElement("div");
       wrapper.innerHTML = renderGuide(codes).trim();
@@ -137,6 +152,16 @@
       if (details) details.open = open;
       guide.replaceWith(next);
     }
+  }
+
+  function enhance() {
+    const codes = cleanCodes();
+    const buttons = findOriginalButtons();
+    const toolbar = findToolbarFromButtons(buttons) || findToolbarFromVisibleControls();
+
+    if (!toolbar && !document.getElementById("annotation-code-help")) return;
+
+    insertOrUpdateGuide(toolbar, codes);
 
     findOriginalButtons().forEach((button) => {
       button.style.display = "none";
