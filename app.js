@@ -3364,15 +3364,7 @@ if (action === "select-assignment") {
         submission.updatedAt = new Date().toISOString();
         persistState();
       }
-      
-      const shouldPromptForFeedback = assignment && submission
-        ? Number(submission.feedbackHistory.length || 0) < Number(assignment.feedbackRequestLimit || 0)
-        : false;
-      if (shouldPromptForFeedback && submission?.draftText?.trim()) {
-        ui.showDraftFeedbackPrompt = true;
-        render();
-        return;
-      }
+  
     }
     if (canAdvanceToStep(nextStep)) {
       if (ui.studentStep === 1 && nextStep !== 1) {
