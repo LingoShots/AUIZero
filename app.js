@@ -7071,16 +7071,91 @@ function calculatePauseFrequency(submission) {
   return Math.round((pauses.length / words) * 100);
 }
 
-function calculateDeletionRatio(submission) {
+function groupDeletionEvents(events) {
+  const groups = [];
+  let current = null;
+  for (const e of events) {
+    if (e.type !== 'delete' && e.type !== 'replace') continue;
+    const gap = current ? Date.parse(e.timestamp) - Date.parse(current.lastTimestamp) : Infinity;
+    const sameDirection = current && e.start === current.lastStart - 1;
+    if (current && gap < 500 && sameDirection) {
+      current.totalChars += Math.abs(e.delta || 0);
+      current.lastTimestamp = e.timestamp;
+      current.lastStart = e.start;
+    } else {
+      if (current) groups.push(current);
+      current = {
+        firstTimestamp: e.timestamp,
+        lastTimestamp: e.timestamp,
+        firstStart: e.start,
+        lastStart: e.start,
+        prevEnd: e.end,
+        totalChars: Math.abs(e.delta || 0),
+        type: e.type
+      };
+    }
+  }
+  if (current) groups.push(current);
+  return groups;
+}
+
+function calculateMicroCorrections(submission, groupedDeletions) {
   const events = safeArray(submission?.writingEvents);
-  const insertions = events
-    .filter(e => e.type === "insert" || e.type === "paste")
-    .reduce((sum, e) => sum + String(e.insertedText || "").length, 0);
-  const deletions = events
-    .filter(e => e.type === "delete" || e.type === "replace")
-    .reduce((sum, e) => sum + String(e.removedText || "").length, 0);
-  if (!insertions) return 0;
-  return Math.round((deletions / insertions) * 100) / 100;
+  const finalText = submission?.finalText || submission?.draftText || "";
+  const words = wordCount(finalText);
+  if (!words || !groupedDeletions.length) return 0;
+  // Layer 1: small deletions (≤3 chars), within 2s of previous event, near cursor position
+  let count = 0;
+  for (let i = 0; i < groupedDeletions.length; i++) {
+    const g = groupedDeletions[i];
+    if (g.totalChars > 3) continue;
+    // Find preceding event to check gap and position
+    const gTime = Date.parse(g.firstTimestamp);
+    // Find the event just before this deletion in the full event list
+    const prevEvent = events.slice().reverse().find(e => Date.parse(e.timestamp) < gTime);
+    if (!prevEvent) continue;
+    const gap = gTime - Date.parse(prevEvent.timestamp);
+    if (gap > 2000) continue;
+    const prevPos = prevEvent.end !== undefined ? prevEvent.end : prevEvent.start;
+    if (Math.abs(g.firstStart - prevPos) > 5) continue;
+    count++;
+  }
+  return Math.round((count / words) * 100);
+}
+
+function calculateLocalRevisions(submission, groupedDeletions) {
+  const finalText = submission?.finalText || submission?.draftText || "";
+  const words = wordCount(finalText);
+  if (!words || !groupedDeletions.length) return 0;
+  const events = safeArray(submission?.writingEvents);
+  let count = 0;
+  for (const g of groupedDeletions) {
+    if (g.totalChars < 4 || g.totalChars > 50) continue;
+    const gTime = Date.parse(g.firstTimestamp);
+    const prevEvent = events.slice().reverse().find(e => Date.parse(e.timestamp) < gTime);
+    if (!prevEvent) continue;
+    const gap = gTime - Date.parse(prevEvent.timestamp);
+    const prevPos = prevEvent.end !== undefined ? prevEvent.end : prevEvent.start;
+    const cursorJump = Math.abs(g.firstStart - prevPos) > 10;
+    if (gap >= 2000 && gap <= 30000) { count++; continue; }
+    if (gap < 2000 && cursorJump) { count++; continue; }
+  }
+  return Math.round((count / words) * 100);
+}
+
+function calculateSubstantiveRevisions(submission, groupedDeletions) {
+  const events = safeArray(submission?.writingEvents);
+  let count = 0;
+  for (const g of groupedDeletions) {
+    if (g.totalChars > 50) { count++; continue; }
+    // Also catch: deletion after a very long pause (30s+) in same region
+    const gTime = Date.parse(g.firstTimestamp);
+    const prevEvent = events.slice().reverse().find(e => Date.parse(e.timestamp) < gTime);
+    if (!prevEvent) continue;
+    const gap = gTime - Date.parse(prevEvent.timestamp);
+    if (gap > 30000) count++;
+  }
+  return count;
 }
 
 function calculateSessionCount(submission) {
@@ -7095,10 +7170,14 @@ function calculateSessionCount(submission) {
 }
 
 function calculateFluencySummary(submission) {
+  const events = safeArray(submission?.writingEvents);
+  const groupedDeletions = groupDeletionEvents(events);
   return {
     meanBurstLength: calculateMeanBurstLength(submission),
     pauseFrequency: calculatePauseFrequency(submission),
-    deletionRatio: calculateDeletionRatio(submission),
+    microCorrections: calculateMicroCorrections(submission, groupedDeletions),
+    localRevisions: calculateLocalRevisions(submission, groupedDeletions),
+    substantiveRevisions: calculateSubstantiveRevisions(submission, groupedDeletions),
     sessionCount: calculateSessionCount(submission),
     calculatedAt: new Date().toISOString(),
   };
