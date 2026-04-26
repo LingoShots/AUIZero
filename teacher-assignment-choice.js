@@ -1,6 +1,9 @@
 (() => {
   const FLOW_STORAGE_KEY = "praxis-assignment-creation-flow";
 
+  let enhanceScheduled = false;
+  let isEnhancing = false;
+
   function getFlow() {
     try {
       return window.sessionStorage.getItem(FLOW_STORAGE_KEY) || "ai";
@@ -52,7 +55,7 @@
 
   function renderChoiceHtml(currentFlow) {
     return `
-      <div id="assignment-workflow-choice" class="teacher-ready-card" style="padding:16px;border-color:var(--line);background:#fffefb;">
+      <div id="assignment-workflow-choice" data-current-flow="${currentFlow}" class="teacher-ready-card" style="padding:16px;border-color:var(--line);background:#fffefb;">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px;">
           <div>
             <p class="mini-label" style="margin-bottom:4px;">Create assignment</p>
@@ -117,31 +120,47 @@
   }
 
   function enhanceTeacherAssignmentSetup() {
-    const rubric = document.getElementById("teacher-rubric-upload");
-    const settings = document.getElementById("teacher-shared-settings");
-    const brief = document.getElementById("teacher-brief");
-    const generated = document.getElementById("teacher-generated-assignment");
+    if (isEnhancing) return;
+    isEnhancing = true;
 
-    if (!rubric || !settings || !brief || !generated) return;
+    try {
+      const rubric = document.getElementById("teacher-rubric-upload");
+      const settings = document.getElementById("teacher-shared-settings");
+      const brief = document.getElementById("teacher-brief");
+      const generated = document.getElementById("teacher-generated-assignment");
 
-    const fieldStack = rubric.parentElement;
-    if (!fieldStack) return;
+      if (!rubric || !settings || !brief || !generated) return;
 
-    let currentFlow = getFlow();
-    if (currentFlow !== "ai" && currentFlow !== "manual") currentFlow = "ai";
+      const fieldStack = rubric.parentElement;
+      if (!fieldStack) return;
 
-    let choice = document.getElementById("assignment-workflow-choice");
-    if (!choice) {
-      const wrapper = document.createElement("div");
-      wrapper.innerHTML = renderChoiceHtml(currentFlow).trim();
-      choice = wrapper.firstElementChild;
-      fieldStack.insertBefore(choice, rubric);
-    } else {
-      choice.outerHTML = renderChoiceHtml(currentFlow).trim();
+      let currentFlow = getFlow();
+      if (currentFlow !== "ai" && currentFlow !== "manual") currentFlow = "ai";
+
+      let choice = document.getElementById("assignment-workflow-choice");
+      if (!choice) {
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = renderChoiceHtml(currentFlow).trim();
+        choice = wrapper.firstElementChild;
+        fieldStack.insertBefore(choice, rubric);
+      } else if (choice.dataset.currentFlow !== currentFlow) {
+        choice.outerHTML = renderChoiceHtml(currentFlow).trim();
+      }
+
+      applyWorkflowVisibility(currentFlow);
+      relabelTeacherButtons();
+    } finally {
+      isEnhancing = false;
     }
+  }
 
-    applyWorkflowVisibility(currentFlow);
-    relabelTeacherButtons();
+  function scheduleEnhancement() {
+    if (enhanceScheduled) return;
+    enhanceScheduled = true;
+    window.requestAnimationFrame(() => {
+      enhanceScheduled = false;
+      enhanceTeacherAssignmentSetup();
+    });
   }
 
   document.addEventListener("click", (event) => {
@@ -153,9 +172,7 @@
     enhanceTeacherAssignmentSetup();
   });
 
-  const observer = new MutationObserver(() => {
-    window.requestAnimationFrame(enhanceTeacherAssignmentSetup);
-  });
+  const observer = new MutationObserver(scheduleEnhancement);
 
   window.addEventListener("DOMContentLoaded", () => {
     enhanceTeacherAssignmentSetup();
