@@ -828,61 +828,86 @@ function renderWritingBehaviour(submission, assignment) {
 
   const burst = f.meanBurstLength;
   const pauses = f.pauseFrequency;
-  const deletion = f.deletionRatio;
+  const micro = f.microCorrections;
+  const local = f.localRevisions;
+  const substantive = f.substantiveRevisions;
 
-  // CEFR-adjusted healthy ranges based on inputlog group published norms
-  // Lower levels: shorter bursts, more pauses; higher levels: longer bursts, fewer pauses
   const level = (assignment?.languageLevel || "B1").toUpperCase();
+
   const ranges = {
-    "A0": { burst: [2,  8],  pauses: [15, 50], deletion: [0.04, 0.18] },
-    "A1": { burst: [2,  8],  pauses: [15, 50], deletion: [0.04, 0.18] },
-    "A2": { burst: [3,  15], pauses: [8,  35], deletion: [0.05, 0.20] },
-    "B1": { burst: [5,  22], pauses: [6,  28], deletion: [0.05, 0.22] },
-    "B2": { burst: [8,  30], pauses: [4,  22], deletion: [0.06, 0.25] },
-    "C1": { burst: [10, 40], pauses: [3,  18], deletion: [0.06, 0.28] },
-    "C2": { burst: [12, 50], pauses: [2,  15], deletion: [0.06, 0.30] },
+    "A0": { burst: [2,  8],  pauses: [15, 50], local: [3,  20] },
+    "A1": { burst: [2,  8],  pauses: [15, 50], local: [3,  20] },
+    "A2": { burst: [3,  15], pauses: [8,  35], local: [4,  25] },
+    "B1": { burst: [5,  22], pauses: [6,  28], local: [6,  30] },
+    "B2": { burst: [8,  30], pauses: [4,  22], local: [8,  35] },
+    "C1": { burst: [10, 40], pauses: [3,  18], local: [10, 40] },
+    "C2": { burst: [12, 50], pauses: [2,  15], local: [12, 45] },
   };
   const r = ranges[level] || ranges["B1"];
-  const burstRange   = r.burst;
-  const pausesRange  = r.pauses;
-  const deletionRange = r.deletion;
 
-  // Score each metric: 2 = green, 1 = amber, 0 = red
-  function scoreMetric(value, low, high) {
+  // Score each metric on its own scale
+  function scoreInRange(value, low, high) {
     if (value === null || value === undefined) return null;
     if (value >= low && value <= high) return 2;
     if (value >= low * 0.6 && value <= high * 1.4) return 1;
     return 0;
   }
 
-  const scores = [
-    scoreMetric(burst, burstRange[0], burstRange[1]),
-    scoreMetric(pauses, pausesRange[0], pausesRange[1]),
-    scoreMetric(deletion, deletionRange[0], deletionRange[1]),
-  ].filter(s => s !== null);
+  // Burst: 2pts, Pauses: 2pts
+  const scoreBurst  = scoreInRange(burst,  r.burst[0],  r.burst[1]);
+  const scorePauses = scoreInRange(pauses, r.pauses[0], r.pauses[1]);
 
-  if (!scores.length) return "";
+  // Micro-corrections: 1pt — only flags on near-zero absence
+  let scoreMicro = null;
+  if (micro !== null && micro !== undefined) {
+    scoreMicro = micro < 1 ? 0 : 1;
+  }
 
-  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+  // Local revisions: 2pts, CEFR-calibrated
+  const scoreLocal = scoreInRange(local, r.local[0], r.local[1]);
+
+  // Substantive revisions: 1pt — presence is positive, absence is neutral for short texts
+  let scoreSubstantive = null;
+  if (substantive !== null && substantive !== undefined) {
+    const words = wordCount(submission?.finalText || submission?.draftText || "");
+    scoreSubstantive = substantive >= 1 ? 1 : (words < 150 ? 1 : 0);
+  }
+
+  // Weighted total out of 8
+  const weightedScores = [
+    scoreBurst     !== null ? { score: scoreBurst,      weight: 2 } : null,
+    scorePauses    !== null ? { score: scorePauses,     weight: 2 } : null,
+    scoreMicro     !== null ? { score: scoreMicro,      weight: 1 } : null,
+    scoreLocal     !== null ? { score: scoreLocal,      weight: 2 } : null,
+    scoreSubstantive !== null ? { score: scoreSubstantive, weight: 1 } : null,
+  ].filter(Boolean);
+
+  if (!weightedScores.length) return "";
+
+  const totalPoints   = weightedScores.reduce((s, x) => s + x.score * x.weight, 0);
+  const maxPoints     = weightedScores.reduce((s, x) => s + 2 * x.weight, 0);
+  const avg           = totalPoints / maxPoints * 2; // normalise to 0–2 scale
+
   const band = avg >= 1.7 ? "Natural"
     : avg >= 1.2 ? "Likely natural"
     : avg >= 0.6 ? "Uncertain"
     : "Needs review";
 
   const bandColour = avg >= 1.7 ? "#1f5c38" : avg >= 1.2 ? "#5a7a2e" : avg >= 0.6 ? "#9a6512" : "#962f2f";
-  const bandBg    = avg >= 1.7 ? "#eef9f1" : avg >= 1.2 ? "#f4f9e8" : avg >= 0.6 ? "#fff8e8" : "#fff1f1";
-  const bandBorder= avg >= 1.7 ? "#cdece2" : avg >= 1.2 ? "#cde0a0" : avg >= 0.6 ? "#f0d080" : "#f4c7c7";
+  const bandBg     = avg >= 1.7 ? "#eef9f1" : avg >= 1.2 ? "#f4f9e8" : avg >= 0.6 ? "#fff8e8" : "#fff1f1";
+  const bandBorder = avg >= 1.7 ? "#cdece2" : avg >= 1.2 ? "#cde0a0" : avg >= 0.6 ? "#f0d080" : "#f4c7c7";
 
   const explanation = avg >= 1.7
-    ? `Typing rhythm and pause patterns are consistent with independent composition at ${level}.`
+    ? `Typing rhythm, pause patterns, and revision behaviour are consistent with independent composition at ${level}.`
     : avg >= 1.2
     ? `Mostly natural writing behaviour with some variation — consistent with ${level}.`
     : avg >= 0.6
     ? `Some indicators fall outside the expected range for ${level} — worth reviewing alongside the playback.`
-    : `Several indicators are outside the expected range for ${level} — low deletion rate and/or unusual rhythm. Playback recommended.`;
+    : `Several indicators are outside the expected range for ${level}. Playback recommended.`;
 
+  // Indicator for range-based metrics (burst, pauses, local revisions)
   function indicator(label, value, low, high, leftLabel, rightLabel) {
-    const score = scoreMetric(value, low, high);
+    const score = scoreInRange(value, low, high);
     const pct = value === null || value === undefined ? 50
       : Math.min(100, Math.max(0, ((value - low * 0.4) / (high * 1.6 - low * 0.4)) * 100));
     const dotColour = score === 2 ? "#2a7a4f" : score === 1 ? "#c8860a" : "#c24d4d";
@@ -904,7 +929,23 @@ function renderWritingBehaviour(submission, assignment) {
     `;
   }
 
-  const tooltipText = "Based on keystroke-interval analysis grounded in L2 writing research (inputlog group, Révész et al). Healthy ranges reflect published norms for A2 university ESL writers. This indicator is one data point — always interpret alongside the letter-by-letter playback.";
+  // Simple badge for micro-corrections and substantive revisions
+  function badge(label, value, score, note) {
+    const dotColour = score === 1 ? "#2a7a4f" : "#c24d4d";
+    const bgColour  = score === 1 ? "#eef9f1" : "#fff1f1";
+    const display   = value !== null && value !== undefined ? value : "—";
+    return `
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px;">
+        <div style="width:12px;height:12px;border-radius:50%;background:${dotColour};flex-shrink:0;"></div>
+        <span style="font-size:0.78rem;color:var(--ink);">${escapeHtml(label)}</span>
+        <span style="font-size:0.74rem;color:var(--muted);margin-left:auto;">${display}</span>
+        <span style="font-size:0.70rem;padding:1px 7px;border-radius:10px;background:${bgColour};color:${dotColour};">${escapeHtml(note)}</span>
+      </div>
+    `;
+  }
+
+  const microNote = micro < 1 ? "None detected — flag" : "Present — normal";
+  const substantiveNote = substantive >= 1 ? `${substantive} found — positive` : "None — neutral";
 
   return `
     <div style="margin-bottom:16px;padding:14px;border:1px solid ${bandBorder};border-radius:12px;background:${bandBg};position:relative;">
@@ -912,16 +953,20 @@ function renderWritingBehaviour(submission, assignment) {
         <p class="mini-label" style="margin:0;">Writing behaviour</p>
         <span style="font-size:0.82rem;font-weight:700;color:${bandColour};padding:2px 10px;border-radius:20px;border:1px solid ${bandBorder};background:#fff;">${escapeHtml(band)}</span>
         <span onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
-        <div style="display:none;position:absolute;z-index:100;max-width:320px;margin-top:4px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.10);font-size:0.80rem;line-height:1.6;color:var(--ink);">
-          <p style="margin:0 0 8px;">Scores are based on keystroke-interval analysis grounded in L2 writing research. Healthy ranges reflect published norms for ESL writers at this level.</p>
-          <p style="margin:0 0 4px;font-weight:600;">Key references:</p>
-          <p style="margin:0 0 4px;"><a href="https://www.inputlog.net" target="_blank" style="color:var(--accent);">inputlog.net</a> — Keystroke logging research group</p>
-          <p style="margin:0;">Révész, A., Michel, M., & Lee, M. (2019). Investigating the relationship between L2 writing processes and products. <em>Journal of Second Language Writing.</em></p>
+        <div class="fluency-tooltip" style="display:none;position:absolute;z-index:100;max-width:340px;margin-top:4px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.10);font-size:0.80rem;line-height:1.6;color:var(--ink);">
+          <p style="margin:0 0 8px;">Scores are based on keystroke-interval analysis grounded in L2 writing research. Ranges are provisional estimates calibrated to ${level} — they will be refined as real submission data accumulates from this platform.</p>
+          <p style="margin:0 0 6px;font-weight:600;">Key references:</p>
+          <p style="margin:0 0 4px;">Révész, A., Michel, M., Lu, X., et al. (2022). Proficiency, speed fluency, pausing and eye-gaze in L2 writing. <em>Journal of Second Language Writing, 58.</em> — Proficiency strongest predictor of burst length (p&lt;0.01, 13% variance).</p>
+          <p style="margin:0 0 4px;">Crossley, S., Tian, Y., Choi, J.S., Holmes, L., &amp; Morris, W. (2024). Plagiarism Detection Using Keystroke Logs. <em>EDM 2024, 476–483.</em> — Authentic writers delete more, revise more, and produce more variable deletion patterns than transcribers.</p>
+          <p style="margin:0 0 4px;">Barkaoui, K. (2019). L2 writers' pausing behaviour. <em>Studies in Second Language Acquisition, 41(3).</em> — 2-second threshold; lower proficiency = more pauses.</p>
+          <p style="margin:0;color:var(--muted);font-style:italic;">This panel is one signal — always interpret alongside the letter-by-letter playback. No single indicator is conclusive.</p>
         </div>
       </div>
-      ${indicator("Typing rhythm", burst, burstRange[0], burstRange[1], "Hesitant", "Unusually fast")}
-      ${indicator("Thinking pauses", pauses, pausesRange[0], pausesRange[1], "Very few", "Frequent")}
-      ${indicator("Revision pattern", deletion, deletionRange[0], deletionRange[1], "Minimal edits", "Heavy revision")}
+      ${indicator("Typing rhythm",      burst,  r.burst[0],  r.burst[1],  "Hesitant", "Unusually fast")}
+      ${indicator("Thinking pauses",    pauses, r.pauses[0], r.pauses[1], "Very few",  "Frequent")}
+      ${indicator("Local revisions / 100w", local, r.local[0], r.local[1], "Minimal", "Extensive")}
+      ${badge("Micro-corrections / 100w", micro, scoreMicro, microNote)}
+      ${badge("Substantive revisions", substantive, scoreSubstantive, substantiveNote)}
       <p style="margin:10px 0 0;font-size:0.80rem;color:${bandColour};line-height:1.5;">${escapeHtml(explanation)}</p>
     </div>
   `;
