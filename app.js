@@ -5948,6 +5948,70 @@ function renderStudentDraftStep(assignment, submission) {
   `;
 }
 
+function renderStudentReviewStep(assignment, submission) {
+  const feedbackEntries = safeArray(submission?.aiFeedback);
+  const feedbackLimit = assignment?.feedbackLimit ?? 3;
+  const feedbackUsed = feedbackEntries.length;
+  const feedbackDisabled = feedbackUsed >= feedbackLimit;
+
+  return `
+    <div class="step-card wizard-card">
+      <div class="step-head">
+        <div>
+          <div class="step-number">3</div>
+          <h3>Review feedback and write your final version</h3>
+          <p class="subtle">Use the AI feedback on your draft to help you improve. Write your final version in the box below.</p>
+        </div>
+      </div>
+      <div class="field-grid compact-grid">
+        <div class="field inline-end">
+          <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
+        </div>
+      </div>
+      <div class="feedback-list">
+        ${
+          feedbackEntries.length
+            ? feedbackEntries.slice().reverse().map((entry) => {
+                const errorCodes = getErrorCodes();
+                const items = safeArray(entry.items).map((item) => String(item || "").trim()).filter(Boolean);
+                const hasCode = errorCodes.some(({code}) => items.some((item) => item.includes(`[${code}]`)));
+                return `
+                  <div class="feedback-card">
+                    <strong>${escapeHtml(formatDateTime(entry.timestamp))}</strong>
+                    <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+                    ${hasCode ? `
+                      <div class="error-code-key">
+                        <p>Code key</p>
+                        <dl>${errorCodes.filter(({code}) => items.some((item) => item.includes(`[${code}]`))).map(({code, label}) => `<dt>${code}</dt><dd>${escapeHtml(label)}</dd>`).join("")}</dl>
+                      </div>` : ""}
+                  </div>`;
+              }).join("")
+            : `<div class="empty-state compact-empty"><h3>No AI feedback yet</h3><p>Click "Get AI feedback" to get suggestions on your draft before you write your final version.</p></div>`
+        }
+      </div>
+      <div class="pill-row" style="margin-bottom:8px;margin-top:16px;">
+        <button class="button-ghost" data-action="scroll-editor-top" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to top</button>
+        <button class="button-ghost" data-action="scroll-editor-bottom" data-target="final-editor" style="font-size:0.8rem;min-height:32px;">Jump to bottom</button>
+      </div>
+      <div class="editor-with-lines">
+        <div class="line-gutter" id="final-editor-gutter" aria-hidden="true"></div>
+        <textarea id="final-editor" class="final-editor" data-line-gutter="final-editor-gutter" placeholder="Write your final version here.">${escapeHtml(submission.finalText || submission.draftText)}</textarea>
+      </div>
+      <div class="pill-row">
+        <span class="pill">Final words: <strong id="final-word-count">${wordCount(submission.finalText || submission.draftText)}</strong></span>
+        <span class="pill" id="autosave-indicator" style="opacity:0;transition:opacity 0.5s;">Saved</span>
+      </div>
+      <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
+      <div class="wizard-nav">
+        <button class="button-ghost" data-action="student-prev-step" data-step="2">Back</button>
+        <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
+        <button class="button" data-action="student-next-step" data-step="4" ${!submission.finalText?.trim() && !submission.draftText?.trim() ? "disabled" : ""}>Next</button>
+      </div>
+      ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
+    </div>
+  `;
+}
+
 function renderStudentFinalStep(assignment, submission) {
   const selfAssessment = submission.selfAssessment || {};
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
