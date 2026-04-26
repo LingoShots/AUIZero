@@ -52,18 +52,26 @@
       .map(([node]) => node)[0] || buttons[0].parentElement;
   }
 
+  function renderCodeStrip() {
+    return CODES.map((entry) => `
+      <span title="${entry.code} — ${entry.label}: ${entry.explanation}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:3px 8px;background:#fff;color:var(--ink);">
+        <strong style="color:var(--accent-deep);">${entry.code}</strong>
+        <span style="color:var(--muted);">${entry.label}</span>
+      </span>
+    `).join("");
+  }
+
   function renderLegend() {
     return `
       <div id="annotation-code-help" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-          <div>
-            <p class="mini-label" style="margin-bottom:4px;">Annotation tools</p>
-            <p class="subtle" style="margin:0;font-size:0.84rem;line-height:1.45;">Select part of the student's text, then choose a feedback code. Students see the code and your highlighted comment in the marked copy.</p>
-          </div>
-          <button class="button-secondary" type="button" data-toggle-annotation-help style="font-size:0.78rem;padding:6px 10px;">What do these codes mean?</button>
+        <p class="mini-label" style="margin-bottom:4px;">Annotation tools</p>
+        <p class="subtle" style="margin:0 0 10px;font-size:0.84rem;line-height:1.45;">Select part of the student's text, then choose a feedback code. Students see the code and your highlighted comment in the marked copy.</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+          ${renderCodeStrip()}
         </div>
-        <div data-annotation-help-body style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:10px;">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;">
+        <details style="border-top:1px solid var(--line);padding-top:9px;">
+          <summary style="cursor:pointer;font-size:0.82rem;font-weight:700;color:var(--accent-deep);list-style-position:inside;">What do these codes mean?</summary>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin-top:10px;">
             ${CODES.map((entry) => `
               <div style="display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:10px;background:#fff;">
                 <span style="font-size:0.76rem;font-weight:800;color:var(--accent-deep);border:1px solid var(--accent);background:#fffaf0;border-radius:8px;padding:2px 6px;min-width:38px;text-align:center;">${entry.code}</span>
@@ -71,7 +79,7 @@
               </div>
             `).join("")}
           </div>
-        </div>
+        </details>
       </div>
     `;
   }
@@ -110,16 +118,6 @@
       enhanceAnnotationTools();
     });
   }
-
-  document.addEventListener("click", (event) => {
-    const toggle = event.target.closest("[data-toggle-annotation-help]");
-    if (!toggle) return;
-    const body = document.querySelector("[data-annotation-help-body]");
-    if (!body) return;
-    const isOpen = body.style.display !== "none";
-    body.style.display = isOpen ? "none" : "block";
-    toggle.textContent = isOpen ? "What do these codes mean?" : "Hide code guide";
-  });
 
   const observer = new MutationObserver(scheduleEnhancement);
 
