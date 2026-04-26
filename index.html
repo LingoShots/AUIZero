@@ -17,14 +17,5 @@
     <script src="app.js" defer></script>
     <script src="teacher-assignment-choice.js" defer></script>
     <script src="teacher-annotation-help.js" defer></script>
-    <script src="admin-prefer-teacher-control.js" defer></script>
-    <script>
-  document.addEventListener('click', function(e) {
-    if (e.target.closest('[onclick*="nextElementSibling"]')) return;
-    document.querySelectorAll('.fluency-tooltip').forEach(function(tip) {
-      if (!tip.contains(e.target)) tip.style.display = 'none';
-    });
-  });
-</script>
   </body>
 </html>
