@@ -35,10 +35,11 @@
       || codeButtonCount(element) >= 4;
   }
 
-  function getCodeButtons() {
+  function getCodeButtons({ includeHidden = false } = {}) {
     return Array.from(document.querySelectorAll("button"))
-      .filter(isVisible)
+      .filter((button) => includeHidden || isVisible(button))
       .filter((button) => CODE_RE.test((button.textContent || "").trim()))
+      .filter((button) => !button.matches("[data-annotation-proxy-code]"))
       .filter((button) => {
         let node = button.parentElement;
         let depth = 0;
@@ -72,12 +73,25 @@
       .map(([node]) => node)[0] || buttons[0].parentElement;
   }
 
+  function findOriginalCodeButton(code) {
+    return getCodeButtons({ includeHidden: true })
+      .find((button) => (button.textContent || "").trim() === code);
+  }
+
+  function hideOriginalCodeButtons(buttons) {
+    buttons.forEach((button) => {
+      button.style.display = "none";
+      button.setAttribute("aria-hidden", "true");
+      button.tabIndex = -1;
+    });
+  }
+
   function renderCodeStrip() {
     return CODES.map((entry) => `
-      <span title="${entry.code} — ${entry.label}: ${entry.explanation}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:3px 8px;background:#fff;color:var(--ink);">
+      <button type="button" data-annotation-proxy-code="${entry.code}" title="${entry.code} — ${entry.label}: ${entry.explanation}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:#fff;color:var(--ink);cursor:pointer;">
         <strong style="color:var(--accent-deep);">${entry.code}</strong>
         <span style="color:var(--muted);">${entry.label}</span>
-      </span>
+      </button>
     `).join("");
   }
 
@@ -116,18 +130,20 @@
 
   function enhanceAnnotationTools() {
     const buttons = getCodeButtons();
-    if (!buttons.length) return;
+    if (!buttons.length && !document.getElementById("annotation-code-help")) return;
 
     addButtonTooltips(buttons);
 
-    if (document.getElementById("annotation-code-help")) return;
+    if (!document.getElementById("annotation-code-help")) {
+      const toolbar = findToolbarContainer(buttons);
+      if (!toolbar || !toolbar.parentElement) return;
 
-    const toolbar = findToolbarContainer(buttons);
-    if (!toolbar || !toolbar.parentElement) return;
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderLegend().trim();
+      toolbar.parentElement.insertBefore(wrapper.firstElementChild, toolbar);
+    }
 
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = renderLegend().trim();
-    toolbar.parentElement.insertBefore(wrapper.firstElementChild, toolbar);
+    hideOriginalCodeButtons(getCodeButtons());
   }
 
   function scheduleEnhancement() {
@@ -138,6 +154,13 @@
       enhanceAnnotationTools();
     });
   }
+
+  document.addEventListener("click", (event) => {
+    const proxy = event.target.closest("[data-annotation-proxy-code]");
+    if (!proxy) return;
+    const original = findOriginalCodeButton(proxy.dataset.annotationProxyCode);
+    original?.click();
+  });
 
   const observer = new MutationObserver(scheduleEnhancement);
 
