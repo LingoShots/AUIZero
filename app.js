@@ -6922,7 +6922,7 @@ function getStudentSubmission() {
 }
 
 function rememberStudentStep(step, assignmentId = ui.selectedStudentAssignmentId) {
-  const nextStep = clamp(Number(step || 1), 1, 3);
+  const nextStep = clamp(Number(step || 1), 1, 4);
   ui.studentStep = nextStep;
   if (!assignmentId) return nextStep;
   ui.studentStepOverrides = ui.studentStepOverrides || {};
@@ -6933,7 +6933,7 @@ function rememberStudentStep(step, assignmentId = ui.selectedStudentAssignmentId
 function getRememberedStudentStep(assignmentId = ui.selectedStudentAssignmentId) {
   if (!assignmentId) return null;
   const remembered = Number(ui.studentStepOverrides?.[assignmentId] || 0);
-  return remembered >= 1 && remembered <= 3 ? remembered : null;
+  return remembered >= 1 && remembered <= 4 ? remembered : null;
 }
 
 function getStudentStepForSubmission(submission) {
