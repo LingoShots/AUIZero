@@ -919,16 +919,28 @@ function renderWritingBehaviour(submission, assignment) {
     ? `Some indicators fall outside the expected range for ${level} — worth reviewing alongside the playback.`
     : `Several indicators are outside the expected range for ${level}. Playback recommended.`;
 
+    function metricHelp(text) {
+    return `
+      <span onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:0.68rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
+      <span class="fluency-tooltip" style="display:none;position:absolute;z-index:120;max-width:300px;margin-top:20px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.10);font-size:0.78rem;line-height:1.5;color:var(--ink);">
+        ${escapeHtml(text)}
+      </span>
+    `;
+  }
+
   // Indicator for range-based metrics (burst, pauses, local revisions)
-  function indicator(label, value, low, high, leftLabel, rightLabel) {
+  function indicator(label, value, low, high, leftLabel, rightLabel, helpText) {
     const score = scoreInRange(value, low, high);
     const pct = value === null || value === undefined ? 50
       : Math.min(100, Math.max(0, ((value - low * 0.4) / (high * 1.6 - low * 0.4)) * 100));
     const dotColour = score === 2 ? "#2a7a4f" : score === 1 ? "#c8860a" : "#c24d4d";
     return `
-      <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-          <span style="font-size:0.78rem;color:var(--ink);">${escapeHtml(label)}</span>
+      <div style="margin-bottom:10px;position:relative;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;gap:8px;">
+          <span style="font-size:0.78rem;color:var(--ink);display:inline-flex;align-items:center;gap:5px;">
+            ${escapeHtml(label)}
+            ${metricHelp(helpText)}
+          </span>
           <span style="font-size:0.74rem;color:var(--muted);">${value !== null && value !== undefined ? value : "—"}</span>
         </div>
         <div style="position:relative;height:6px;border-radius:3px;background:#e8e8e4;">
@@ -943,21 +955,24 @@ function renderWritingBehaviour(submission, assignment) {
     `;
   }
 
-  // Simple badge for micro-corrections and substantive revisions
-  function badge(label, value, score, note) {
+    // Simple badge for micro-corrections and substantive revisions
+  function badge(label, value, score, note, helpText) {
     const dotColour = score === 1 ? "#2a7a4f" : "#c24d4d";
     const bgColour  = score === 1 ? "#eef9f1" : "#fff1f1";
     const display   = value !== null && value !== undefined ? value : "—";
     return `
-      <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px;">
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px;position:relative;">
         <div style="width:12px;height:12px;border-radius:50%;background:${dotColour};flex-shrink:0;"></div>
-        <span style="font-size:0.78rem;color:var(--ink);">${escapeHtml(label)}</span>
+        <span style="font-size:0.78rem;color:var(--ink);display:inline-flex;align-items:center;gap:5px;">
+          ${escapeHtml(label)}
+          ${metricHelp(helpText)}
+        </span>
         <span style="font-size:0.74rem;color:var(--muted);margin-left:auto;">${display}</span>
         <span style="font-size:0.70rem;padding:1px 7px;border-radius:10px;background:${bgColour};color:${dotColour};">${escapeHtml(note)}</span>
       </div>
     `;
   }
-
+  
   const microNote = micro < 1 ? "None detected — flag" : "Present — normal";
   const substantiveNote = substantive >= 1 ? `${substantive} found — positive` : "None — neutral";
 
@@ -979,11 +994,11 @@ function renderWritingBehaviour(submission, assignment) {
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 12px;">
         ${bandScale}
       </div>
-      ${indicator("Typing rhythm",      burst,  r.burst[0],  r.burst[1],  "Hesitant", "Unusually fast")}
-      ${indicator("Thinking pauses",    pauses, r.pauses[0], r.pauses[1], "Very few",  "Frequent")}
-      ${indicator("Local revisions / 100w", local, r.local[0], r.local[1], "Minimal", "Extensive")}
-      ${badge("Micro-corrections / 100w", micro, scoreMicro, microNote)}
-      ${badge("Substantive revisions", substantive, scoreSubstantive, substantiveNote)}
+      ${indicator("Typing rhythm", burst, r.burst[0], r.burst[1], "Hesitant", "Unusually fast", "How much the student tends to write before stopping to think. Very short bursts can mean hesitation. Very long bursts can sometimes mean text was inserted too smoothly, so it is worth checking the playback.")}
+      ${indicator("Thinking pauses", pauses, r.pauses[0], r.pauses[1], "Very few", "Frequent", "How often the student pauses for more than 2 seconds while writing. Some pauses are normal because real writers stop to think, plan, and reread. Very few pauses or constant pauses can both be worth checking.")}
+      ${indicator("Local revisions / 100w", local, r.local[0], r.local[1], "Minimal", "Extensive", "Medium-sized edits per 100 words, such as changing a phrase, correcting grammar, or reworking part of a sentence. Real writing usually includes some local revision.")}
+      ${badge("Micro-corrections / 100w", micro, scoreMicro, microNote, "Tiny corrections per 100 words, such as fixing a letter, typo, or small spelling mistake. If there are almost none, it can be unusual because most people make small corrections while typing.")}
+      ${badge("Substantive revisions", substantive, scoreSubstantive, substantiveNote, "Bigger changes, such as deleting or rewriting a larger section. This is usually a positive sign of process writing, but having none is not automatically bad, especially for short texts.")}
       <p style="margin:10px 0 0;font-size:0.80rem;color:${bandColour};line-height:1.5;">${escapeHtml(explanation)}</p>
     </div>
   `;
