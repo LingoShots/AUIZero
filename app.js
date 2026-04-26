@@ -5696,6 +5696,9 @@ function renderStudentWorkspace() {
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
   const currentClass = currentClasses.find(c => c.id === currentClassId);
+  const hasOtherGradedWork = assignmentBuckets.submitted.some(({ assignment: item, isGraded }) =>
+    isGraded && item.id !== ui.selectedStudentAssignmentId
+  );
 
   return `
     <section class="student-shell">
@@ -5769,10 +5772,10 @@ function renderStudentWorkspace() {
           <div class="pill-row" style="margin-top:-4px;">
             <span class="pill">${assignmentBuckets.current.length} current</span>
             <span class="pill">${assignmentBuckets.submitted.length} submitted</span>
-            ${assignmentBuckets.submitted.some(({ isGraded }) => isGraded) ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded work available</span>` : ""}
+            ${hasOtherGradedWork ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ Graded work available</span>` : ""}
           </div>
         ` : ""}
-        ${assignmentBuckets.submitted.some(({ isGraded }) => isGraded) ? `<p class="subtle" style="margin-top:8px;font-size:0.84rem;">Open any assignment marked <strong>Graded</strong> to view your teacher’s notes, rubric breakdown, and marked copy.</p>` : ""}
+        ${hasOtherGradedWork ? `<p class="subtle" style="margin-top:8px;font-size:0.84rem;">Open any assignment marked <strong>Graded</strong> to view your teacher’s notes, rubric breakdown, and marked copy.</p>` : ""}
         ${
           !assignments.length
             ? `<div class="empty-state"><h3>Nothing here yet</h3><p>Your teacher hasn't published any assignments yet.</p></div>`
