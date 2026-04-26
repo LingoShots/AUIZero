@@ -1,115 +1,110 @@
 (() => {
-  const CODES = [
-    { code: "CS",  label: "Comma splice", explanation: "Two complete sentences joined with only a comma." },
-    { code: "RO",  label: "Run-on", explanation: "Two or more sentences run together without correct punctuation." },
-    { code: "FR",  label: "Fragment", explanation: "An incomplete sentence, usually missing a subject, verb, or complete idea." },
-    { code: "P",   label: "Punctuation", explanation: "A period, comma, apostrophe, or other punctuation mark needs attention." },
-    { code: "VT",  label: "Verb tense", explanation: "The verb tense does not match the time or tense of the surrounding text." },
-    { code: "WF",  label: "Word form", explanation: "The word is in the wrong form, such as an adjective where an adverb is needed." },
-    { code: "AGR", label: "Agreement", explanation: "Parts of the sentence do not agree, such as subject–verb or noun–pronoun agreement." },
-    { code: "SP",  label: "Spelling", explanation: "A spelling error or typo." },
+  const FALLBACK_CODES = [
+    { code: "CS", label: "Comma splice" },
+    { code: "RO", label: "Run-on" },
+    { code: "FR", label: "Fragment" },
+    { code: "P", label: "Punctuation" },
+    { code: "VT", label: "Verb tense" },
+    { code: "WF", label: "Word form" },
+    { code: "AGR", label: "Agreement" },
+    { code: "SP", label: "Spelling" },
   ];
 
-  const CODE_MAP = new Map(CODES.map((entry) => [entry.code, entry]));
-  const CODE_RE = /^(CS|RO|FR|P|VT|WF|AGR|SP)$/;
-  let enhanceScheduled = false;
+  let scheduled = false;
 
-  function isVisible(element) {
-    return Boolean(element && element.offsetParent !== null);
+  function readCodes() {
+    try {
+      if (typeof getErrorCodes === "function") {
+        const codes = getErrorCodes();
+        if (Array.isArray(codes) && codes.length) return codes;
+      }
+    } catch (_) {}
+    return FALLBACK_CODES;
   }
 
-  function codeButtonCount(element) {
-    return Array.from(element?.querySelectorAll?.("button") || [])
-      .filter((btn) => CODE_RE.test((btn.textContent || "").trim()))
-      .length;
+  function cleanCodes() {
+    const seen = new Set();
+    return readCodes()
+      .map((entry) => ({
+        code: String(entry?.code || "").trim().toUpperCase().slice(0, 8),
+        label: String(entry?.label || "Custom code").trim(),
+      }))
+      .filter((entry) => entry.code && entry.label)
+      .filter((entry) => {
+        if (seen.has(entry.code)) return false;
+        seen.add(entry.code);
+        return true;
+      });
   }
 
-  function looksLikeAnnotationArea(element) {
-    const text = (element?.textContent || "").toLowerCase();
-    return text.includes("annotate")
-      || text.includes("annotation")
-      || text.includes("select text")
-      || text.includes("student text")
-      || text.includes("+ note")
-      || text.includes("+ code")
-      || codeButtonCount(element) >= 4;
+  function shortLabel(label) {
+    return String(label || "Custom code").split(":")[0]
+      .replace(/^Wrong\s+/i, "")
+      .replace(/^Missing\s+/i, "")
+      .trim();
   }
 
-  function getCodeButtons({ includeHidden = false } = {}) {
+  function codeSet() {
+    return new Set(cleanCodes().map((entry) => entry.code));
+  }
+
+  function isCodeButton(button) {
+    if (!button || button.matches("[data-annotation-proxy-code]")) return false;
+    const text = String(button.textContent || "").trim().toUpperCase();
+    return codeSet().has(text);
+  }
+
+  function toolbarLooksRight(element) {
+    const text = String(element?.textContent || "").toLowerCase();
+    return text.includes("annotate") || text.includes("+ note") || text.includes("+ code");
+  }
+
+  function findOriginalButtons() {
     return Array.from(document.querySelectorAll("button"))
-      .filter((button) => includeHidden || isVisible(button))
-      .filter((button) => CODE_RE.test((button.textContent || "").trim()))
-      .filter((button) => !button.matches("[data-annotation-proxy-code]"))
+      .filter(isCodeButton)
       .filter((button) => {
         let node = button.parentElement;
-        let depth = 0;
-        while (node && depth < 7) {
-          if (looksLikeAnnotationArea(node)) return true;
+        for (let i = 0; node && i < 7; i += 1) {
+          if (toolbarLooksRight(node)) return true;
           node = node.parentElement;
-          depth += 1;
         }
         return false;
       });
   }
 
-  function findToolbarContainer(buttons) {
-    if (!buttons.length) return null;
-    const candidateCounts = new Map();
-    buttons.forEach((button) => {
-      let node = button.parentElement;
-      let depth = 0;
-      while (node && depth < 7) {
-        const count = codeButtonCount(node);
-        if (count >= Math.min(3, buttons.length)) {
-          candidateCounts.set(node, count);
-        }
-        node = node.parentElement;
-        depth += 1;
-      }
-    });
-
-    return Array.from(candidateCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([node]) => node)[0] || buttons[0].parentElement;
+  function findToolbar(buttons) {
+    const first = buttons[0];
+    if (!first) return null;
+    let node = first.parentElement;
+    let best = node;
+    for (let i = 0; node && i < 7; i += 1) {
+      if (toolbarLooksRight(node)) best = node;
+      node = node.parentElement;
+    }
+    return best;
   }
 
-  function findOriginalCodeButton(code) {
-    return getCodeButtons({ includeHidden: true })
-      .find((button) => (button.textContent || "").trim() === code);
-  }
-
-  function hideOriginalCodeButtons(buttons) {
-    buttons.forEach((button) => {
-      button.style.display = "none";
-      button.setAttribute("aria-hidden", "true");
-      button.tabIndex = -1;
-    });
-  }
-
-  function renderCodeStrip() {
-    return CODES.map((entry) => `
-      <button type="button" data-annotation-proxy-code="${entry.code}" title="${entry.code} — ${entry.label}: ${entry.explanation}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:#fff;color:var(--ink);cursor:pointer;">
-        <strong style="color:var(--accent-deep);">${entry.code}</strong>
-        <span style="color:var(--muted);">${entry.label}</span>
-      </button>
-    `).join("");
-  }
-
-  function renderLegend() {
+  function renderGuide(codes) {
+    const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
     return `
-      <div id="annotation-code-help" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;">
+      <div id="annotation-code-help" data-code-signature="${signature}" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;">
         <p class="mini-label" style="margin-bottom:4px;">Annotation tools</p>
-        <p class="subtle" style="margin:0 0 10px;font-size:0.84rem;line-height:1.45;">Select part of the student's text, then choose a feedback code. Students see the code and your highlighted comment in the marked copy.</p>
+        <p class="subtle" style="margin:0 0 10px;font-size:0.84rem;line-height:1.45;">Select part of the student's text, then choose a feedback code.</p>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
-          ${renderCodeStrip()}
+          ${codes.map((entry) => `
+            <button type="button" data-annotation-proxy-code="${entry.code}" title="${entry.label}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:#fff;color:var(--ink);cursor:pointer;">
+              <strong style="color:var(--accent-deep);">${entry.code}</strong>
+              <span style="color:var(--muted);">${shortLabel(entry.label)}</span>
+            </button>
+          `).join("")}
         </div>
         <details style="border-top:1px solid var(--line);padding-top:9px;">
           <summary style="cursor:pointer;font-size:0.82rem;font-weight:700;color:var(--accent-deep);list-style-position:inside;">What do these codes mean?</summary>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin-top:10px;">
-            ${CODES.map((entry) => `
+            ${codes.map((entry) => `
               <div style="display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:10px;background:#fff;">
                 <span style="font-size:0.76rem;font-weight:800;color:var(--accent-deep);border:1px solid var(--accent);background:#fffaf0;border-radius:8px;padding:2px 6px;min-width:38px;text-align:center;">${entry.code}</span>
-                <span style="font-size:0.78rem;line-height:1.4;color:var(--ink);"><strong>${entry.label}:</strong> ${entry.explanation}</span>
+                <span style="font-size:0.78rem;line-height:1.4;color:var(--ink);"><strong>${shortLabel(entry.label)}:</strong> ${entry.label}</span>
               </div>
             `).join("")}
           </div>
@@ -118,54 +113,59 @@
     `;
   }
 
-  function addButtonTooltips(buttons) {
-    buttons.forEach((button) => {
-      const code = (button.textContent || "").trim();
-      const entry = CODE_MAP.get(code);
-      if (!entry) return;
-      button.title = `${code} — ${entry.label}: ${entry.explanation}`;
-      button.setAttribute("aria-label", `${code}: ${entry.label}. ${entry.explanation}`);
+  function enhance() {
+    const buttons = findOriginalButtons();
+    if (!buttons.length && !document.getElementById("annotation-code-help")) return;
+
+    const codes = cleanCodes();
+    const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
+    let guide = document.getElementById("annotation-code-help");
+
+    if (!guide) {
+      const toolbar = findToolbar(buttons);
+      if (!toolbar || !toolbar.parentElement) return;
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderGuide(codes).trim();
+      guide = wrapper.firstElementChild;
+      toolbar.parentElement.insertBefore(guide, toolbar);
+    } else if (guide.dataset.codeSignature !== signature) {
+      const open = Boolean(guide.querySelector("details")?.open);
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderGuide(codes).trim();
+      const next = wrapper.firstElementChild;
+      const details = next.querySelector("details");
+      if (details) details.open = open;
+      guide.replaceWith(next);
+    }
+
+    findOriginalButtons().forEach((button) => {
+      button.style.display = "none";
+      button.tabIndex = -1;
+      button.setAttribute("aria-hidden", "true");
     });
   }
 
-  function enhanceAnnotationTools() {
-    const buttons = getCodeButtons();
-    if (!buttons.length && !document.getElementById("annotation-code-help")) return;
-
-    addButtonTooltips(buttons);
-
-    if (!document.getElementById("annotation-code-help")) {
-      const toolbar = findToolbarContainer(buttons);
-      if (!toolbar || !toolbar.parentElement) return;
-
-      const wrapper = document.createElement("div");
-      wrapper.innerHTML = renderLegend().trim();
-      toolbar.parentElement.insertBefore(wrapper.firstElementChild, toolbar);
-    }
-
-    hideOriginalCodeButtons(getCodeButtons());
-  }
-
-  function scheduleEnhancement() {
-    if (enhanceScheduled) return;
-    enhanceScheduled = true;
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
     window.requestAnimationFrame(() => {
-      enhanceScheduled = false;
-      enhanceAnnotationTools();
+      scheduled = false;
+      enhance();
     });
   }
 
   document.addEventListener("click", (event) => {
     const proxy = event.target.closest("[data-annotation-proxy-code]");
     if (!proxy) return;
-    const original = findOriginalCodeButton(proxy.dataset.annotationProxyCode);
+    const targetCode = proxy.dataset.annotationProxyCode;
+    const original = findOriginalButtons().find((button) => String(button.textContent || "").trim().toUpperCase() === targetCode);
     original?.click();
   });
 
-  const observer = new MutationObserver(scheduleEnhancement);
+  const observer = new MutationObserver(schedule);
 
   window.addEventListener("DOMContentLoaded", () => {
-    enhanceAnnotationTools();
+    enhance();
     const app = document.getElementById("app");
     if (app) observer.observe(app, { childList: true, subtree: true });
   });
