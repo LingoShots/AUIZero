@@ -6509,17 +6509,14 @@ function getRenderableDraftFeedbackEntries(assignment, submission) {
 async function handleSubmission() {
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
-  const finalEditor = document.getElementById("final-editor");
-  if (!submission || !finalEditor || !assignment) {
+  if (!submission || !assignment) {
     return;
   }
-  const finalText = finalEditor.value.trim();
+  const finalEditor = document.getElementById("final-editor");
+  const finalText = finalEditor ? finalEditor.value.trim() : submission.finalText?.trim();
   if (!finalText) {
     ui.notice = "Write your final text before submitting.";
     render();
-    window.requestAnimationFrame(() => {
-      document.getElementById("final-editor")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
     return;
   }
   submission.fluencySummary = calculateFluencySummary(submission);
