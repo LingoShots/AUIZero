@@ -8,7 +8,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 const app = express();
 app.use(express.static(__dirname));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }))
 
 // Supabase admin client (service role — server only)
 const SUPABASE_SERVER_KEY =
