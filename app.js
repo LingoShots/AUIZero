@@ -5786,10 +5786,10 @@ function renderStudentWorkspace() {
               ? `<div class="empty-state"><h3>No assignment yet</h3><p>Choose an assignment from the dropdown above to get started.</p></div>`
               : `
                 <div class="student-progress">
-                  ${[1, 2, 3].map((step) => `
+                  ${[1, 2, 3, 4].map((step) => `
                     <div class="progress-step ${ui.studentStep === step ? "active" : ui.studentStep > step ? "done" : ""}">
                       <span>${step}</span>
-                      <strong>${step === 1 ? "Get ideas" : step === 2 ? "Write draft" : "Finish and submit"}</strong>
+                      <strong>${step === 1 ? "Get ideas" : step === 2 ? "Write draft" : step === 3 ? "Review & finalise" : "Submit"}</strong>
                     </div>
                   `).join("")}
                 </div>
@@ -6964,7 +6964,7 @@ function hydrateSelections() {
     saveStudentAssignmentId(ui.selectedStudentAssignmentId);
   }
 
-  ui.studentStep = clamp(ui.studentStep, 1, 3);
+  ui.studentStep = clamp(ui.studentStep, 1, 4);
   const studentSubmission = ensureStudentSubmission();
   if (studentSubmission) {
     const rememberedStep = getRememberedStudentStep(ui.selectedStudentAssignmentId);
