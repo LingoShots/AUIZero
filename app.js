@@ -1866,7 +1866,7 @@ async function bootApp(profile) {
     recoverStudentActiveClass(profile);
   }
   hydrateSelections();
-  if (profile.role !== 'teacher' && ui.selectedStudentAssignmentId) {
+  if (profile.role === 'student' && ui.selectedStudentAssignmentId) {
     await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
   }
   render();
@@ -5304,7 +5304,13 @@ function renderTeacherWorkspace() {
       </div>
       ${hasUploadedRubricPreview ? `
         <div class="panel panel-tight" style="grid-column:1 / -1;">
-          ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData, ui.teacherDraft.uploadedRubricSchema)}
+         ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData, ui.teacherDraft.uploadedRubricSchema)}
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+          <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>
+            ${ui.editingAssignmentId ? "Update assignment" : "Save assignment"}
+          </button>
+        </div>
         </div>
       ` : ""}
     </section>
