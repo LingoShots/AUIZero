@@ -120,7 +120,7 @@
             <p class="mini-label" style="margin-bottom:3px;">Final step</p>
             <p id="ai-assignment-save-hint" class="subtle" style="margin:0;font-size:0.84rem;">Review the student-ready version and settings above, then save when ready.</p>
           </div>
-          <button class="button" type="button" data-ai-settings-save="true">Save assignment</button>
+          <button class="button" type="button" data-ai-settings-save="true" onclick="console.log('[AI direct save clicked]'); window.saveCurrentTeacherAssignment && window.saveCurrentTeacherAssignment()">Save assignment</button>
         </div>
       </div>
     `;
