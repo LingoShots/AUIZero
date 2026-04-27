@@ -310,6 +310,8 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
 
 async function parseRubricBuffer(buffer, mimeType = '', fileName = 'Uploaded rubric') {
   const text = await extractTextFromBuffer(buffer, mimeType, fileName);
+  console.log("EXTRACTED TEXT LENGTH:", text.length);
+  console.log("EXTRACTED TEXT PREVIEW:", text.slice(0, 500));
   const schema = await parseWithClaude(text, fileName);
   return {
     text,
