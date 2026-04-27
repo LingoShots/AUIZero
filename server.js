@@ -24,6 +24,14 @@ const supabase = createClient(
   SUPABASE_SERVER_KEY
 );
 
+if (!SUPABASE_SERVER_KEY) {
+  console.error(
+    '[STARTUP ERROR] SUPABASE_SERVICE_ROLE_KEY is not set. ' +
+    'The server will use anonymous Supabase access, which is blocked by RLS for write operations. ' +
+    'Set SUPABASE_SERVICE_ROLE_KEY in your environment variables (.env or hosting platform).'
+  );
+}
+
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const NOTIFY_FROM_EMAIL =
   process.env.NOTIFY_FROM_EMAIL ||
@@ -919,9 +927,9 @@ app.post('/api/classes/:classId/assignments', async (req, res) => {
     if (error) {
       if (/row-level security policy/i.test(error.message || "")) {
         return res.status(400).json({
-          error: SUPABASE_BROWSER_KEY
-            ? 'Assignment save is blocked by Supabase RLS for this teacher account. Please check the assignments insert policy in Supabase.'
-            : 'Assignment save is blocked by Supabase RLS. Check that the server deploy is using SUPABASE_SERVICE_ROLE_KEY (or set SUPABASE_ANON_KEY so the server can write with the teacher session).'
+         error: SUPABASE_SERVER_KEY
+            ? 'Assignment save is blocked by Supabase RLS. The service role key is set but Supabase rejected the write — check the assignments INSERT policy in your Supabase dashboard.'
+            : 'Assignment save failed: SUPABASE_SERVICE_ROLE_KEY is missing from server environment. Add it to your .env file or hosting platform settings.'
         });
       }
       return res.status(400).json({ error: error.message });
