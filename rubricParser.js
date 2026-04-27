@@ -40,9 +40,11 @@ RULES:
 - Put deduction rules or special instructions into notes.
 - Preserve meaningful wording from the source so the rubric still feels like the original document.
 - Text such as "may be missing", "unclear", "ineffective", or "irrelevant" is valid descriptor content, not an empty field. Preserve it.
-- If several subparts share one score range AND one merged score cell (i.e. the score column visually spans multiple rows in the original table), keep them inside a single criterion.
-- For paragraph rubrics, only combine subparts (topic sentence, supporting details, transitions, concluding sentence) into one criterion if they share a single merged score cell. If each row has its OWN labeled point range (e.g. "1–5 points" appears on each row), treat each as a SEPARATE criterion.
-- Count the number of distinct labeled criteria with their own point range. Each one that has its own "X points" or "X–Y points" label must become its own criterion object. Do not merge criteria that each have their own point range.
+- Count scored criteria by finding every row that has its own explicit point label (e.g. "1 – 5 points", "1– 5 points", "1-5 points"). Each such row is exactly one criterion object. Do not merge them.
+- Rows with no criterion name and no point label are sub-parts of the criterion above them. Fold their descriptors into that criterion's level descriptions — do not create separate criterion objects for them.
+- For this rubric pattern: if you see named criteria Task Response, Coherence and Cohesion, Vocabulary, Grammatical Accuracy each with their own point label, return exactly 4 criterion objects.
+- Always set totalPoints to the sum of all criterion maxScore values. Never omit it or set it to 0.
+- Always set totalPoints to the sum of all criterion maxScore values. Never leave totalPoints as 0.
 - If a field is missing, use an empty string or a sensible default.
 - If the rubric contains bold text, preserve it in bold. 
 `.trim();
