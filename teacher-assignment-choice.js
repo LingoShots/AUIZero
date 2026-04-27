@@ -1,65 +1,90 @@
-// CLEAN FIX VERSION
-// (shortened for PR clarity - logic only adjusted where needed)
+(() => {
+const FLOW_STORAGE_KEY = "praxis-assignment-creation-flow";
 
-// KEY FIXES:
-// - Manual UI removed in AI mode (not hidden)
-// - Reliable AI draft detection using ui.teacherAssist
-// - True progressive flow (no Step 2 until draft exists)
-
-// NOTE: Full file retained from previous version, only critical logic changed
-
-function aiDraftExists(generated) {
-  return Boolean(
-    window.ui?.teacherAssist?.prompt ||
-    window.ui?.teacherAssist?.title
-  );
+function getFlow() {
+try {
+return window.sessionStorage.getItem(FLOW_STORAGE_KEY) || "ai";
+} catch {
+return "ai";
+}
 }
 
-function applyWorkflowVisibility(currentFlow, fieldStack, settings) {
-  const brief = document.getElementById("teacher-brief");
-  const briefCard = brief?.closest(".teacher-ready-card");
-  const generated = document.getElementById("teacher-generated-assignment");
+function setFlow(flow) {
+try {
+window.sessionStorage.setItem(FLOW_STORAGE_KEY, flow);
+} catch {}
+}
 
-  const hasAiDraft = aiDraftExists(generated);
-  const isAi = currentFlow === "ai";
-  const isManual = currentFlow === "manual";
+function setDisplay(el, show) {
+if (el) el.style.display = show ? "" : "none";
+}
 
-  // AI FLOW
-  if (isAi) {
-    // Remove manual completely
-    document.getElementById("manual-assignment-proxy")?.remove();
-    document.getElementById("manual-assignment-save-bar")?.remove();
+function aiDraftExists() {
+return Boolean(
+window.ui?.teacherAssist?.prompt ||
+window.ui?.teacherAssist?.title
+);
+}
 
-    // Step 1
-    if (briefCard) briefCard.style.display = "";
+function applyWorkflowVisibility(flow) {
+const brief = document.getElementById("teacher-brief")?.closest(".teacher-ready-card");
+const generated = document.getElementById("teacher-generated-assignment");
 
-    // Step 2 only after draft exists
-    if (generated) {
-      generated.style.display = hasAiDraft ? "" : "none";
+```
+const hasDraft = aiDraftExists();
+
+if (flow === "ai") {
+  // Remove manual UI completely
+  document.getElementById("manual-assignment-proxy")?.remove();
+  document.getElementById("manual-assignment-save-bar")?.remove();
+
+  setDisplay(brief, true);
+  setDisplay(generated, hasDraft);
+
+  // Save button only after generation
+  document.querySelectorAll('[data-action="save-assignment"]').forEach(btn => {
+    btn.style.display = hasDraft ? "" : "none";
+  });
+
+  // Step 2 panel
+  let intro = document.getElementById("ai-review-intro");
+  if (hasDraft) {
+    if (!intro) {
+      intro = document.createElement("div");
+      intro.id = "ai-review-intro";
+      intro.className = "teacher-ready-card";
+      intro.style.padding = "14px 16px";
+      intro.innerHTML = `
+        <p class="mini-label">Step 2</p>
+        <strong>Review before saving</strong>
+        <p class="subtle">Check the assignment, then click Save.</p>
+      `;
+      generated.parentElement.insertBefore(intro, generated);
     }
-
-    // Save button visibility
-    document.querySelectorAll('[data-action="save-assignment"]').forEach(btn => {
-      btn.style.display = hasAiDraft ? "" : "none";
-    });
-
-    // Review card
-    let intro = document.getElementById("ai-review-intro");
-    if (hasAiDraft) {
-      if (!intro) {
-        intro = document.createElement("div");
-        intro.id = "ai-review-intro";
-        intro.innerHTML = "<strong>Step 2:</strong> Review before saving";
-        fieldStack.insertBefore(intro, generated);
-      }
-      intro.style.display = "";
-    } else {
-      intro?.remove();
-    }
-  }
-
-  // MANUAL FLOW (unchanged)
-  if (isManual) {
-    document.getElementById("ai-review-intro")?.remove();
+  } else {
+    intro?.remove();
   }
 }
+
+if (flow === "manual") {
+  document.getElementById("ai-review-intro")?.remove();
+}
+```
+
+}
+
+function enhance() {
+const flow = getFlow();
+applyWorkflowVisibility(flow);
+}
+
+document.addEventListener("click", (e) => {
+const btn = e.target.closest("[data-assignment-flow-choice]");
+if (btn) {
+setFlow(btn.dataset.assignmentFlowChoice);
+enhance();
+}
+});
+
+window.addEventListener("DOMContentLoaded", enhance);
+})();
