@@ -6096,7 +6096,17 @@ function applyTeacherAssistToDraft() {
 }
 
 async function saveTeacherAssignment() {
+  console.log("[saveTeacherAssignment started]", {
+    teacherAssist: ui.teacherAssist,
+    teacherDraft: ui.teacherDraft,
+    currentClassId,
+  });
+
+  ui.notice = "Saving assignment...";
+  render();
+
   // Use the editable AI draft if present, otherwise fall back to teacherDraft
+  const source = ui.teacherAssist || ui.teacherDraft;
   const source = ui.teacherAssist || ui.teacherDraft;
   const editingAssignment = ui.editingAssignmentId
     ? state.assignments.find((item) => item.id === ui.editingAssignmentId) || null
