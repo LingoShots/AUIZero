@@ -6260,6 +6260,9 @@ async function saveTeacherAssignment() {
   render();
 }
 
+// Expose for proxy buttons in teacher-assignment-choice.js
+window.saveCurrentTeacherAssignment = saveTeacherAssignment;
+
 async function handleIdeaRequest() {
   const assignment = getStudentAssignment();
   const submission = getStudentSubmission();
