@@ -9365,15 +9365,7 @@ function renderProductWordmark(tagName = "span", className = "") {
 }
 
 function renderBrandGlyph() {
-  return `
-    <svg viewBox="0 0 64 64" fill="none" aria-hidden="true" focusable="false">
-      <rect width="64" height="64" rx="18" fill="#F7FAFF"/>
-      <rect x="2" y="2" width="60" height="60" rx="16" stroke="#D8E5FF" stroke-width="2"/>
-      <path d="M25.5 15.5V49" stroke="#4D7DF0" stroke-width="7" stroke-linecap="round"/>
-      <path d="M25.5 18.5H35.75C42.2393 18.5 47.5 23.7607 47.5 30.25C47.5 36.7393 42.2393 42 35.75 42H25.5" stroke="#4D7DF0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-      <circle cx="47" cy="13" r="4.5" fill="#8FAEFF"/>
-    </svg>
-  `;
+  return `<img src="favicon-64.png" alt="" aria-hidden="true" width="64" height="64" style="display:block;border-radius:14px;">`;
 }
 
 function clamp(value, min, max) {
