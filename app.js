@@ -9270,7 +9270,7 @@ function renderProductWordmark(tagName = "span", className = "") {
 }
 
 function renderBrandGlyph() {
-  return `<img src="favicon-64.png" alt="" aria-hidden="true" width="64" height="64" style="display:block;border-radius:14px;">`;
+  return `<img src="favicon-256.png" alt="" aria-hidden="true" width="64" height="64" style="display:block;border-radius:14px;">`;
 }
 
 function clamp(value, min, max) {
