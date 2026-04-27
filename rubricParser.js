@@ -304,6 +304,7 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
     throw new Error(`Claude returned invalid rubric JSON: ${error.message}`);
   }
 
+  console.log("RAW CLAUDE OUTPUT:", JSON.stringify(parsed, null, 2));
   return normalizeRubricSchema(parsed, fileName);
 }
 
