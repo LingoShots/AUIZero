@@ -4492,9 +4492,9 @@ function renderTopbar() {
               <option value="__new__">+ New class</option>
             </select>
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
-           ${currentClassId ? `<button class="button-ghost" data-action="delete-class" style="color:var(--danger);border-color:var(--danger);">Delete class</button>` : ""}
+          ${currentClassId ? `<button class="button-ghost" data-action="delete-class" style="color:var(--subtle);border-color:var(--line);font-size:0.82rem;" title="Delete this class">Delete class</button>` : ""}
           `}
-        ` : ""}
+          ` : ""}
         ${ui.adminViewingAsTeacher ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
         <button class="button-ghost" data-action="sign-out">Sign out</button>
       </div>
