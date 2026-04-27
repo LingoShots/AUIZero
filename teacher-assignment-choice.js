@@ -363,7 +363,7 @@
     });
   }
 
-  document.addEventListener("click", (event) => {
+  document.addEventListener("click", async (event) => {
     const flowButton = event.target.closest("[data-assignment-flow-choice]");
     if (flowButton) {
       const flow = flowButton.dataset.assignmentFlowChoice;
@@ -374,18 +374,33 @@
     }
 
     const manualSaveButton = event.target.closest("[data-manual-settings-save]");
-    if (manualSaveButton) {
+if (manualSaveButton) {
+  event.preventDefault();
+  event.stopPropagation();
   syncManualProxyToHiddenFields();
+
+  console.log("[manual proxy save clicked]");
   if (typeof window.saveCurrentTeacherAssignment === "function") {
-    window.saveCurrentTeacherAssignment();
+    await window.saveCurrentTeacherAssignment();
+  } else {
+    console.warn("[saveCurrentTeacherAssignment missing, falling back]");
+    clickBestOriginalSaveButton();
   }
   return;
 }
 
 const aiSaveButton = event.target.closest("[data-ai-settings-save]");
 if (!aiSaveButton) return;
+
+event.preventDefault();
+event.stopPropagation();
+
+console.log("[AI proxy save clicked]");
 if (typeof window.saveCurrentTeacherAssignment === "function") {
-  window.saveCurrentTeacherAssignment();
+  await window.saveCurrentTeacherAssignment();
+} else {
+  console.warn("[saveCurrentTeacherAssignment missing, falling back]");
+  clickBestOriginalSaveButton();
 }
   });
 
