@@ -268,8 +268,12 @@
   }
 
   function aiDraftExists(generated) {
-    return Boolean(generated?.querySelector("#teacher-assist-prompt"));
-  }
+  return Boolean(
+    generated &&
+    generated.textContent &&
+    generated.textContent.trim().length > 20
+  );
+}
 
   function updateAiSaveBar(currentFlow, generated) {
     const saveBar = document.getElementById("ai-assignment-save-bar");
