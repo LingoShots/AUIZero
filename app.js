@@ -983,14 +983,6 @@ function renderRubricSchemaLayout(schemaInput, options = {}) {
           ${schema.notes.map((note) => `<span>⚠ ${escapeHtml(note)}</span>`).join("")}
         </div>
       ` : ""}
-      ${schema.criteria[0]?.levels?.length ? `
-        <div class="rubric-level-legend" style="grid-template-columns:repeat(auto-fit, minmax(${previewMode ? 170 : 180}px, 1fr));">
-          ${schema.criteria[0].levels.map((level) => {
-            const theme = levelTheme(level.label);
-            return `<span class="rubric-level-legend-chip" style="background:${theme.badge};color:${theme.text};display:flex;align-items:center;justify-content:center;text-align:center;white-space:normal;line-height:1.35;min-height:56px;padding:10px 12px;">${escapeHtml(level.label)} — ${level.score} pts</span>`;
-          }).join("")}
-        </div>
-      ` : ""}
       <div class="rubric-schema-criteria">
         ${schema.criteria.map((criterion) => {
           const selected = rowScoreMap.get(criterion.id);
@@ -1070,6 +1062,7 @@ function createBlankTeacherDraft() {
     prompt: "",
     focus: "",
     assignmentType: "response",
+    assignmentTypeOther: "",
     languageLevel: "B1",
     totalPoints: 20,
     wordCountMin: 250,
@@ -2526,9 +2519,9 @@ if (action === "generate-teacher-assist") {
       render();
 
       requestAnimationFrame(() => {
-        const generatedPanel = document.getElementById("teacher-generated-assignment");
-        if (generatedPanel) {
-          generatedPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        const settingsPanel = document.getElementById("teacher-shared-settings");
+        if (settingsPanel) {
+          settingsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       });
     })
@@ -3129,6 +3122,31 @@ if (action === "sign-out") {
     return;
   }
 
+if (action === "delete-class") {
+    if (!currentClassId) return;
+    const className = currentClasses.find(c => c.id === currentClassId)?.name || "this class";
+    if (!confirm(`Delete "${className}"? This will permanently delete all assignments and submissions in this class. This cannot be undone.`)) return;
+    const result = await Auth.apiFetch(`/api/classes/${currentClassId}`, { method: 'DELETE' });
+    if (result.error) {
+      ui.notice = `Could not delete class: ${result.error}`;
+      render();
+      return;
+    }
+    currentClasses = currentClasses.filter(c => c.id !== currentClassId);
+    currentClassId = currentClasses[0]?.id || null;
+    if (currentClassId) {
+      await loadTeacherClassContext(currentClassId);
+    } else {
+      state.assignments = [];
+      state.submissions = [];
+      currentClassMembers = [];
+    }
+    saveActiveClassId(currentProfile, currentClassId);
+    ui.notice = `"${className}" was deleted.`;
+    render();
+    return;
+  }
+  
   if (action === "delete-assignment") {
     const assignmentId = target.dataset.assignmentId;
     if (!confirm("Delete this assignment? This cannot be undone.")) return;
@@ -4474,6 +4492,7 @@ function renderTopbar() {
               <option value="__new__">+ New class</option>
             </select>
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
+           ${currentClassId ? `<button class="button-ghost" data-action="delete-class" style="color:var(--danger);border-color:var(--danger);">Delete class</button>` : ""}
           `}
         ` : ""}
         ${ui.adminViewingAsTeacher ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
@@ -4808,8 +4827,11 @@ function renderTeacherWorkspace() {
       <div class="field">
         <label for="${idPrefix}-assignment-type">Assignment type</label>
         <select id="${idPrefix}-assignment-type" data-teacher-field="assignmentType">
-          ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+         ${["argument", "opinion", "narrative", "informational", "process", "definition", "compare/contrast", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherDraft.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
         </select>
+        ${ui.teacherDraft.assignmentType === "other" ? `
+  <input id="teacher-other-type" data-teacher-field="assignmentTypeOther" value="${escapeAttribute(ui.teacherDraft.assignmentTypeOther || "")}" placeholder="Describe the assignment type" style="margin-top:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:8px 12px;" />
+` : ""}
       </div>
       <div class="field">
         <label for="${idPrefix}-word-min">Min words</label>
@@ -4872,7 +4894,6 @@ function renderTeacherWorkspace() {
           </div>
           <div class="toolbar">
             ${ui.editingAssignmentId ? `<button class="button-ghost" data-action="cancel-assignment-edit" ${ui.aiAssistLoading ? "disabled" : ""}>Cancel edit</button>` : ""}
-            <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>${ui.editingAssignmentId ? "Update assignment" : "Save"}</button>
           </div>
         </div>
         ${(() => {
@@ -4908,21 +4929,30 @@ function renderTeacherWorkspace() {
             ${rubricUploadField}
           </div>
           <div class="teacher-ready-card" style="padding:16px;">
-            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
-              <div>
-                <p class="mini-label" style="margin-bottom:4px;">Step 2 — Your brief</p>
-                <p class="subtle">Describe the assignment in plain English, then click Create student-ready version.</p>
-              </div>
-              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
-                <button class="button" data-action="generate-teacher-assist"
-                  ${ui.aiAssistLoading ? "disabled" : ""}>
-                  ${ui.aiAssistLoading ? "Generating…" : "Create student-ready version →"}
-                </button>
-                <span class="subtle" style="font-size:0.78rem;">Advances to Step 3</span>
-              </div>
+            <div style="margin-bottom:10px;">
+              <p class="mini-label" style="margin-bottom:4px;">Step 2 — Your brief</p>
+              <p class="subtle">Describe the assignment in plain English, then click Create student-ready version.</p>
             </div>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-top:10px;">
+              <button class="button" data-action="generate-teacher-assist"
+                ${ui.aiAssistLoading ? "disabled" : ""}>
+                ${ui.aiAssistLoading ? "Generating…" : "Create student-ready version →"}
+              </button>
+              <span class="subtle" style="font-size:0.78rem;">Advances to Step 3</span>
+            </div>
           </div>
+          ${ui.aiAssistLoading ? `
+            <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <div>
+                  <p class="mini-label" style="margin-bottom:4px;">AI is thinking…</p>
+                  <p class="subtle">You can cancel, fix the brief or settings, and try again.</p>
+                </div>
+                <button class="button-ghost" data-action="cancel-teacher-assist" style="min-height:36px;padding:0 12px;">✕</button>
+              </div>
+            </div>
+          ` : ""}
           <details id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;"
   ${ui.teacherAssist || ui.teacherDraft.title ? "open" : ""}>
   <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
@@ -4936,17 +4966,6 @@ function renderTeacherWorkspace() {
     ${renderAssignmentSettingsFields("teacher")}
   </div>
 </details>
-          ${ui.aiAssistLoading ? `
-            <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
-              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
-                <div>
-                  <p class="mini-label" style="margin-bottom:4px;">AI is thinking…</p>
-                  <p class="subtle">You can cancel, fix the brief or settings, and try again.</p>
-                </div>
-                <button class="button-ghost" data-action="cancel-teacher-assist" style="min-height:36px;padding:0 12px;">✕</button>
-              </div>
-            </div>
-          ` : ""}
         </div>
         ${
           ui.teacherAssist
@@ -4981,7 +5000,7 @@ function renderTeacherWorkspace() {
                   <div class="field">
                     <label>Assignment type</label>
                     <select data-assist-field="assignmentType">
-                      ${["argument", "narrative", "informational", "process", "definition", "compare", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherAssist.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
+                     ${["argument", "opinion", "narrative", "informational", "process", "definition", "compare/contrast", "response", "other"].map((t) => `<option value="${t}" ${ui.teacherAssist.assignmentType === t ? "selected" : ""}>${titleCase(t)}</option>`).join("")}
                     </select>
                   </div>
                 </div>
@@ -4995,7 +5014,6 @@ function renderTeacherWorkspace() {
                   </div>
                   ${hasUploadedRubricPreview
                     ? `
-                      <p class="subtle" style="font-size:0.84rem;margin:0;">The uploaded rubric is shown in full below so you can confirm the exact version before saving.</p>
                     `
                     : `
                       <div class="review-stack">
