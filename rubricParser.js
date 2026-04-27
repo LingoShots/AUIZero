@@ -40,8 +40,9 @@ RULES:
 - Put deduction rules or special instructions into notes.
 - Preserve meaningful wording from the source so the rubric still feels like the original document.
 - Text such as "may be missing", "unclear", "ineffective", or "irrelevant" is valid descriptor content, not an empty field. Preserve it.
-- If several subparts share one score range or one merged score cell, keep them inside a single criterion instead of splitting them into separate scored criteria.
-- For paragraph rubrics, descriptors about topic sentence, supporting sentences/details, transitions, and concluding sentence often belong to one shared criterion. Combine those subparts into each level description when they share the same point range.
+- If several subparts share one score range AND one merged score cell (i.e. the score column visually spans multiple rows in the original table), keep them inside a single criterion.
+- For paragraph rubrics, only combine subparts (topic sentence, supporting details, transitions, concluding sentence) into one criterion if they share a single merged score cell. If each row has its OWN labeled point range (e.g. "1–5 points" appears on each row), treat each as a SEPARATE criterion.
+- Count the number of distinct labeled criteria with their own point range. Each one that has its own "X points" or "X–Y points" label must become its own criterion object. Do not merge criteria that each have their own point range.
 - If a field is missing, use an empty string or a sensible default.
 - If the rubric contains bold text, preserve it in bold. 
 `.trim();
