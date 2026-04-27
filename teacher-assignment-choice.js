@@ -328,7 +328,7 @@
     setDisplay(briefCard, currentFlow === "ai");
     setDisplay(manualProxy, currentFlow === "manual");
     setDisplay(manualSaveBar, currentFlow === "manual");
-    setDisplay(aiSaveBar, currentFlow === "ai");
+    setDisplay(aiSaveBar, false);
 
     if (manualDetails) {
       // Keep the original manual form in place for app logic, but hide it from the visible workflow.
@@ -338,10 +338,12 @@
       }
       setOriginalSaveVisibility(false);
     } else if (generated) {
-      // If an AI draft exists, keep it visible so the teacher can review it.
-      setDisplay(generated, currentFlow === "ai" && hasAiDraft);
-      setOriginalSaveVisibility(currentFlow !== "ai");
-    }
+  // If an AI draft exists, keep it visible so the teacher can review it.
+  setDisplay(generated, currentFlow === "ai" && hasAiDraft);
+
+  // In AI mode, show the native app.js save button instead of relying on the proxy save button.
+  setOriginalSaveVisibility(true);
+}
 
     updateManualSaveButtons(currentFlow);
     updateAiSaveBar(currentFlow, generated);
