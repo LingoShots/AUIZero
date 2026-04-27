@@ -275,22 +275,46 @@
   );
 }
 
-  function updateAiSaveBar(currentFlow, generated) {
-    const saveBar = document.getElementById("ai-assignment-save-bar");
-    if (!saveBar || currentFlow !== "ai") return;
-    const ready = aiDraftExists(generated);
-    saveBar.querySelectorAll("[data-ai-settings-save]").forEach((button) => {
-      button.disabled = !ready;
-      button.title = ready ? "" : "Create a student-ready version first.";
-    });
-    const hint = document.getElementById("ai-assignment-save-hint");
-    if (hint) {
-      hint.textContent = ready
-        ? "Review the student-ready version and assignment settings above, then save when ready."
-        : "Create a student-ready version first, then review settings before saving.";
-    }
-  }
+ function updateAiSaveBar(currentFlow, generated) {
+  const saveBar = document.getElementById("ai-assignment-save-bar");
+  if (!saveBar || currentFlow !== "ai") return;
 
+  const ready = aiDraftExists(generated);
+
+  saveBar.querySelectorAll("[data-ai-settings-save]").forEach((button) => {
+    button.disabled = !ready;
+    button.title = ready ? "" : "Create a student-ready version first.";
+
+    if (!button.dataset.directSaveBound) {
+      button.dataset.directSaveBound = "true";
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        console.log("[AI save button listener clicked]", {
+          saveFunction: typeof window.saveCurrentTeacherAssignment,
+          disabled: button.disabled,
+        });
+
+        if (button.disabled) return;
+
+        if (typeof window.saveCurrentTeacherAssignment === "function") {
+          await window.saveCurrentTeacherAssignment();
+        } else {
+          console.warn("[saveCurrentTeacherAssignment missing]");
+        }
+      });
+    }
+  });
+
+  const hint = document.getElementById("ai-assignment-save-hint");
+  if (hint) {
+    hint.textContent = ready
+      ? "Review the student-ready version and assignment settings above, then save when ready."
+      : "Create a student-ready version first, then review settings before saving.";
+  }
+}
+  
   function applyWorkflowVisibility(currentFlow, fieldStack, settings) {
     const brief = document.getElementById("teacher-brief");
     const briefCard = brief?.closest(".teacher-ready-card");
