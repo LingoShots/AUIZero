@@ -677,6 +677,30 @@ app.post('/api/classes/:classId/members', async (req, res) => {
   }
 });
 
+app.delete('/api/classes/:classId', async (req, res) => {
+  try {
+    const { user, error: teacherError, status } = await requireTeacherProfile(req);
+    if (teacherError) return res.status(status).json({ error: teacherError });
+    const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
+    if (!ownedClass) return res.status(403).json({ error: 'You can only delete your own classes.' });
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select('id')
+      .eq('class_id', req.params.classId);
+    const assignmentIds = (assignments || []).map(a => a.id);
+    if (assignmentIds.length) {
+      await supabase.from('submissions').delete().in('assignment_id', assignmentIds);
+      await supabase.from('assignments').delete().in('id', assignmentIds);
+    }
+    await supabase.from('class_members').delete().eq('class_id', req.params.classId);
+    const { error } = await supabase.from('classes').delete().eq('id', req.params.classId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.delete('/api/classes/:classId/members/:studentId', async (req, res) => {
   try {
     const { user, error: teacherError, status } = await requireTeacherProfile(req);
