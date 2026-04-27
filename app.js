@@ -4875,12 +4875,33 @@ function renderTeacherWorkspace() {
             <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>${ui.editingAssignmentId ? "Update assignment" : "Save"}</button>
           </div>
         </div>
-        <div class="field-stack">
+        ${(() => {
+  const step = ui.teacherAssist ? 3 : (ui.teacherDraft.brief ? 2 : 1);
+  const labels = ["Rubric", "Brief + generate", "Review + save"];
+  return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:14px;">
+    ${labels.map((l, i) => {
+      const s = i + 1;
+      const done = s < step;
+      const active = s === step;
+      return `<div style="display:flex;align-items:center;gap:6px;flex:1;">
+        <div style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;
+          background:${done ? "var(--accent-deep)" : active ? "var(--accent)" : "var(--surface-soft)"};
+          color:${done||active ? "#fff" : "var(--muted)"};
+          border:1px solid ${done ? "var(--accent-deep)" : active ? "var(--accent)" : "var(--line)"};">
+          ${done ? "✓" : s}
+        </div>
+        <span style="font-size:0.78rem;color:${active ? "var(--ink)" : "var(--muted)"};font-weight:${active ? 700 : 400};">${l}</span>
+        ${i < 2 ? '<div style="flex:1;height:1px;background:var(--line);"></div>' : ""}
+      </div>`;
+    }).join("")}
+  </div>`;
+})()}
+<div class="field-stack">
           <div id="teacher-rubric-upload" class="teacher-ready-card" style="padding:16px;">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
               <div>
-                <p class="mini-label" style="margin-bottom:4px;">Rubric</p>
-                <p class="subtle">Upload or reuse a rubric before you generate the assignment.</p>
+                <p class="mini-label" style="margin-bottom:4px;">Step 1 — Rubric (optional)</p>
+                <p class="subtle">Upload or reuse a rubric. The AI will shape its output to match.</p>
               </div>
               <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
             </div>
@@ -4889,23 +4910,32 @@ function renderTeacherWorkspace() {
           <div class="teacher-ready-card" style="padding:16px;">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
               <div>
-                <label for="teacher-brief" style="display:block;margin-bottom:6px;">Teacher brief</label>
-                <p class="subtle" style="margin:0;">Step 1: describe the assignment. Step 2: click Format With AI if you want help generating the student-facing version.</p>
+                <p class="mini-label" style="margin-bottom:4px;">Step 2 — Your brief</p>
+                <p class="subtle">Describe the assignment in plain English, then click Create student-ready version.</p>
               </div>
-              <button class="button-secondary" data-action="generate-teacher-assist" ${ui.aiAssistLoading ? "disabled" : ""}>Format With AI</button>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                <button class="button" data-action="generate-teacher-assist"
+                  ${ui.aiAssistLoading ? "disabled" : ""}>
+                  ${ui.aiAssistLoading ? "Generating…" : "Create student-ready version →"}
+                </button>
+                <span class="subtle" style="font-size:0.78rem;">Advances to Step 3</span>
+              </div>
             </div>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
           </div>
-          <div id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;">
-            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
-              <div>
-                <p class="mini-label" style="margin-bottom:4px;">Assignment settings</p>
-                <p class="subtle">These settings apply to both the AI and manual setup paths.</p>
-              </div>
-              <span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>
-            </div>
-            ${renderAssignmentSettingsFields("teacher")}
-          </div>
+          <details id="teacher-shared-settings" class="teacher-ready-card" style="padding:16px;"
+  ${ui.teacherAssist || ui.teacherDraft.title ? "open" : ""}>
+  <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+    <div>
+      <p class="mini-label" style="margin-bottom:4px;">Step 3 — Assignment settings</p>
+      <p class="subtle">Word limits, deadline, chatbot, language level.</p>
+    </div>
+    <span class="pill">${ui.teacherAssist || ui.teacherDraft.title ? "Ready" : "After draft"}</span>
+  </summary>
+  <div style="margin-top:14px;">
+    ${renderAssignmentSettingsFields("teacher")}
+  </div>
+</details>
           ${ui.aiAssistLoading ? `
             <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
               <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
@@ -4922,16 +4952,19 @@ function renderTeacherWorkspace() {
           ui.teacherAssist
             ? `
               <div id="teacher-generated-assignment" class="teacher-output">
-                <div class="section-header">
+                <div class="section-header" style="border-left:3px solid var(--accent);padding-left:12px;">
                   <div>
-                    <p class="mini-label">AI Draft — edit anything before saving</p>
+                    <p class="mini-label">Step 3 — Review AI draft</p>
                     <input class="assist-title-input" data-assist-field="title" value="${escapeAttribute(ui.teacherAssist.title)}" placeholder="Assignment title" />
                   </div>
                 </div>
                 <div class="teacher-ready-card">
                   <p class="mini-label">Student instructions</p>
                   <div class="field" style="margin-bottom:10px;">
-                    <label>Task prompt</label>
+                    <label style="display:flex;align-items:center;gap:6px;">
+                      Task prompt
+                      <span style="font-size:0.7rem;padding:1px 6px;border-radius:8px;background:#fff8ed;color:var(--accent-deep);border:1px solid var(--accent);">✨ AI</span>
+                    </label>
                     ${renderPromptFormattingToolbar("teacher-assist-prompt")}
                     <textarea id="teacher-assist-prompt" data-assist-field="prompt">${escapeHtml(ui.teacherAssist.prompt)}</textarea>
                   </div>
@@ -4954,7 +4987,10 @@ function renderTeacherWorkspace() {
                 </div>
                 <div class="teacher-ready-card">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                    <p class="mini-label">Rubric</p>
+                    <p class="mini-label" style="display:flex;align-items:center;gap:6px;">
+                      Rubric
+                      <span style="font-size:0.7rem;padding:1px 6px;border-radius:8px;background:#fff8ed;color:var(--accent-deep);border:1px solid var(--accent);">✨ AI</span>
+                    </p>
                     <span class="pill">${ui.teacherAssist.rubric.reduce((s, r) => s + Number(r.points || 0), 0)} pts total</span>
                   </div>
                   ${hasUploadedRubricPreview
