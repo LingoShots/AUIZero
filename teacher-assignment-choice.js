@@ -106,7 +106,7 @@
             <p class="mini-label" style="margin-bottom:3px;">Final step</p>
             <p id="manual-assignment-save-hint" class="subtle" style="margin:0;font-size:0.84rem;">Add a title and instructions, then check the settings above before saving.</p>
           </div>
-          <button class="button" type="button" data-manual-settings-save disabled>Save assignment</button>
+          <button class="button" type="button" data-manual-settings-save="true" disabled>Save assignment</button>
         </div>
       </div>
     `;
@@ -120,7 +120,7 @@
             <p class="mini-label" style="margin-bottom:3px;">Final step</p>
             <p id="ai-assignment-save-hint" class="subtle" style="margin:0;font-size:0.84rem;">Review the student-ready version and settings above, then save when ready.</p>
           </div>
-          <button class="button" type="button" data-ai-settings-save>Save assignment</button>
+          <button class="button" type="button" data-ai-settings-save="true">Save assignment</button>
         </div>
       </div>
     `;
