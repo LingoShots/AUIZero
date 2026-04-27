@@ -68,7 +68,7 @@
             "ai",
             currentFlow,
             "Create with AI support",
-            "Start with a rough brief, then review the student-ready assignment before saving.",
+            "Step 1: describe the task. Step 2: review the generated version and save.",
             "Use AI-assisted setup"
           )}
           ${workflowCard(
@@ -112,6 +112,16 @@
     `;
   }
 
+  function renderAiReviewIntroHtml() {
+    return `
+      <div id="ai-review-intro" class="teacher-ready-card" style="padding:14px 16px;border-color:var(--line);background:#fffefb;">
+        <p class="mini-label" style="margin-bottom:3px;">Step 2</p>
+        <h3 style="font-size:1.02rem;margin:0 0 5px;color:var(--ink);">Review before saving</h3>
+        <p class="subtle" style="margin:0;font-size:0.84rem;">Check the generated title, prompt, word count, rubric, and shared settings. Then use the native Save assignment button.</p>
+      </div>
+    `;
+  }
+
   function relabelTeacherButtons() {
     document.querySelectorAll('[data-action="generate-teacher-assist"]').forEach((button) => {
       button.textContent = button.disabled ? "Creating…" : "Create student-ready version";
@@ -125,7 +135,7 @@
     const briefCard = document.querySelector("#teacher-brief")?.closest(".teacher-ready-card");
     const briefHeading = briefCard?.querySelector("h3, h2");
     if (briefHeading && briefHeading.textContent.trim() === "Describe the assignment in plain English") {
-      briefHeading.textContent = "AI-assisted setup";
+      briefHeading.textContent = "Step 1: Describe the assignment";
     }
     const briefHelp = briefCard?.querySelector(".subtle");
     if (briefHelp && briefHelp.textContent.includes("Format With AI")) {
@@ -186,6 +196,10 @@
     }
   }
 
+  function aiDraftExists(generated) {
+    return Boolean(generated && generated.textContent && generated.textContent.trim().length > 80);
+  }
+
   function ensureManualProxy(fieldStack, settings) {
     if (!fieldStack || !settings) return null;
     let proxy = document.getElementById("manual-assignment-proxy");
@@ -215,6 +229,20 @@
     return saveBar;
   }
 
+  function ensureAiReviewIntro(fieldStack, generated) {
+    if (!fieldStack || !generated) return null;
+    let intro = document.getElementById("ai-review-intro");
+    if (!intro) {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderAiReviewIntroHtml().trim();
+      intro = wrapper.firstElementChild;
+    }
+    if (intro.parentElement !== fieldStack || intro.nextElementSibling !== generated) {
+      fieldStack.insertBefore(intro, generated);
+    }
+    return intro;
+  }
+
   function originalSaveButtons() {
     return Array.from(document.querySelectorAll('[data-action="save-assignment"]'))
       .filter((button) => !button.matches("[data-manual-settings-save]"));
@@ -232,14 +260,17 @@
     const generated = document.getElementById("teacher-generated-assignment");
     const manualProxy = ensureManualProxy(fieldStack, settings);
     const manualSaveBar = ensureManualSaveBar(fieldStack, settings);
+    const aiReviewIntro = ensureAiReviewIntro(fieldStack, generated);
+    const hasAiDraft = aiDraftExists(generated);
 
     setDisplay(briefCard, currentFlow === "ai");
-    setDisplay(generated, currentFlow === "ai");
+    setDisplay(generated, currentFlow === "ai" && hasAiDraft);
+    setDisplay(aiReviewIntro, currentFlow === "ai" && hasAiDraft);
     setDisplay(manualProxy, currentFlow === "manual");
     setDisplay(manualSaveBar, currentFlow === "manual");
 
-    // AI uses the native app.js save button. Manual uses the proxy button after syncing fields.
-    setOriginalSaveVisibility(currentFlow === "ai");
+    // In AI mode, the native save button appears only after a generated draft exists.
+    setOriginalSaveVisibility(currentFlow === "ai" && hasAiDraft);
 
     updateManualSaveButtons(currentFlow);
   }
