@@ -375,14 +375,18 @@
 
     const manualSaveButton = event.target.closest("[data-manual-settings-save]");
     if (manualSaveButton) {
-      syncManualProxyToHiddenFields();
-      clickBestOriginalSaveButton();
-      return;
-    }
+  syncManualProxyToHiddenFields();
+  if (typeof window.saveCurrentTeacherAssignment === "function") {
+    window.saveCurrentTeacherAssignment();
+  }
+  return;
+}
 
-    const aiSaveButton = event.target.closest("[data-ai-settings-save]");
-    if (!aiSaveButton) return;
-    clickBestOriginalSaveButton();
+const aiSaveButton = event.target.closest("[data-ai-settings-save]");
+if (!aiSaveButton) return;
+if (typeof window.saveCurrentTeacherAssignment === "function") {
+  window.saveCurrentTeacherAssignment();
+}
   });
 
   document.addEventListener("input", (event) => {
