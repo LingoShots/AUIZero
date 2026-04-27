@@ -3694,6 +3694,21 @@ if (target.id === "student-class-select") {
   }
 
   if (target.id === "class-select") {
+    if (target.value === "__delete__") {
+      target.value = "";
+      if (!currentClassId) return;
+      const className = currentClasses.find(c => c.id === currentClassId)?.name || "this class";
+      if (!confirm(`Delete "${className}"? This will permanently delete all assignments and submissions in this class. This cannot be undone.`)) return;
+      const result = await Auth.apiFetch(`/api/classes/${currentClassId}`, { method: "DELETE" });
+      if (result.error) { ui.notice = `Could not delete class: ${result.error}`; render(); return; }
+      currentClasses = currentClasses.filter(c => c.id !== currentClassId);
+      currentClassId = currentClasses[0]?.id || null;
+      if (currentClassId) { await loadTeacherClassContext(currentClassId); } else { state.assignments = []; state.submissions = []; currentClassMembers = []; }
+      saveActiveClassId(currentProfile, currentClassId);
+      ui.notice = `"${className}" was deleted.`;
+      render();
+      return;
+    }
     if (!target.value) {
       return;
     }
@@ -4490,6 +4505,7 @@ function renderTopbar() {
               <option value="" selected>Change class</option>
               ${classSwitcherOptions.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}
               <option value="__new__">+ New class</option>
+              ${currentClassId ? `<option value="__delete__">── Delete this class</option>` : ""}
             </select>
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
           ${currentClassId ? `<button class="button-ghost" data-action="delete-class" style="color:var(--subtle);border-color:var(--line);font-size:0.82rem;" title="Delete this class">Delete class</button>` : ""}
