@@ -138,7 +138,7 @@ function coalesceSharedCriteria(criteria = [], totalPoints = 0) {
         signature === rubricScoreSignature(next) &&
         criterionLooksLikeSharedPart(current) &&
         criterionLooksLikeSharedPart(next) &&
-        (totalWouldOverflow || criterionLooksLikeSharedPart(next))
+        totalWouldOverflow
       ) {
         group.push(next);
         index += 1;
