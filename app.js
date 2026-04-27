@@ -89,7 +89,6 @@ const ui = {
   classModalName: "",
   classModalError: "",
   showDraftFeedbackPrompt: false,
-  showTutorialModal: false,
   showFullRubric: false,
   inviteText: "",
   inviteMailto: "",
@@ -2968,18 +2967,6 @@ if (action === "sign-out") {
     return;
   }
 
-  if (action === "open-tutorial") {
-    ui.showTutorialModal = true;
-    render();
-    return;
-  }
-
-  if (action === "close-tutorial") {
-    ui.showTutorialModal = false;
-    render();
-    return;
-  }
-
   if (action === "continue-without-feedback") {
     ui.showDraftFeedbackPrompt = false;
     rememberStudentStep(3);
@@ -2991,27 +2978,6 @@ if (action === "sign-out") {
   if (action === "prompt-request-feedback") {
     ui.showDraftFeedbackPrompt = false;
     handleFeedbackRequest();
-    return;
-  }
-
-  if (["jump-brief", "jump-settings", "jump-output", "jump-review"].includes(action)) {
-    ui.showTutorialModal = false;
-    render();
-    const targetId = {
-      "jump-brief": "teacher-brief",
-      "jump-settings": "teacher-shared-settings",
-      "jump-output": "teacher-generated-assignment",
-      "jump-review": "teacher-review-panel",
-    }[action];
-    window.setTimeout(() => {
-      const el = document.getElementById(targetId);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-        if (typeof el.focus === "function" && targetId === "teacher-brief") {
-          el.focus();
-        }
-      }
-    }, 40);
     return;
   }
 
@@ -3977,7 +3943,7 @@ function render() {
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${ui.role === "admin" && !ui.adminViewingAsTeacher ? renderAdminWorkspace() : ui.role === "teacher" || ui.adminViewingAsTeacher ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderTutorialModal() + renderDraftFeedbackModal();
+  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderDraftFeedbackModal();
 
   // Start chat timer if student is on step 1 and there's a time limit
   if (ui.role === "student" && ui.studentStep === 1) {
@@ -4400,65 +4366,6 @@ function renderClassModal() {
   `;
 }
 
-function renderTutorialModal() {
-  if (!ui.showTutorialModal) return "";
-  const steps = [
-    {
-      title: "Start with the brief",
-      body: "Describe the assignment in plain English first. Then either format it with AI or finish it manually.",
-      action: "jump-brief",
-      label: "Go to teacher brief",
-    },
-    {
-      title: "Set the shared rules",
-      body: "Upload or reuse a rubric, set deadlines, feedback checks, chat limits, and decide whether the chatbot is enabled.",
-      action: "jump-settings",
-      label: "Go to shared settings",
-    },
-    {
-      title: "Save or publish",
-      body: "You can save a draft without AI, then publish it only to the current class when it is ready.",
-      action: "jump-output",
-      label: "Go to assignment builder",
-    },
-    {
-      title: "Review with analytics",
-      body: "Once students submit, use the review area to grade, see criterion trends, and move student by student.",
-      action: "jump-review",
-      label: "Go to review area",
-    },
-  ];
-
-  return `
-    <div style="position:fixed;inset:0;background:rgba(10,18,33,0.38);z-index:1000;display:grid;place-items:center;padding:20px;">
-      <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:760px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px;">
-          <div>
-            <p class="mini-label" style="margin-bottom:6px;">Tutorial walkthrough</p>
-            <h3 style="margin:0 0 6px;">Quick tour of the teacher workflow</h3>
-            <p class="subtle" style="margin:0;">Use these shortcuts to jump to the parts of the page you need without hunting around.</p>
-          </div>
-          <button class="button-ghost" data-action="close-tutorial">Close</button>
-        </div>
-        <div style="display:grid;gap:12px;">
-          ${steps.map((step, index) => `
-            <div style="border:1px solid var(--line);border-radius:16px;padding:16px;background:#f8fbff;">
-              <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
-                <div>
-                  <p class="mini-label" style="margin-bottom:4px;">Step ${index + 1}</p>
-                  <strong style="display:block;margin-bottom:4px;">${escapeHtml(step.title)}</strong>
-                  <p class="subtle">${escapeHtml(step.body)}</p>
-                </div>
-                <button class="button-secondary" data-action="${step.action}">${escapeHtml(step.label)}</button>
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function renderDraftFeedbackModal() {
   if (!ui.showDraftFeedbackPrompt) return "";
   const assignment = getStudentAssignment();
@@ -4496,7 +4403,6 @@ function renderTopbar() {
       <div class="toolbar">
         ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
        ${ui.role === "teacher" || ui.adminViewingAsTeacher ? `
-          <button class="button-ghost" data-action="open-tutorial" style="font-size:0.82rem;">Tutorial</button>
           ${currentClassId ? `<span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>` : ""}
           ${currentClasses.length === 0 ? `
             <button class="button-secondary" data-action="create-class">+ Create first class</button>
@@ -4508,7 +4414,6 @@ function renderTopbar() {
               ${currentClassId ? `<option value="__delete__">── Delete this class</option>` : ""}
             </select>
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
-          ${currentClassId ? `<button class="button-ghost" data-action="delete-class" style="color:var(--subtle);border-color:var(--line);font-size:0.82rem;" title="Delete this class">Delete class</button>` : ""}
           `}
           ` : ""}
         ${ui.adminViewingAsTeacher ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
