@@ -25,6 +25,10 @@
     element.style.display = shouldShow ? "" : "none";
   }
 
+  function removeElement(id) {
+    document.getElementById(id)?.remove();
+  }
+
   function workflowCard(flow, currentFlow, title, body, buttonText) {
     const active = flow === currentFlow;
     return `
@@ -183,7 +187,7 @@
   function updateManualSaveButtons(currentFlow) {
     if (currentFlow !== "manual") return;
     const ready = manualTitleAndPromptAreReady();
-    document.querySelectorAll('[data-action="save-assignment"], [data-manual-settings-save]').forEach((button) => {
+    document.querySelectorAll('[data-manual-settings-save]').forEach((button) => {
       button.disabled = !ready;
       button.title = ready ? "" : "Add a student-facing title and prompt first.";
     });
@@ -197,7 +201,9 @@
   }
 
   function aiDraftExists(generated) {
-    return Boolean(generated && generated.textContent && generated.textContent.trim().length > 80);
+    if (!generated) return false;
+    if (document.querySelector("#teacher-assist-prompt")) return true;
+    return Boolean(window.ui?.teacherAssist?.prompt || window.ui?.teacherAssist?.title);
   }
 
   function ensureManualProxy(fieldStack, settings) {
@@ -207,8 +213,8 @@
       const wrapper = document.createElement("div");
       wrapper.innerHTML = renderManualProxyHtml().trim();
       proxy = wrapper.firstElementChild;
-      fieldStack.insertBefore(proxy, settings);
-    } else if (proxy.parentElement !== fieldStack) {
+    }
+    if (proxy.parentElement !== fieldStack || proxy.nextElementSibling !== settings) {
       fieldStack.insertBefore(proxy, settings);
     }
     syncHiddenFieldsToManualProxy();
@@ -258,21 +264,29 @@
     const brief = document.getElementById("teacher-brief");
     const briefCard = brief?.closest(".teacher-ready-card");
     const generated = document.getElementById("teacher-generated-assignment");
-    const manualProxy = ensureManualProxy(fieldStack, settings);
-    const manualSaveBar = ensureManualSaveBar(fieldStack, settings);
-    const aiReviewIntro = ensureAiReviewIntro(fieldStack, generated);
+
     const hasAiDraft = aiDraftExists(generated);
+    const isAi = currentFlow === "ai";
+    const isManual = currentFlow === "manual";
 
-    setDisplay(briefCard, currentFlow === "ai");
-    setDisplay(generated, currentFlow === "ai" && hasAiDraft);
-    setDisplay(aiReviewIntro, currentFlow === "ai" && hasAiDraft);
-    setDisplay(manualProxy, currentFlow === "manual");
-    setDisplay(manualSaveBar, currentFlow === "manual");
+    setDisplay(briefCard, isAi);
+    setDisplay(generated, isAi && hasAiDraft);
+    setOriginalSaveVisibility(isAi && hasAiDraft);
 
-    // In AI mode, the native save button appears only after a generated draft exists.
-    setOriginalSaveVisibility(currentFlow === "ai" && hasAiDraft);
+    if (isAi) {
+      removeElement("manual-assignment-proxy");
+      removeElement("manual-assignment-save-bar");
+      const intro = ensureAiReviewIntro(fieldStack, generated);
+      setDisplay(intro, hasAiDraft);
+    } else {
+      removeElement("ai-review-intro");
+    }
 
-    updateManualSaveButtons(currentFlow);
+    if (isManual) {
+      ensureManualProxy(fieldStack, settings);
+      ensureManualSaveBar(fieldStack, settings);
+      updateManualSaveButtons(currentFlow);
+    }
   }
 
   function enhanceTeacherAssignmentSetup() {
