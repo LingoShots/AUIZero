@@ -1795,6 +1795,7 @@ async function loadStudentAssignmentsForCurrentClass() {
     recoverStudentActiveClass(currentProfile);
     const allowedAssignmentIds = new Set(state.assignments.map((assignment) => assignment.id));
     state.submissions = state.submissions.filter((submission) => allowedAssignmentIds.has(submission.assignmentId));
+    await loadStudentSubmissionsForAssignments(Array.from(allowedAssignmentIds));
     ui.notice = "";
     persistState();
   } catch (error) {
@@ -1947,6 +1948,36 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
     console.error("Could not load student submission:", error.message, error);
     ui.notice = "We couldn't refresh your work from the server just now. Showing your saved device copy.";
     return localSubmission;
+  }
+}
+
+async function loadStudentSubmissionsForAssignments(assignmentIds) {
+  const ids = safeArray(assignmentIds).filter(Boolean);
+  if (!ids.length || currentProfile?.role !== "student") return [];
+
+  try {
+    const params = new URLSearchParams({ assignmentIds: ids.join(",") });
+    const result = await Auth.apiFetch(`/api/student/submissions?${params.toString()}`);
+    if (result?.error) {
+      throw new Error(result.error);
+    }
+
+    const serverSubmissions = safeArray(result?.submissions).map(mapServerSubmission);
+    serverSubmissions.forEach((mapped) => {
+      const index = state.submissions.findIndex(
+        (submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId
+      );
+      if (index >= 0) {
+        state.submissions[index] = mergeStudentSubmission(state.submissions[index], mapped);
+      } else {
+        state.submissions.push(mapped);
+      }
+    });
+    persistState();
+    return serverSubmissions;
+  } catch (error) {
+    console.error("Could not load student submissions:", error.message, error);
+    return [];
   }
 }
 
@@ -3071,21 +3102,24 @@ if (action === "sign-out") {
       return;
     }
     const newStatus = assignment.status === "published" ? "draft" : "published";
-    Auth.apiFetch(`/api/assignments/${assignmentId}`, {
+    ui.notice = newStatus === "published" ? "Publishing assignment..." : "Moving assignment back to draft...";
+    render();
+    const data = await Auth.apiFetch(`/api/assignments/${assignmentId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ status: newStatus, class_id: currentClassId })
-    }).then(data => {
-      if (data.error) {
-        ui.notice = "Could not update assignment: " + data.error;
-      } else {
-        assignment.status = newStatus;
-        assignment.classId = currentClassId;
-        ui.notice = newStatus === "published"
-          ? "Assignment published — students in this class can now see it."
-          : "Assignment moved back to draft.";
-      }
-      render();
+      body: JSON.stringify({ status: newStatus })
     });
+    if (data.error) {
+      ui.notice = "Could not update assignment: " + data.error;
+      render();
+      return;
+    }
+    await loadTeacherClassContext(currentClassId);
+    ui.selectedAssignmentId = assignmentId;
+    ui.notice = newStatus === "published"
+      ? "Assignment published — students in this class can now see it."
+      : "Assignment moved back to draft.";
+    persistState();
+    render();
     return;
   }
 
