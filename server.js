@@ -842,6 +842,7 @@ const ASSIGNMENT_ALLOWED_FIELDS = new Set([
   'status',
   'deadline',
   'uploaded_rubric_text',
+  'class_id',
 ]);
 
 const SUBMISSION_ALLOWED_FIELDS = new Set([
