@@ -5447,7 +5447,7 @@ function renderTeacherGrading(assignment, submission) {
                     ${[0.5, 1, 1.5, 2, 3, 5, 8, 10, 15].map((speed) => `<option value="${speed}" ${Number(ui.playback.speed) === Number(speed) ? "selected" : ""}>${speed}×</option>`).join("")}
                   </select>
                 </label>
-                <span id="playback-meta" class="pill">${escapeHtml(`Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}`)}</span>
+                <span id="playback-meta" class="pill">${escapeHtml(playback.timeLabel)}</span>
               </div>
               <input id="playback-slider" type="range" min="0" max="${Math.max(playback.frames.length - 1, 0)}" value="${playback.index}" style="width:100%;margin-bottom:10px;" ${playback.frames.length <= 1 ? "disabled" : ""} />
               <div id="playback-label" class="subtle" style="margin-bottom:8px;">${escapeHtml(playback.label)}</div>
@@ -6690,14 +6690,33 @@ function getIntraEventDelayMs(event, nextEventTimeMs, eventTimeMs) {
 }
 
 function finalizePlaybackFrameDelays(frames) {
+  const startTime = Number(frames[0]?.timeMs) || 0;
   for (let i = 0; i < frames.length; i += 1) {
     const currentTime = Number(frames[i]?.timeMs);
     const nextTime = Number(frames[i + 1]?.timeMs);
+    frames[i].elapsedMs = Number.isFinite(currentTime) ? Math.max(0, currentTime - startTime) : 0;
     frames[i].delayMs = Number.isFinite(currentTime) && Number.isFinite(nextTime)
       ? Math.max(0, nextTime - currentTime)
       : 0;
   }
   return frames;
+}
+
+function formatPlaybackDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatPlaybackElapsedLabel(elapsedMs, totalMs) {
+  const elapsed = formatPlaybackDuration(elapsedMs);
+  const total = formatPlaybackDuration(totalMs);
+  return totalMs > 0 ? `${elapsed} / ${total} recorded` : elapsed;
 }
 
 function stepPlayback(direction) {
@@ -6731,7 +6750,7 @@ function syncPlaybackUi() {
 
   const playbackMeta = document.getElementById("playback-meta");
   if (playbackMeta) {
-    playbackMeta.textContent = `Frame ${playback.index + 1} of ${Math.max(playback.frames.length, 1)}`;
+    playbackMeta.textContent = playback.timeLabel;
   }
 
   const playbackLabel = document.getElementById("playback-label");
@@ -6987,6 +7006,9 @@ function getPlaybackState(submission) {
     index,
     text: frame.text,
     label: frame.label,
+    elapsedMs: frame.elapsedMs || 0,
+    totalMs: frames[frames.length - 1]?.elapsedMs || 0,
+    timeLabel: formatPlaybackElapsedLabel(frame.elapsedMs || 0, frames[frames.length - 1]?.elapsedMs || 0),
   };
 }
 
