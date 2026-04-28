@@ -729,7 +729,7 @@ function renderWritingBehaviour(submission, assignment) {
 
     function metricHelp(text) {
     return `
-      <span onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:0.68rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
+      <span onclick="var t=this.nextElementSibling;var wasHidden=t.style.display==='none';t.style.display=wasHidden?'block':'none';if(wasHidden){setTimeout(function(){document.addEventListener('click',function h(){t.style.display='none';document.removeEventListener('click',h);},{once:true});},0);}" style="cursor:pointer;font-size:0.68rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
       <span class="fluency-tooltip" style="display:none;position:absolute;z-index:120;max-width:300px;margin-top:20px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.10);font-size:0.78rem;line-height:1.5;color:var(--ink);">
         ${escapeHtml(text)}
       </span>
@@ -789,7 +789,7 @@ function renderWritingBehaviour(submission, assignment) {
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <p class="mini-label" style="margin:0;">Writing behaviour</p>
         <span style="font-size:0.82rem;font-weight:700;color:${bandColour};padding:2px 10px;border-radius:20px;border:1px solid ${bandBorder};background:#fff;">${escapeHtml(band)}</span>
-        <span onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
+        <span onclick="var t=this.nextElementSibling;var wasHidden=t.style.display==='none';t.style.display=wasHidden?'block':'none';if(wasHidden){setTimeout(function(){document.addEventListener('click',function h(){t.style.display='none';document.removeEventListener('click',h);},{once:true});},0);}" style="cursor:pointer;font-size:0.75rem;color:var(--muted);border:1px solid var(--line);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">?</span>
         <div class="fluency-tooltip" style="display:none;position:absolute;z-index:100;max-width:340px;margin-top:4px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.10);font-size:0.80rem;line-height:1.6;color:var(--ink);">
           <p style="margin:0 0 8px;">Scores are based on keystroke-interval analysis grounded in L2 writing research. Ranges are provisional estimates calibrated to ${level} — they will be refined as real submission data accumulates from this platform.</p>
           <p style="margin:0 0 6px;font-weight:600;">Key references:</p>
@@ -3561,7 +3561,7 @@ if (action === "select-assignment") {
     const savedSubmission = await upsertTeacherReviewSubmission(assignment, submission);
     replaceSubmissionInState(savedSubmission);
     ui.selectedReviewSubmissionId = savedSubmission.id;
-    ui.notice = "Teacher review saved.";
+    ui.notice = "Grade submitted.";
     persistState();
     render();
     return;
@@ -3632,7 +3632,7 @@ if (target.id === "playback-speed") {
       stopPlayback();
       startPlayback(frames);
     }
-    render();
+    renderPlaybackScreenOnly();
     return;
   }
   
@@ -3757,7 +3757,7 @@ if (target.id === "student-class-select") {
       stopPlayback();
       startPlayback(frames);
     }
-    render();
+    renderPlaybackScreenOnly();
     return;
   }
 
@@ -5507,7 +5507,7 @@ function renderTeacherGrading(assignment, submission) {
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
             <button class="button-ghost" data-action="copy-lms-grade">Copy Grade</button>
-            <button class="button" data-action="save-teacher-review">Save Review</button>
+            <button class="button" data-action="save-teacher-review">Submit grade</button>
           </div>
 
         </div>
