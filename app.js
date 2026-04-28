@@ -3466,6 +3466,10 @@ if (action === "select-assignment") {
     ui.notice = "Suggested grade copied into the editable review.";
     persistState();
     render();
+    window.requestAnimationFrame(() => {
+      const reviewPanel = document.getElementById("teacher-review-panel");
+      if (reviewPanel) reviewPanel.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
     return;
   }
 
