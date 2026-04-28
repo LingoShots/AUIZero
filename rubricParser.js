@@ -307,7 +307,10 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
 
   console.log("RAW CLAUDE OUTPUT:", JSON.stringify(parsed, null, 2));
   console.log("CLAUDE RAW OUTPUT:", JSON.stringify(parsed, null, 2));
-  return normalizeRubricSchema(parsed, fileName);
+  console.log("CRITERIA COUNT BEFORE NORMALIZE:", parsed.criteria?.length);
+  const result = normalizeRubricSchema(parsed, fileName);
+  console.log("CRITERIA COUNT AFTER NORMALIZE:", result.schema?.criteria?.length);
+  return result;
 }
 
 async function parseRubricBuffer(buffer, mimeType = '', fileName = 'Uploaded rubric') {
