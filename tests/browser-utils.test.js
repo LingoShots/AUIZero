@@ -5,6 +5,8 @@ const deadlineUtils = require("../deadline-utils.js");
 const storageUtils = require("../storage-utils.js");
 const aiAssistUtils = require("../ai-assist-utils.js");
 const lineNumberUtils = require("../line-number-utils.js");
+const submissionUtils = require("../submission-utils.js");
+const submissionRegressionFixture = require("./fixtures/submission-regression-fixture.js");
 
 function createMemoryStorage({ failFirstWrite = false } = {}) {
   const store = new Map();
@@ -167,4 +169,73 @@ test("line number utils still count intentional blank lines inside the text", ()
       { number: 3, text: "Line two" },
     ]
   );
+});
+
+test("submission counts use one shared status model across refreshed assignments", () => {
+  const { assignments, roster, submissions } = submissionRegressionFixture;
+  const firstAssignmentCounts = submissionUtils.getAssignmentSubmissionCounts(
+    submissions.filter((submission) => submissionUtils.getSubmissionAssignmentId(submission) === assignments[0].id),
+    roster
+  );
+  const secondAssignmentCounts = submissionUtils.getAssignmentSubmissionCounts(
+    submissions.filter((submission) => submissionUtils.getSubmissionAssignmentId(submission) === assignments[1].id),
+    roster
+  );
+  const thirdAssignmentCounts = submissionUtils.getAssignmentSubmissionCounts(
+    submissions.filter((submission) => submissionUtils.getSubmissionAssignmentId(submission) === assignments[2].id),
+    roster
+  );
+
+  assert.deepEqual(firstAssignmentCounts, {
+    total: 3,
+    submitted: 1,
+    graded: 0,
+    missing: 1,
+    late: 0,
+    notSubmitted: 2,
+  });
+  assert.deepEqual(secondAssignmentCounts, {
+    total: 3,
+    submitted: 2,
+    graded: 1,
+    missing: 0,
+    late: 0,
+    notSubmitted: 1,
+  });
+  assert.deepEqual(thirdAssignmentCounts, {
+    total: 3,
+    submitted: 0,
+    graded: 0,
+    missing: 0,
+    late: 1,
+    notSubmitted: 3,
+  });
+});
+
+test("submission counts dedupe duplicate student rows toward reviewed or submitted data", () => {
+  const counts = submissionUtils.getAssignmentSubmissionCounts([
+    {
+      id: "draft-row",
+      assignmentId: "assignment-1",
+      studentId: "student-1",
+      status: "draft",
+      updatedAt: "2026-04-28T14:00:00.000Z",
+    },
+    {
+      id: "graded-row",
+      assignmentId: "assignment-1",
+      studentId: "student-1",
+      status: "submitted",
+      submittedAt: "2026-04-28T13:30:00.000Z",
+      updatedAt: "2026-04-28T13:45:00.000Z",
+      teacherReview: {
+        finalScore: 12,
+        savedAt: "2026-04-28T13:50:00.000Z",
+      },
+    },
+  ], [{ id: "student-1", name: "Ada" }]);
+
+  assert.equal(counts.submitted, 1);
+  assert.equal(counts.graded, 1);
+  assert.equal(counts.notSubmitted, 0);
 });
