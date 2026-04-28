@@ -1,3 +1,4 @@
+console.log("RUBRICPARSER LOADED - VERSION 2");
 const fs = require('fs');
 const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
