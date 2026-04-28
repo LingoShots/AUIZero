@@ -309,7 +309,8 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
   console.log("CLAUDE RAW OUTPUT:", JSON.stringify(parsed, null, 2));
   console.log("CRITERIA COUNT BEFORE NORMALIZE:", parsed.criteria?.length);
   const result = normalizeRubricSchema(parsed, fileName);
-  console.log("CRITERIA COUNT AFTER NORMALIZE:", result.schema?.criteria?.length);
+  result._raw = parsed;
+  console.log("CRITERIA COUNT AFTER NORMALIZE:", result.criteria?.length);
   return result;
 }
 
@@ -317,11 +318,11 @@ async function parseRubricBuffer(buffer, mimeType = '', fileName = 'Uploaded rub
   const text = await extractTextFromBuffer(buffer, mimeType, fileName);
   console.log("EXTRACTED TEXT LENGTH:", text.length);
   console.log("EXTRACTED TEXT PREVIEW:", text.slice(0, 500));
-  const schema = await parseWithClaude(text, fileName);
+ const schema = await parseWithClaude(text, fileName);
   return {
     text,
     schema,
-    rubricData: rubricSchemaToMatrix(schema, fileName),
+    rubricData: rubricSchemaToMatrix(schema._raw || schema, fileName),
   };
 }
 
