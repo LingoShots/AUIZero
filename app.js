@@ -1821,6 +1821,34 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
     if (localIsNewer && safeArray(localValue).length) return safeArray(localValue);
     return safeArray(serverValue).length ? safeArray(serverValue) : safeArray(localValue);
   };
+  const serverReview = createDefaultTeacherReview(server.teacherReview);
+  const localReview = createDefaultTeacherReview(local.teacherReview);
+  const serverHasReview = Boolean(
+    serverReview.savedAt ||
+    serverReview.finalScore !== "" ||
+    serverReview.finalNotes ||
+    safeArray(serverReview.annotations).length ||
+    safeArray(serverReview.rowScores).length
+  );
+  const localHasReview = Boolean(
+    localReview.savedAt ||
+    localReview.finalScore !== "" ||
+    localReview.finalNotes ||
+    safeArray(localReview.annotations).length ||
+    safeArray(localReview.rowScores).length
+  );
+  const mergedTeacherReview = serverHasReview || !localHasReview
+    ? createDefaultTeacherReview({
+        ...localReview,
+        ...serverReview,
+        rowScores: safeArray(serverReview.rowScores).length ? serverReview.rowScores : localReview.rowScores,
+        suggestedRowScores: safeArray(serverReview.suggestedRowScores).length ? serverReview.suggestedRowScores : localReview.suggestedRowScores,
+        annotations: safeArray(serverReview.annotations).length ? serverReview.annotations : localReview.annotations,
+      })
+    : localReview;
+  const reviewedStatus = ["graded", "late", "missing"].includes(server.status) || Boolean(mergedTeacherReview.savedAt)
+    ? server.status
+    : "";
 
   return normalizeSubmission({
     ...server,
@@ -1849,7 +1877,8 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
     chatElapsedMs: prefer(server.chatElapsedMs, local.chatElapsedMs, { isEmpty: (value) => value === null || value === undefined || Number(value) === 0 }),
     startedAt: prefer(server.startedAt, local.startedAt),
     submittedAt: prefer(server.submittedAt, local.submittedAt),
-    status: prefer(server.status, local.status, { isEmpty: (value) => !value }),
+    status: reviewedStatus || prefer(server.status, local.status, { isEmpty: (value) => !value }),
+    teacherReview: mergedTeacherReview,
     updatedAt: localIsNewer ? local.updatedAt : server.updatedAt,
   });
 }
