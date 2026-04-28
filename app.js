@@ -1573,7 +1573,7 @@ function titleCase(text) {
 function stopPlayback() {
   ui.playback.isPlaying = false;
   if (ui.playback.timerId) {
-    window.clearInterval(ui.playback.timerId);
+    window.clearTimeout(ui.playback.timerId);
     ui.playback.timerId = null;
   }
 }
@@ -6628,6 +6628,18 @@ function renderPlaybackScreenOnly() {
   playbackScreen.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(playback.text)}</pre>`;
 }
 
+const PLAYBACK_INTRA_EVENT_DELAY_MS = 60;
+
+function getPlaybackSpeedMultiplier() {
+  const speed = Number(ui.playback.speed || 1);
+  return Number.isFinite(speed) && speed > 0 ? speed : 1;
+}
+
+function getPlaybackFrameDelayMs(frames, index) {
+  const rawDelay = Math.max(0, Number(frames?.[index]?.delayMs || 0));
+  return rawDelay / getPlaybackSpeedMultiplier();
+}
+
 function startPlayback(frames) {
   if (!frames.length) {
     return;
@@ -6635,15 +6647,57 @@ function startPlayback(frames) {
 
   stopPlayback();
   ui.playback.isPlaying = true;
-  ui.playback.timerId = window.setInterval(() => {
+  const scheduleNextFrame = () => {
     if (ui.playback.index >= frames.length - 1) {
       stopPlayback();
       render();
       return;
     }
-    ui.playback.index += 1;
-    syncPlaybackUi();
-  }, Math.max(900 / ui.playback.speed, 50));
+    const delay = getPlaybackFrameDelayMs(frames, ui.playback.index);
+    ui.playback.timerId = window.setTimeout(() => {
+      ui.playback.timerId = null;
+      if (!ui.playback.isPlaying) return;
+      if (ui.playback.index >= frames.length - 1) {
+        stopPlayback();
+        render();
+        return;
+      }
+      ui.playback.index += 1;
+      syncPlaybackUi();
+      scheduleNextFrame();
+    }, delay);
+  };
+  scheduleNextFrame();
+}
+
+function getEventTimeMs(event) {
+  const parsed = Date.parse(event?.timestamp || "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function countPlaybackOperations(event) {
+  if (!event || event.type === "paste") return 1;
+  return Math.max(1, String(event.removedText || "").length + String(event.insertedText || "").length);
+}
+
+function getIntraEventDelayMs(event, nextEventTimeMs, eventTimeMs) {
+  const operationCount = countPlaybackOperations(event);
+  if (operationCount <= 1) return 0;
+  if (Number.isFinite(nextEventTimeMs) && Number.isFinite(eventTimeMs) && nextEventTimeMs > eventTimeMs) {
+    return Math.max(0, Math.min(PLAYBACK_INTRA_EVENT_DELAY_MS, (nextEventTimeMs - eventTimeMs) / operationCount));
+  }
+  return PLAYBACK_INTRA_EVENT_DELAY_MS;
+}
+
+function finalizePlaybackFrameDelays(frames) {
+  for (let i = 0; i < frames.length; i += 1) {
+    const currentTime = Number(frames[i]?.timeMs);
+    const nextTime = Number(frames[i + 1]?.timeMs);
+    frames[i].delayMs = Number.isFinite(currentTime) && Number.isFinite(nextTime)
+      ? Math.max(0, nextTime - currentTime)
+      : 0;
+  }
+  return frames;
 }
 
 function stepPlayback(direction) {
@@ -6937,26 +6991,42 @@ function getPlaybackState(submission) {
 }
 
 function getPlaybackFrames(submission) {
-  if (submission._playbackCache && submission._playbackCache.eventCount === safeArray(submission.writingEvents).length) {
+  const events = safeArray(submission.writingEvents);
+  const eventSignature = events
+    .map((event) => `${event?.timestamp || ""}:${event?.type || ""}:${event?.start ?? ""}:${event?.end ?? ""}:${String(event?.insertedText || "").length}:${String(event?.removedText || "").length}`)
+    .join("|");
+  if (submission._playbackCache && submission._playbackCache.eventSignature === eventSignature) {
     return submission._playbackCache.frames;
   }
 
+  const firstEventTime = events.map(getEventTimeMs).find((time) => Number.isFinite(time)) || 0;
   let text = "";
   const frames = [
     {
       text: "",
       label: "Start",
+      timeMs: firstEventTime,
     },
   ];
 
-  for (const event of safeArray(submission.writingEvents)) {
+  const pushFrame = (frameText, label, timeMs) => {
+    frames.push({
+      text: frameText,
+      label,
+      timeMs: Number.isFinite(timeMs) ? timeMs : (frames[frames.length - 1]?.timeMs || firstEventTime),
+    });
+  };
+
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    const event = events[eventIndex];
+    const eventTimeMs = getEventTimeMs(event) ?? (frames[frames.length - 1]?.timeMs || firstEventTime);
+    const nextEventTimeMs = events.slice(eventIndex + 1).map(getEventTimeMs).find((time) => Number.isFinite(time));
+    const intraEventDelayMs = getIntraEventDelayMs(event, nextEventTimeMs, eventTimeMs);
+    let operationIndex = 0;
     const hasStructuredOp = typeof event.start === "number" && typeof event.end === "number";
     if (!hasStructuredOp) {
       text = submission.draftText || text;
-      frames.push({
-        text,
-        label: `${titleCase(event.type)} • ${formatTime(event.timestamp)}`,
-      });
+      pushFrame(text, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs);
       continue;
     }
 
@@ -6964,20 +7034,15 @@ function getPlaybackFrames(submission) {
       for (let i = 0; i < event.removedText.length; i += 1) {
         const removeIndex = event.start;
         text = text.slice(0, removeIndex) + text.slice(removeIndex + 1);
-        frames.push({
-          text,
-          label: `Delete • ${formatTime(event.timestamp)}`,
-        });
+        pushFrame(text, `Delete • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
+        operationIndex += 1;
       }
     }
 
     if (event.insertedText) {
       if (event.type === "paste") {
         text = text.slice(0, event.start) + event.insertedText + text.slice(event.start);
-        frames.push({
-          text,
-          label: `Paste • ${formatTime(event.timestamp)}`,
-        });
+        pushFrame(text, `Paste • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
         continue;
       }
 
@@ -6985,23 +7050,19 @@ function getPlaybackFrames(submission) {
         const char = event.insertedText[i];
         const insertIndex = event.start + i;
         text = text.slice(0, insertIndex) + char + text.slice(insertIndex);
-        frames.push({
-          text,
-          label: `${titleCase(event.type)} • ${formatTime(event.timestamp)}`,
-        });
+        pushFrame(text, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
+        operationIndex += 1;
       }
     }
   }
 
   if ((submission.draftText || "") !== text) {
-    frames.push({
-      text: submission.draftText || "",
-      label: "Current draft",
-    });
+    pushFrame(submission.draftText || "", "Current draft", frames[frames.length - 1]?.timeMs || firstEventTime);
   }
 
+  finalizePlaybackFrameDelays(frames);
   submission._playbackCache = {
-    eventCount: safeArray(submission.writingEvents).length,
+    eventSignature,
     frames,
   };
   return frames;
@@ -8210,6 +8271,14 @@ function downloadStudentWork(assignment, submission) {
     </div>`).join("");
 
   const events = submission.writingEvents || [];
+  const hasMarkedCopy = Boolean(
+    safeArray(submission.teacherReview?.annotations).length ||
+    safeArray(submission.writingEvents).some((entry) => entry?.type === "paste" && entry?.flagged && entry?.insertedText)
+  );
+  const annotatedCopyHtml = renderAnnotatedText(submission).replace(/\s+onclick="[^"]*"/g, "");
+  const finalSubmissionHtml = hasMarkedCopy
+    ? `<div class="marked-copy">${annotatedCopyHtml}</div>`
+    : `<pre>${escapeHtml(submission.finalText || "No final text.")}</pre>`;
   const insertCount = events.filter(e => e.type === "insert").length;
   const deleteCount = events.filter(e => e.type === "delete").length;
   const pasteCount = events.filter(e => e.type === "paste").length;
@@ -8236,8 +8305,9 @@ function downloadStudentWork(assignment, submission) {
 <head>
 <meta charset="UTF-8"/>
 <title>${escapeHtml(assignment.title)} — ${escapeHtml(studentName)} Grade Sheet</title>
-<style>
-  body{font-family:Georgia,serif;max-width:820px;margin:40px auto;color:#1f2a1f;line-height:1.6}
+	<style>
+	  :root{--accent-deep:#844125}
+	  body{font-family:Georgia,serif;max-width:820px;margin:40px auto;color:#1f2a1f;line-height:1.6}
   h1{font-size:1.5rem;border-bottom:2px solid #a55233;padding-bottom:8px}
   h2{font-size:1.1rem;margin-top:32px;color:#a55233}
   .meta{color:#667063;font-size:.9rem;margin-bottom:24px}
@@ -8251,8 +8321,10 @@ function downloadStudentWork(assignment, submission) {
   table{width:100%;border-collapse:collapse;font-size:.88rem}
   th{text-align:left;padding:6px 10px;background:#f4efe6}
   td{padding:6px 10px;border-bottom:1px solid #ddd2c2}
-  mark{background:#fff176;border-radius:3px;padding:1px 2px;}
-  sup{font-size:0.7em;color:#a55233;font-weight:700;}
+	  mark{background:#fff176;border-radius:3px;padding:1px 2px;}
+	  .marked-copy{white-space:pre-wrap;word-break:break-word;background:#fffdf8;border:1px solid #ddd2c2;padding:16px;border-radius:8px;font-size:.92rem}
+	  .paste-highlight{background:#ead8ff;border-radius:3px;padding:1px 2px;}
+	  sup{font-size:0.7em;color:#a55233;font-weight:700;}
   @media print{body{margin:20px}}
 </style>
 </head>
@@ -8290,8 +8362,8 @@ ${chatLines || "<p><em>No conversation recorded.</em></p>"}
 <h2>Draft text</h2>
 <pre>${escapeHtml(submission.draftText || "No draft.")}</pre>
 
-<h2>3 — Final submission</h2>
-<pre>${escapeHtml(submission.finalText || "No final text.")}</pre>
+	<h2>3 — Final submission</h2>
+	${finalSubmissionHtml}
 
 ${(submission.teacherReview?.annotations?.length) ? `
 <h2>Teacher annotations</h2>
