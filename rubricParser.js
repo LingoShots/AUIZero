@@ -1,4 +1,3 @@
-console.log("RUBRICPARSER LOADED - VERSION 2");
 const fs = require('fs');
 const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
@@ -210,9 +209,7 @@ function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
 }
 
 function rubricSchemaToMatrix(schema = {}, fileName = 'Uploaded rubric') {
-  console.log("rubricSchemaToMatrix called, _normalized:", schema._normalized, "criteria count:", schema.criteria?.length);
   const normalized = schema._normalized ? schema : normalizeRubricSchema(schema, fileName);
-  console.log("rubricSchemaToMatrix after normalize, criteria count:", normalized.criteria?.length);
   if (!normalized.criteria.length) return null;
 
   return {
@@ -307,20 +304,13 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
     throw new Error(`Claude returned invalid rubric JSON: ${error.message}`);
   }
 
-  console.log("RAW CLAUDE OUTPUT:", JSON.stringify(parsed, null, 2));
-  console.log("CLAUDE RAW OUTPUT:", JSON.stringify(parsed, null, 2));
-  console.log("CRITERIA COUNT BEFORE NORMALIZE:", parsed.criteria?.length);
   const result = normalizeRubricSchema(parsed, fileName);
-  result._raw = parsed;
   result._normalized = true;
-  console.log("CRITERIA COUNT AFTER NORMALIZE:", result.criteria?.length);
   return result;
 }
 
 async function parseRubricBuffer(buffer, mimeType = '', fileName = 'Uploaded rubric') {
   const text = await extractTextFromBuffer(buffer, mimeType, fileName);
-  console.log("EXTRACTED TEXT LENGTH:", text.length);
-  console.log("EXTRACTED TEXT PREVIEW:", text.slice(0, 500));
  const schema = await parseWithClaude(text, fileName);
   return {
     text,
