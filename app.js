@@ -3296,7 +3296,7 @@ if (action === "select-assignment") {
     ui.chatInput = "";
     ui.chatLoading = true;
     persistState();
-    scheduleSubmissionSync(900);
+    scheduleSubmissionSync(25000);
     render();
     focusChatInput();
 
