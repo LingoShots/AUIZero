@@ -1730,6 +1730,7 @@ async function loadTeacherClassContext(classId) {
     classId: a.class_id || currentClassId,
       ideaRequestLimit: 3,
   }));
+  await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
   ui.notice = "";
   persistState();
 }
@@ -1932,7 +1933,11 @@ function mapServerSubmission(serverSubmission) {
 
 async function loadTeacherSubmissionsForAssignments(assignmentIds) {
   const ids = Array.isArray(assignmentIds) ? assignmentIds.filter(Boolean) : [];
-  if (!currentClassId || !ids.length) return;
+  if (!currentClassId) return;
+  if (!ids.length) {
+    state.submissions = [];
+    return;
+  }
 
   try {
     const results = await Promise.all(
