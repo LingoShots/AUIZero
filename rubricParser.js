@@ -210,7 +210,9 @@ function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
 }
 
 function rubricSchemaToMatrix(schema = {}, fileName = 'Uploaded rubric') {
+  console.log("rubricSchemaToMatrix called, _normalized:", schema._normalized, "criteria count:", schema.criteria?.length);
   const normalized = schema._normalized ? schema : normalizeRubricSchema(schema, fileName);
+  console.log("rubricSchemaToMatrix after normalize, criteria count:", normalized.criteria?.length);
   if (!normalized.criteria.length) return null;
 
   return {
