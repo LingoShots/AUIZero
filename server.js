@@ -1043,6 +1043,54 @@ app.get('/api/assignments/:assignmentId/submissions', async (req, res) => {
   }
 });
 
+// Get the authenticated student's existing submissions without creating new rows
+app.get('/api/student/submissions', async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
+    const requestedAssignmentIds = String(req.query.assignmentIds || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+
+    const { data: memberships, error: membershipError } = await supabase
+      .from('class_members')
+      .select('class_id')
+      .eq('student_id', user.id);
+    if (membershipError) return res.status(400).json({ error: membershipError.message });
+
+    const classIds = Array.from(new Set((memberships || []).map((entry) => entry.class_id).filter(Boolean)));
+    if (!classIds.length) return res.json({ submissions: [] });
+
+    let assignmentQuery = supabase
+      .from('assignments')
+      .select('id')
+      .in('class_id', classIds)
+      .eq('status', 'published');
+    if (requestedAssignmentIds.length) {
+      assignmentQuery = assignmentQuery.in('id', requestedAssignmentIds);
+    }
+
+    const { data: assignments, error: assignmentError } = await assignmentQuery;
+    if (assignmentError) return res.status(400).json({ error: assignmentError.message });
+
+    const assignmentIds = Array.from(new Set((assignments || []).map((assignment) => assignment.id).filter(Boolean)));
+    if (!assignmentIds.length) return res.json({ submissions: [] });
+
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('*')
+      .eq('student_id', user.id)
+      .in('assignment_id', assignmentIds);
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.json({ submissions: data || [] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get or create student's own submission
 app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
   try {
