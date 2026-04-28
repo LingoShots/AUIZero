@@ -1227,7 +1227,7 @@ function scrollToNextRubricCriterionMobile(criterionId) {
     if (currentIndex === -1) return;
     const nextSection = sections[currentIndex + 1];
     if (nextSection) {
-      nextSection.scrollIntoView({ behavior: "smooth", block: "center" });
+      nextSection.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, 140);
 }
