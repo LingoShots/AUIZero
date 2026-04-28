@@ -403,6 +403,7 @@ function getMatrixRubricData(source) {
 function getRubricSchema(source, fallbackName = "Uploaded rubric") {
   if (!source) return null;
   if (source?.schema) return getRubricSchema(source.schema, fallbackName);
+  if (source?._normalized) return source;
   if (safeArray(source?.criteria).length) return normalizeRubricSchema(source, fallbackName);
 
   const matrix = getMatrixRubricData(source);
