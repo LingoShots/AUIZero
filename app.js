@@ -1533,7 +1533,7 @@ function buildLmsGradeText(assignment, submission) {
     lines.push(
       "",
       "Annotation comments:",
-      ...annotations.map((annotation) => `- ${annotation.code}: "${annotation.selectedText}"${annotation.note ? ` — ${annotation.note}` : ""}`)
+      ...annotations.map((annotation, index) => `- ${getAnnotationDisplayLabel(annotation, index)}: "${annotation.selectedText}"${annotation.note ? ` — ${annotation.note}` : ""}`)
     );
   }
 
@@ -2015,6 +2015,45 @@ async function loadStudentSubmissionsForAssignments(assignmentIds) {
   }
 }
 
+function getSubmissionStatusSignature(submissions = state.submissions) {
+  return safeArray(submissions)
+    .map((submission) => [
+      submission?.assignmentId || "",
+      submission?.studentId || "",
+      submission?.id || "",
+      submission?.status || "",
+      submission?.submittedAt || "",
+      submission?.updatedAt || "",
+      submission?.teacherReview?.savedAt || "",
+      submission?.teacherReview?.finalScore ?? "",
+    ].join(":"))
+    .sort()
+    .join("|");
+}
+
+async function refreshTeacherAssignmentStatusData(options = {}) {
+  const { forceRender = false } = options;
+  if (
+    (currentProfile?.role !== "teacher" && !ui.adminViewingAsTeacher)
+    || ui.teacherView !== "assignments"
+    || !currentClassId
+    || !state.assignments.length
+    || document.visibilityState === "hidden"
+  ) {
+    return false;
+  }
+
+  const before = getSubmissionStatusSignature();
+  await loadTeacherSubmissionsForAssignments(state.assignments.map((assignment) => assignment.id));
+  const after = getSubmissionStatusSignature();
+  const changed = before !== after;
+  if (changed || forceRender) {
+    persistState();
+    render();
+  }
+  return changed;
+}
+
 async function loadReviewDataForAssignment(assignmentId) {
   if (!assignmentId || !currentClassId) return [];
 
@@ -2043,7 +2082,7 @@ function stopTeacherReviewPolling() {
 
 function getReviewRefreshSignature(submissions = []) {
   return safeArray(submissions)
-    .map((submission) => `${submission?.id || ""}:${submission?.updated_at || submission?.updatedAt || ""}:${submission?.status || ""}:${submission?.teacher_review?.savedAt || ""}`)
+    .map((submission) => `${submission?.id || ""}:${submission?.updated_at || submission?.updatedAt || ""}:${submission?.status || ""}:${submission?.teacher_review?.savedAt || submission?.teacherReview?.savedAt || ""}:${submission?.submitted_at || submission?.submittedAt || ""}`)
     .join("|");
 }
 
@@ -2174,6 +2213,9 @@ function bindLifecycleEvents() {
       refreshTeacherReviewData().catch((error) => {
         console.error("Could not refresh teacher review data:", error);
       });
+      refreshTeacherAssignmentStatusData().catch((error) => {
+        console.error("Could not refresh teacher assignment statuses:", error);
+      });
     }
   });
   window.addEventListener("pageshow", async () => {
@@ -2188,6 +2230,10 @@ function bindLifecycleEvents() {
     }
     if (!currentProfile || currentProfile.id !== profile.id || currentProfile.role !== profile.role) {
       await bootApp(profile);
+    } else {
+      refreshTeacherAssignmentStatusData().catch((error) => {
+        console.error("Could not refresh teacher assignment statuses:", error);
+      });
     }
   });
 }
@@ -3113,6 +3159,18 @@ if (action === "sign-out") {
     ui.selectedReviewSubmissionId = null;
     ui.selectedReviewStudentId = null;
     ui.playback.touched = false;
+    render();
+    refreshTeacherAssignmentStatusData().catch((error) => {
+      console.error("Could not refresh teacher assignment statuses:", error);
+    });
+    return;
+  }
+
+  if (action === "refresh-assignment-statuses") {
+    ui.notice = "Refreshing submission statuses...";
+    render();
+    const changed = await refreshTeacherAssignmentStatusData({ forceRender: true });
+    ui.notice = changed ? "Submission statuses refreshed." : "Submission statuses are already up to date.";
     render();
     return;
   }
@@ -4708,8 +4766,9 @@ function renderAdminClassDetail() {
           ? `<p class="subtle">No assignments yet.</p>`
           : detail.assignments.map(a => {
               const subs = (detail.submissions || []).filter(s => s.assignment_id === a.id);
-              const submitted = subs.filter(s => s.status === "submitted").length;
-              const graded = subs.filter(s => s.teacher_review?.savedAt).length;
+              const statusCounts = SubmissionUtils.getAssignmentSubmissionCounts(subs, detail.members || []);
+              const submitted = statusCounts.submitted;
+              const graded = statusCounts.graded;
               return `
                 <div class="assignment-card simple-card" style="margin-bottom:8px;">
                   <div class="card-top">
@@ -4735,8 +4794,8 @@ function renderAdminClassDetail() {
           ? `<p class="subtle">No students enrolled.</p>`
           : detail.members.map(m => {
               const studentSubs = (detail.submissions || []).filter(s => s.student_id === m.id);
-              const submitted = studentSubs.filter(s => s.status === "submitted").length;
-              const graded = studentSubs.filter(s => s.teacher_review?.savedAt).length;
+              const submitted = studentSubs.filter((submission) => SubmissionUtils.isSubmissionSubmitted(submission)).length;
+              const graded = studentSubs.filter((submission) => SubmissionUtils.isSubmissionGraded(submission)).length;
               const totalScore = studentSubs.reduce((sum, s) => sum + Number(s.teacher_review?.finalScore || 0), 0);
               return `
                 <div class="submission-card simple-card" style="margin-bottom:6px;">
@@ -5077,6 +5136,7 @@ function renderTeacherWorkspace() {
             <p class="mini-label">Teacher Review</p>
             <h2 class="panel-title">Assignments</h2>
           </div>
+          <button class="button-ghost" data-action="refresh-assignment-statuses" style="font-size:0.82rem;">Refresh statuses</button>
         </div>
         <div class="teacher-ready-card" style="margin-bottom:16px;">
           <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px;">
@@ -5118,10 +5178,11 @@ function renderTeacherWorkspace() {
               <div class="assignment-list">
                 ${assignments.map((assignment) => {
                   const assignmentSubs = state.submissions.filter(s => s.assignmentId === assignment.id);
-                  const submittedCount = assignmentSubs.filter(s => s.status === "submitted").length;
-                  const gradedCount = assignmentSubs.filter(s => s.teacherReview?.savedAt).length;
+                  const statusCounts = getSubmissionCountsForAssignment(assignment.id, classRoster);
+                  const submittedCount = statusCounts.submitted;
+                  const gradedCount = statusCounts.graded;
                   const pasteCount = assignmentSubs.filter(s => (s.writingEvents || []).some(e => e.flagged)).length;
-                  const totalStudents = classRoster.length;
+                  const totalStudents = statusCounts.total;
                   const isBriefExpanded = ui.expandedAssignmentBriefId === assignment.id;
                   const promptPreview = truncateText(stripPromptFormatting(assignment.prompt), 140);
                   return `
@@ -5186,13 +5247,14 @@ function renderTeacherWorkspace() {
 
 function renderTeacherReview(assignment, submissions) {
   const roster = currentClassMembers.length ? currentClassMembers : getReviewRoster(assignment.id);
-  const total = roster.length;
-  const submittedCount = submissions.filter(s => s.status === "submitted").length;
-  const gradedCount = submissions.filter(s => s.teacherReview?.savedAt).length;
+  const statusCounts = SubmissionUtils.getAssignmentSubmissionCounts(submissions, roster);
+  const total = statusCounts.total;
+  const submittedCount = statusCounts.submitted;
+  const gradedCount = statusCounts.graded;
   const flaggedCount = submissions.filter(
     s => Array.isArray(s.writingEvents) && s.writingEvents.some(e => e && e.flagged)
   ).length;
-  const criterionAnalytics = buildCriterionAnalytics(assignment, submissions.filter((submission) => submission?.teacherReview?.savedAt));
+  const criterionAnalytics = buildCriterionAnalytics(assignment, submissions.filter((submission) => SubmissionUtils.isSubmissionGraded(submission)));
 
   return `
         <section id="teacher-review-section" class="panel review-shell">
@@ -5212,7 +5274,7 @@ function renderTeacherReview(assignment, submissions) {
           <div style="font-size:0.75rem;color:var(--muted);">Graded</div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;">
-          <div style="font-size:1.5rem;font-weight:700;">${total - submittedCount}</div>
+          <div style="font-size:1.5rem;font-weight:700;">${statusCounts.notSubmitted}</div>
           <div style="font-size:0.75rem;color:var(--muted);">Not submitted</div>
         </div>
         <div style="background:${flaggedCount ? "#fff3cd" : "var(--surface)"};border:1px solid ${flaggedCount ? "#e0c84a" : "var(--line)"};border-radius:10px;padding:12px;text-align:center;">
@@ -5287,7 +5349,7 @@ function renderTeacherReview(assignment, submissions) {
                 totalMinutes,
               };
 
-              const isGraded = Boolean(submission.teacherReview?.savedAt);
+              const isGraded = SubmissionUtils.isSubmissionGraded(submission);
               const score = submission.teacherReview?.finalScore;
               return `
                 <div class="submission-card simple-card">
@@ -5411,7 +5473,7 @@ function renderTeacherGrading(assignment, submission) {
               <div style="margin-top:8px;display:grid;gap:6px;">
                 ${submission.teacherReview.annotations.map((ann, i) => `
                                                                         <div id="comment-${escapeAttribute(ann.id)}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;scroll-margin-top:120px;">
-                    <strong style="color:#5b2a86;flex-shrink:0;">${escapeHtml(ann.code)}</strong>
+                    <strong style="color:#5b2a86;flex-shrink:0;">${escapeHtml(getAnnotationDisplayLabel(ann, i))}</strong>
                     <button type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="flex:1;text-align:left;background:none;border:none;padding:0;color:#3f2a56;cursor:pointer;font:inherit;">
                       "${escapeHtml(ann.selectedText)}"${getErrorCodeLabel(ann.code) ? ` — ${escapeHtml(getErrorCodeLabel(ann.code))}` : ""}${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}
                     </button>
@@ -5983,9 +6045,9 @@ function renderStudentFinalStep(assignment, submission) {
               </div>
               <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
               <div style="display:grid;gap:6px;margin-top:6px;">
-                ${submission.teacherReview.annotations.map((ann) => `
+                ${submission.teacherReview.annotations.map((ann, i) => `
                   <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
-                    <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
+                    <strong style="color:#5b2a86;">${escapeHtml(getAnnotationDisplayLabel(ann, i))}</strong>
                     <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${getErrorCodeLabel(ann.code) ? ` — ${escapeHtml(getErrorCodeLabel(ann.code))}` : ""}${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
                   </button>
                 `).join("")}
@@ -6091,9 +6153,9 @@ function renderStudentFinalStep(assignment, submission) {
                 </div>
                 <p class="mini-label" style="margin-top:12px;">Comments on your writing</p>
                 <div style="display:grid;gap:6px;margin-top:6px;">
-                  ${submission.teacherReview.annotations.map((ann) => `
+                  ${submission.teacherReview.annotations.map((ann, i) => `
                     <button id="comment-${escapeAttribute(ann.id)}" type="button" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" style="padding:8px 12px;border-radius:10px;background:#f6f0ff;border:1px solid #c9b3eb;font-size:0.88rem;text-align:left;cursor:pointer;scroll-margin-top:120px;">
-                      <strong style="color:#5b2a86;">${escapeHtml(ann.code)}</strong>
+                      <strong style="color:#5b2a86;">${escapeHtml(getAnnotationDisplayLabel(ann, i))}</strong>
                       <span style="margin-left:8px;color:#3f2a56;">"${escapeHtml(ann.selectedText)}"${getErrorCodeLabel(ann.code) ? ` — ${escapeHtml(getErrorCodeLabel(ann.code))}` : ""}${ann.note ? ` — ${escapeHtml(ann.note)}` : ""}</span>
                     </button>
                   `).join("")}
@@ -6822,12 +6884,12 @@ function getStudentAssignmentBuckets() {
   publishedAssignments.forEach((assignment) => {
     const submission = getStudentSubmissionForAssignment(assignment.id);
     const status = submission?.status || "draft";
-    const hasSubmitted = Boolean(submission?.submittedAt) || ["submitted", "graded", "late", "missing"].includes(status);
+    const hasSubmitted = SubmissionUtils.isSubmissionSubmitted(submission) || ["late", "missing"].includes(status);
     const bucketItem = {
       assignment,
       submission,
       status,
-      isGraded: Boolean(submission?.teacherReview?.savedAt),
+      isGraded: SubmissionUtils.isSubmissionGraded(submission),
     };
     if (hasSubmitted) {
       submitted.push(bucketItem);
@@ -6841,6 +6903,10 @@ function getStudentAssignmentBuckets() {
 
 function getAssignmentSubmissions(assignmentId) {
   return state.submissions.filter((submission) => submission.assignmentId === assignmentId);
+}
+
+function getSubmissionCountsForAssignment(assignmentId, roster = currentClassMembers) {
+  return SubmissionUtils.getAssignmentSubmissionCounts(getAssignmentSubmissions(assignmentId), roster);
 }
 
 function getReviewRoster(assignmentId = ui.selectedAssignmentId) {
@@ -8170,6 +8236,11 @@ function captureAnnotationSelection() {
   }
 }
 
+function getAnnotationDisplayLabel(annotation, index = null) {
+  const code = String(annotation?.code || "NOTE").trim() || "NOTE";
+  return Number.isInteger(index) ? `${code} ${index + 1}` : code;
+}
+
 function renderAnnotatedText(submission, options = {}) {
   const {
     annotationClickTarget = "comment",
@@ -8212,6 +8283,7 @@ function renderAnnotatedText(submission, options = {}) {
         type: "paste",
         annotationIds: [],
         annotationCodes: [],
+        annotationLabels: [],
       };
       pasteHighlights.push(pasteHighlight);
       highlights.push(pasteHighlight);
@@ -8219,27 +8291,30 @@ function renderAnnotatedText(submission, options = {}) {
   }
 
   searchStarts.clear();
-  for (const ann of annotations) {
+  safeArray(annotations).forEach((ann, index) => {
     const idx = findNextSequentialIndex(ann.selectedText);
     if (idx !== -1) {
       const end = idx + ann.selectedText.length;
       const overlappingPastes = pasteHighlights.filter((range) => idx < range.end && end > range.start);
       const overlapsPaste = overlappingPastes.length > 0;
+      const annotationLabel = getAnnotationDisplayLabel(ann, index);
       overlappingPastes.forEach((paste) => {
         paste.annotationIds.push(ann.id || uid("ann"));
         paste.annotationCodes.push(ann.code);
+        paste.annotationLabels.push(annotationLabel);
       });
 
       highlights.push({
         start: idx,
         end,
         code: ann.code,
+        label: annotationLabel,
         type: "annotation",
         id: ann.id || uid("ann"),
         overlapsPaste,
       });
     }
-  }
+  });
 
   if (!highlights.length) return escapeHtml(text);
 
@@ -8260,11 +8335,11 @@ function renderAnnotatedText(submission, options = {}) {
     const segment = escapeHtml(text.slice(h.start, h.end));
 
     if (h.type === "paste") {
-      const pasteTitle = h.annotationCodes?.length
-        ? `Pasted content — teacher review required. Also tagged: ${h.annotationCodes.join(", ")}`
+      const pasteTitle = h.annotationLabels?.length
+        ? `Pasted content — teacher review required. Also tagged: ${h.annotationLabels.join(", ")}`
         : "Pasted content — teacher review required";
-      const overlayCodes = h.annotationCodes?.length
-        ? `<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.82);padding:1px 4px;border-radius:999px;">${escapeHtml(h.annotationCodes.join("/"))}</sup>`
+      const overlayCodes = h.annotationLabels?.length
+        ? `<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.82);padding:1px 4px;border-radius:999px;">${escapeHtml(h.annotationLabels.join("/"))}</sup>`
         : "";
       const overlayTarget = annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment";
       const overlayIds = includeClickHandlers && h.annotationIds?.length ? ` onclick="${overlayTarget}('${escapeAttribute(h.annotationIds[0])}')"` : "";
@@ -8279,9 +8354,9 @@ function renderAnnotatedText(submission, options = {}) {
         ? ` onclick="${annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment"}('${escapeAttribute(h.id)}')"`
         : "";
       if (h.overlapsPaste) {
-        result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.label || h.code)}</sup></mark>`;
       } else {
-        result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.label || h.code)}</sup></mark>`;
       }
     }
 
@@ -8426,9 +8501,9 @@ ${chatLines || "<p><em>No conversation recorded.</em></p>"}
 	<h2>Teacher annotations</h2>
 	<table>
 	  <thead><tr><th>Code</th><th>Selected text</th><th>Note</th></tr></thead>
-	  <tbody>${annotations.map((ann) => `
+	  <tbody>${annotations.map((ann, i) => `
 	    <tr id="sheet-comment-${escapeAttribute(ann.id)}" class="annotation-row" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" title="Jump to highlighted text">
-	      <td><strong>${escapeHtml(ann.code)}</strong></td>
+	      <td><strong>${escapeHtml(getAnnotationDisplayLabel(ann, i))}</strong></td>
 	      <td style="background:#fff9e6;">"${escapeHtml(ann.selectedText)}"</td>
 	      <td>${escapeHtml(ann.note || "")}</td>
     </tr>`).join("")}
