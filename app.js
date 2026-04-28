@@ -8148,7 +8148,12 @@ function captureAnnotationSelection() {
   }
 }
 
-function renderAnnotatedText(submission) {
+function renderAnnotatedText(submission, options = {}) {
+  const {
+    annotationClickTarget = "comment",
+    includeClickHandlers = true,
+    idPrefix = "",
+  } = options;
   const text = submission?.finalText || submission?.draftText || "No text submitted yet.";
   const annotations = submission?.teacherReview?.annotations || [];
   const flaggedPastes = (submission?.writingEvents || []).filter(
@@ -8239,14 +8244,22 @@ function renderAnnotatedText(submission) {
       const overlayCodes = h.annotationCodes?.length
         ? `<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.82);padding:1px 4px;border-radius:999px;">${escapeHtml(h.annotationCodes.join("/"))}</sup>`
         : "";
-      const overlayIds = h.annotationIds?.length ? ` onclick="scrollToComment('${escapeAttribute(h.annotationIds[0])}')"` : "";
+      const overlayTarget = annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment";
+      const overlayIds = includeClickHandlers && h.annotationIds?.length ? ` onclick="${overlayTarget}('${escapeAttribute(h.annotationIds[0])}')"` : "";
       const overlayStyle = h.annotationCodes?.length ? "border:2px solid #5b2a86;" : "";
-      result += `<mark class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
+      const pasteAnchors = safeArray(h.annotationIds)
+        .map((id) => `<span id="${escapeAttribute(`${idPrefix}annotation-${id}`)}"></span>`)
+        .join("");
+      result += `<mark class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${pasteAnchors}${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
     } else {
+      const markId = `${idPrefix}annotation-${h.id}`;
+      const clickHandler = includeClickHandlers
+        ? ` onclick="${annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment"}('${escapeAttribute(h.id)}')"`
+        : "";
       if (h.overlapsPaste) {
-        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
       } else {
-        result += `<mark id="annotation-${escapeAttribute(h.id)}" onclick="scrollToComment('${escapeAttribute(h.id)}')" style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
+        result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.code)}</sup></mark>`;
       }
     }
 
@@ -8275,7 +8288,11 @@ function downloadStudentWork(assignment, submission) {
     safeArray(submission.teacherReview?.annotations).length ||
     safeArray(submission.writingEvents).some((entry) => entry?.type === "paste" && entry?.flagged && entry?.insertedText)
   );
-  const annotatedCopyHtml = renderAnnotatedText(submission).replace(/\s+onclick="[^"]*"/g, "");
+  const annotations = safeArray(submission.teacherReview?.annotations);
+  const annotatedCopyHtml = renderAnnotatedText(submission, {
+    annotationClickTarget: "comment",
+    idPrefix: "sheet-",
+  });
   const finalSubmissionHtml = hasMarkedCopy
     ? `<div class="marked-copy">${annotatedCopyHtml}</div>`
     : `<pre>${escapeHtml(submission.finalText || "No final text.")}</pre>`;
@@ -8324,10 +8341,28 @@ function downloadStudentWork(assignment, submission) {
 	  mark{background:#fff176;border-radius:3px;padding:1px 2px;}
 	  .marked-copy{white-space:pre-wrap;word-break:break-word;background:#fffdf8;border:1px solid #ddd2c2;padding:16px;border-radius:8px;font-size:.92rem}
 	  .paste-highlight{background:#ead8ff;border-radius:3px;padding:1px 2px;}
+	  .annotation-row{cursor:pointer}
+	  .annotation-row:hover{background:#fff9e6}
+	  [id^="sheet-annotation-"],[id^="sheet-comment-"]{scroll-margin-top:24px}
 	  sup{font-size:0.7em;color:#a55233;font-weight:700;}
-  @media print{body{margin:20px}}
-</style>
-</head>
+	  @media print{body{margin:20px}}
+	</style>
+	<script>
+	  function flashScrollTarget(el) {
+	    if (!el) return;
+	    el.scrollIntoView({ behavior: "smooth", block: "center" });
+	    el.style.boxShadow = "0 0 0 3px rgba(91,42,134,0.28)";
+	    el.style.transition = "box-shadow 0.2s ease";
+	    window.setTimeout(function () { el.style.boxShadow = ""; }, 1600);
+	  }
+	  function scrollToAnnotation(annotationId) {
+	    flashScrollTarget(document.getElementById("sheet-annotation-" + annotationId));
+	  }
+	  function scrollToComment(annotationId) {
+	    flashScrollTarget(document.getElementById("sheet-comment-" + annotationId));
+	  }
+	</script>
+	</head>
 <body>
 <h1>${escapeHtml(assignment.title)}</h1>
 <div class="meta">
@@ -8365,15 +8400,15 @@ ${chatLines || "<p><em>No conversation recorded.</em></p>"}
 	<h2>3 — Final submission</h2>
 	${finalSubmissionHtml}
 
-${(submission.teacherReview?.annotations?.length) ? `
-<h2>Teacher annotations</h2>
-<table>
-  <thead><tr><th>Code</th><th>Selected text</th><th>Note</th></tr></thead>
-  <tbody>${submission.teacherReview.annotations.map((ann) => `
-    <tr>
-      <td><strong>${escapeHtml(ann.code)}</strong></td>
-      <td style="background:#fff9e6;">"${escapeHtml(ann.selectedText)}"</td>
-      <td>${escapeHtml(ann.note || "")}</td>
+	${annotations.length ? `
+	<h2>Teacher annotations</h2>
+	<table>
+	  <thead><tr><th>Code</th><th>Selected text</th><th>Note</th></tr></thead>
+	  <tbody>${annotations.map((ann) => `
+	    <tr id="sheet-comment-${escapeAttribute(ann.id)}" class="annotation-row" onclick="scrollToAnnotation('${escapeAttribute(ann.id)}')" title="Jump to highlighted text">
+	      <td><strong>${escapeHtml(ann.code)}</strong></td>
+	      <td style="background:#fff9e6;">"${escapeHtml(ann.selectedText)}"</td>
+	      <td>${escapeHtml(ann.note || "")}</td>
     </tr>`).join("")}
   </tbody>
 </table>` : ""}
