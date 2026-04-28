@@ -210,7 +210,7 @@ function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
 }
 
 function rubricSchemaToMatrix(schema = {}, fileName = 'Uploaded rubric') {
-  const normalized = normalizeRubricSchema(schema, fileName);
+  const normalized = schema._normalized ? schema : normalizeRubricSchema(schema, fileName);
   if (!normalized.criteria.length) return null;
 
   return {
@@ -310,6 +310,7 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
   console.log("CRITERIA COUNT BEFORE NORMALIZE:", parsed.criteria?.length);
   const result = normalizeRubricSchema(parsed, fileName);
   result._raw = parsed;
+  result._normalized = true;
   console.log("CRITERIA COUNT AFTER NORMALIZE:", result.criteria?.length);
   return result;
 }
@@ -322,7 +323,7 @@ async function parseRubricBuffer(buffer, mimeType = '', fileName = 'Uploaded rub
   return {
     text,
     schema,
-    rubricData: rubricSchemaToMatrix(schema._raw || schema, fileName),
+    rubricData: rubricSchemaToMatrix(schema, fileName),
   };
 }
 
