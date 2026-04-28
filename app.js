@@ -4244,7 +4244,7 @@ async function uploadRubricFile(file) {
       ui.teacherDraft.uploadedRubricText = data.text;
       ui.teacherDraft.uploadedRubricName = file.name;
       ui.teacherDraft.uploadedRubricData = data.rubricData || null;
-      ui.teacherDraft.uploadedRubricSchema = data.schema ? normalizeRubricSchema(data.schema, file.name) : null;
+      ui.teacherDraft.uploadedRubricSchema = data.schema || null;
       ui.selectedSavedRubricId = "";
       ui.teacherAssist = null;
       saveRubricToLibrary(file.name, data.text, data.rubricData || null, data.schema || null);
