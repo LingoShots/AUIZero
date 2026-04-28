@@ -69,8 +69,16 @@
       focusAnnotations: [],
       teacherReview: submission?.teacherReview
         ? {
-            finalScore: submission.teacherReview.finalScore || 0,
             status: submission.teacherReview.status || "pending",
+            rubricType: submission.teacherReview.rubricType || "simple_band",
+            rowScores: Array.isArray(submission.teacherReview.rowScores) ? submission.teacherReview.rowScores : [],
+            suggestedRowScores: Array.isArray(submission.teacherReview.suggestedRowScores) ? submission.teacherReview.suggestedRowScores : [],
+            suggestedGrade: submission.teacherReview.suggestedGrade || null,
+            finalScore: submission.teacherReview.finalScore ?? "",
+            finalNotes: submission.teacherReview.finalNotes || "",
+            annotations: Array.isArray(submission.teacherReview.annotations) ? submission.teacherReview.annotations : [],
+            savedAt: submission.teacherReview.savedAt || null,
+            acceptedAt: submission.teacherReview.acceptedAt || null,
           }
         : undefined,
     }));

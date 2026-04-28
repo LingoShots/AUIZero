@@ -104,6 +104,42 @@ test("persistStateSnapshot falls back to a smaller backup when quota is exceeded
   const stored = JSON.parse(global.localStorage.getItem("primary"));
   assert.deepEqual(stored.submissions[0].writingEvents, []);
   assert.deepEqual(stored.submissions[0].chatHistory, []);
+  assert.equal(stored.submissions[0].teacherReview.savedAt, null);
+});
+
+test("fallback storage preserves graded submission review metadata", () => {
+  global.localStorage = createMemoryStorage({ failFirstWrite: true });
+  const result = storageUtils.persistStateSnapshot({
+    state: {
+      users: [{ id: "student-1", name: "Student One" }],
+      assignments: [{ id: "assignment-1", title: "Essay" }],
+      submissions: [{
+        id: "submission-1",
+        assignmentId: "assignment-1",
+        studentId: "student-1",
+        writingEvents: [{ id: "event-1" }],
+        chatHistory: [{ role: "assistant", content: "Hi" }],
+        teacherReview: {
+          finalScore: 12,
+          finalNotes: "Solid work.",
+          annotations: [{ id: "ann-1", code: "SP" }],
+          savedAt: "2026-04-28T12:00:00.000Z",
+          status: "graded",
+        },
+      }],
+    },
+    currentProfile: { id: "student-1", role: "student" },
+    storageKey: "primary",
+    backupKey: "backup",
+  });
+
+  assert.equal(result.ok, true);
+  const stored = JSON.parse(global.localStorage.getItem("primary"));
+  assert.deepEqual(stored.submissions[0].writingEvents, []);
+  assert.equal(stored.submissions[0].teacherReview.finalScore, 12);
+  assert.equal(stored.submissions[0].teacherReview.finalNotes, "Solid work.");
+  assert.equal(stored.submissions[0].teacherReview.savedAt, "2026-04-28T12:00:00.000Z");
+  assert.deepEqual(stored.submissions[0].teacherReview.annotations, [{ id: "ann-1", code: "SP" }]);
 });
 
 test("line number utils ignore a trailing newline when numbering visible lines", () => {
