@@ -1102,7 +1102,7 @@ function populateTeacherDraftFromAssignment(assignment) {
     uploadedRubricText: assignment.uploadedRubricText || "",
     uploadedRubricName: assignment.uploadedRubricName || "",
     uploadedRubricData: assignment.uploadedRubricData || null,
-    uploadedRubricSchema: assignment.uploadedRubricSchema ? normalizeRubricSchema(assignment.uploadedRubricSchema, assignment.uploadedRubricName || assignment.title || "Uploaded rubric") : null,
+    uploadedRubricSchema: assignment.uploadedRubricSchema || null,
   };
   if (ui.teacherDraft.disableChatbot) {
     ui.teacherDraft.chatTimeLimit = -1;
@@ -2479,7 +2479,7 @@ if (action === "generate-teacher-assist") {
       let jsonStr = data.response.replace(/```json\n?|\n?```/g, "").trim();
       const parsed = JSON.parse(jsonStr);
       if (ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
-        parsed.rubricSchema = normalizeRubricSchema(ui.teacherDraft.uploadedRubricSchema, ui.teacherDraft.uploadedRubricName || "Uploaded rubric");
+        parsed.rubricSchema = ui.teacherDraft.uploadedRubricSchema;
         parsed.rubric = safeArray(parsed.rubricSchema.criteria).map((criterion) => ({
           id: criterion.id,
           name: criterion.name,
@@ -6160,11 +6160,9 @@ async function saveTeacherAssignment() {
     feedbackRequestLimit: draft.feedbackRequestLimit,
     disableChatbot: Boolean(draft.disableChatbot),
     studentFocus: studentFocusArray,
-    rubricSchema: ui.teacherDraft.uploadedRubricSchema
-      ? normalizeRubricSchema(ui.teacherDraft.uploadedRubricSchema, ui.teacherDraft.uploadedRubricName || draft.title || "Uploaded rubric")
-      : null,
+    rubricSchema: ui.teacherDraft.uploadedRubricSchema || null,
     rubric: ui.teacherDraft.uploadedRubricSchema?.criteria?.length
-      ? safeArray(normalizeRubricSchema(ui.teacherDraft.uploadedRubricSchema, ui.teacherDraft.uploadedRubricName || draft.title || "Uploaded rubric").criteria).map((criterion) => normalizeRubricRow({
+      ? safeArray(ui.teacherDraft.uploadedRubricSchema.criteria).map((criterion) => normalizeRubricRow({
           id: criterion.id,
           name: criterion.name,
           description: "",
