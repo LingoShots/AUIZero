@@ -468,8 +468,16 @@ app.post('/api/rubric/parse-text', async (req, res) => {
 // ── AI endpoint ─────────────────────────────────────────────
 app.post('/api/generate', async (req, res) => {
   try {
+    const user = await getUser(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
     const { prompt, messages, system, maxTokens, temperature } = req.body;
-    const apiMessages = messages || [{ role: "user", content: prompt }];
+    // ...rest unchanged
+app.post('/api/generate', async (req, res) => {
+  try {
+    const { prompt, messages, system, maxTokens, temperature } = req.body;
+    const apiMessages = (messages || [{ role: "user", content: prompt }])
+  .map(({ role, content }) => ({ role, content }));
     const requestBody = {
       model: "claude-sonnet-4-6",
       max_tokens: clampNumber(maxTokens, { min: 200, max: 2500, fallback: 1000 }),
