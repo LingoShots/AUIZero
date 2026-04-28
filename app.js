@@ -3467,8 +3467,8 @@ if (action === "select-assignment") {
     persistState();
     render();
     window.requestAnimationFrame(() => {
-      const reviewPanel = document.getElementById("teacher-review-panel");
-      if (reviewPanel) reviewPanel.scrollIntoView({ behavior: "smooth", block: "end" });
+      const submitBtn = document.querySelector('[data-action="save-teacher-review"]');
+      if (submitBtn) submitBtn.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     return;
   }
