@@ -3422,16 +3422,19 @@ if (action === "select-assignment") {
     submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
     submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
     ui.notice = "Preparing suggested grade...";
+    ui.gradeSuggestionLoading = true;
     render();
     requestGradeSuggestionFromAi(assignment, submission)
       .catch((error) => {
         console.error("Falling back to local grade suggestion:", error);
+        ui.gradeSuggestionLoading = false;
         return gradeSubmission(assignment, submission);
       })
       .then((suggestedGrade) => {
         submission.teacherReview.suggestedGrade = suggestedGrade;
         submission.teacherReview.suggestedRowScores = safeArray(suggestedGrade?.rowScores);
         ui.notice = "Suggested grading is ready to review.";
+        ui.gradeSuggestionLoading = false;
         persistState();
         render();
         window.requestAnimationFrame(() => {
@@ -3480,6 +3483,7 @@ if (action === "select-assignment") {
     }
 
     submission.teacherReview.suggestedGrade = null;
+    gradeSuggestionLoading: false,
     submission.teacherReview.suggestedRowScores = [];
     ui.notice = "Suggested grade cleared.";
     persistState();
@@ -5509,7 +5513,8 @@ function renderTeacherGrading(assignment, submission) {
             <p style="font-size:0.8rem;color:var(--sage);margin-bottom:8px;">✓ Last saved ${escapeHtml(formatDateTime(submission.teacherReview.savedAt))}</p>
           ` : ""}
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="button-secondary" data-action="generate-grade">Suggest Grade</button>
+            <button class="button-secondary" data-action="generate-grade" ${ui.gradeSuggestionLoading ? "disabled" : ""}>${ui.gradeSuggestionLoading ? "Thinking…" : "Suggest Grade"}</button>
+            ${ui.gradeSuggestionLoading ? `<span style="font-size:0.82rem;color:var(--muted);align-self:center;">AI is reviewing the submission…</span>` : ""}
             <button class="button-ghost" data-action="copy-lms-grade">Copy Grade</button>
             <button class="button" data-action="save-teacher-review">Submit grade</button>
           </div>
