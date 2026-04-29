@@ -14,25 +14,33 @@
     return Array.isArray(value) ? value : [];
   }
 
+  function safeSubmission(submission) {
+    return submission && typeof submission === "object" ? submission : {};
+  }
+
   function getTeacherReview(submission = {}) {
-    return submission.teacherReview || submission.teacher_review || {};
+    const source = safeSubmission(submission);
+    return source.teacherReview || source.teacher_review || {};
   }
 
   function getSubmissionStatus(submission = {}) {
+    const source = safeSubmission(submission);
     const review = getTeacherReview(submission);
-    return String(submission.status || review.status || "").trim().toLowerCase();
+    return String(source.status || review.status || "").trim().toLowerCase();
   }
 
   function getSubmittedAt(submission = {}) {
-    return submission.submittedAt || submission.submitted_at || null;
+    const source = safeSubmission(submission);
+    return source.submittedAt || source.submitted_at || null;
   }
 
   function hasSubmissionContent(submission = {}) {
+    const source = safeSubmission(submission);
     return Boolean(
-      String(submission.finalText || submission.final_text || "").trim() ||
-      String(submission.draftText || submission.draft_text || "").trim() ||
-      safeArray(submission.writingEvents || submission.writing_events).length ||
-      safeArray(submission.keystrokeLog || submission.keystroke_log).length
+      String(source.finalText || source.final_text || "").trim() ||
+      String(source.draftText || source.draft_text || "").trim() ||
+      safeArray(source.writingEvents || source.writing_events).length ||
+      safeArray(source.keystrokeLog || source.keystroke_log).length
     );
   }
 
@@ -64,15 +72,18 @@
   }
 
   function getSubmissionStudentId(submission = {}) {
-    return submission.studentId || submission.student_id || "";
+    const source = safeSubmission(submission);
+    return source.studentId || source.student_id || "";
   }
 
   function getSubmissionUpdatedAt(submission = {}) {
-    return submission.updatedAt || submission.updated_at || submission.submittedAt || submission.submitted_at || "";
+    const source = safeSubmission(submission);
+    return source.updatedAt || source.updated_at || source.submittedAt || source.submitted_at || "";
   }
 
   function getSubmissionAssignmentId(submission = {}) {
-    return submission.assignmentId || submission.assignment_id || "";
+    const source = safeSubmission(submission);
+    return source.assignmentId || source.assignment_id || "";
   }
 
   function getSubmissionRank(submission = {}) {

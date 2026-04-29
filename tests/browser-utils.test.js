@@ -239,3 +239,10 @@ test("submission counts dedupe duplicate student rows toward reviewed or submitt
   assert.equal(counts.graded, 1);
   assert.equal(counts.notSubmitted, 0);
 });
+
+test("submission utilities tolerate missing submission objects during hydration", () => {
+  assert.equal(submissionUtils.isSubmissionSubmitted(null), false);
+  assert.equal(submissionUtils.isSubmissionGraded(null), false);
+  assert.equal(submissionUtils.getSubmissionStatus(null), "");
+  assert.equal(submissionUtils.getSubmissionAssignmentId(null), "");
+});
