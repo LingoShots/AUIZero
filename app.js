@@ -1675,6 +1675,38 @@ async function bootApp(profile) {
   render();
 }
 
+async function refreshWorkspaceAfterAccountSecurity() {
+  if (!currentProfile) {
+    render();
+    return;
+  }
+
+  const preferredClassId = currentClassId;
+  try {
+    if (currentProfile.role === "student") {
+      await refreshStudentClasses(preferredClassId);
+      await loadStudentAssignmentsForCurrentClass();
+      hydrateSelections();
+      if (ui.selectedStudentAssignmentId) {
+        await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
+      }
+    } else if (currentProfile.role === "teacher" || (currentProfile.role === "admin" && ui.adminViewingAsTeacher)) {
+      const data = await Auth.apiFetch("/api/classes");
+      currentClasses = data.classes || currentClasses;
+      currentClassId = preferredClassId && currentClasses.some((cls) => cls.id === preferredClassId)
+        ? preferredClassId
+        : await resolveTeacherStartingClass(currentProfile, currentClasses);
+      if (currentClassId) {
+        await loadTeacherClassContext(currentClassId);
+      }
+    }
+  } catch (error) {
+    console.error("Could not refresh workspace after account security action:", error);
+    ui.notice = "Password updated. Refresh the page if your class list looks out of date.";
+  }
+  render();
+}
+
 async function loadAdminData() {
   const data = await Auth.apiFetch('/api/admin/teachers');
   ui.adminTeachers = data.teachers || [];
@@ -3065,7 +3097,7 @@ if (action === "sign-out") {
 
   if (action === "account-security-dismiss") {
     window.AccountSecurity?.dismissUpgradePrompt(currentProfile);
-    render();
+    await refreshWorkspaceAfterAccountSecurity();
     return;
   }
 
@@ -3097,7 +3129,7 @@ if (action === "sign-out") {
       window.AccountSecurity?.markPasswordUpdated(currentProfile);
       ui.showPasswordModal = false;
       ui.notice = "Password updated.";
-      render();
+      await refreshWorkspaceAfterAccountSecurity();
     } catch (error) {
       if (errEl) {
         errEl.textContent = error.message;
