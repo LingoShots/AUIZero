@@ -126,8 +126,48 @@ function getConfiguredPublicBaseUrl() {
   return String(configuredBase || '').replace(/\/+$/, '');
 }
 
+function isLocalhostUrl(value) {
+  return /(^https?:\/\/)?(localhost|127\.0\.0\.1|\[?::1\]?)(?::\d+)?/i.test(String(value || '').trim());
+}
+
+function getPasswordResetBaseUrl(req, requestedRedirect) {
+  const redirectFromClient = String(requestedRedirect || '').trim();
+  if (/^https?:\/\//i.test(redirectFromClient) && !isLocalhostUrl(redirectFromClient)) {
+    return redirectFromClient.replace(/\/+$/, '');
+  }
+
+  const configuredBase = getConfiguredPublicBaseUrl();
+  if (configuredBase && !isLocalhostUrl(configuredBase)) {
+    return configuredBase;
+  }
+
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  if (forwardedProto && forwardedHost && !isLocalhostUrl(forwardedHost)) {
+    return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, '');
+  }
+
+  const originHeader = String(req.headers.origin || '').trim();
+  if (originHeader && !isLocalhostUrl(originHeader)) {
+    return originHeader.replace(/\/+$/, '');
+  }
+
+  return getRequestBaseUrl(req);
+}
+
 function canSendNotificationEmails() {
   return Boolean(RESEND_API_KEY && NOTIFY_FROM_EMAIL);
+}
+
+function validatePasswordStrength(password) {
+  const value = String(password || '');
+  if (value.length < 8) {
+    return 'Password must be at least 8 characters.';
+  }
+  if (!/\d/.test(value)) {
+    return 'Password must include at least 1 number.';
+  }
+  return '';
 }
 
 function makeIdempotencyKey(parts = []) {
@@ -296,6 +336,75 @@ async function notifyStudentsAboutAssignment({
   }));
 }
 
+function getTeacherReviewSavedAt(review) {
+  return String(review?.savedAt || review?.saved_at || '').trim();
+}
+
+function teacherReviewWasNewlySaved(previousReview, nextReview) {
+  const nextSavedAt = getTeacherReviewSavedAt(nextReview);
+  if (!nextSavedAt) return false;
+  return nextSavedAt !== getTeacherReviewSavedAt(previousReview);
+}
+
+async function notifyStudentAboutGradedSubmission({
+  assignment,
+  submission,
+  previousTeacherReview,
+  baseUrl,
+}) {
+  if (
+    !canSendNotificationEmails() ||
+    !assignment?.id ||
+    !submission?.student_id ||
+    !teacherReviewWasNewlySaved(previousTeacherReview, submission.teacher_review)
+  ) {
+    return;
+  }
+
+  const emailMap = await getAuthUserEmailMap([submission.student_id]);
+  const studentEmail = emailMap.get(submission.student_id);
+  if (!studentEmail) return;
+
+  const studentName = submission.profiles?.name || 'Student';
+  const safeStudentName = escapeHtmlEmail(studentName);
+  const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
+  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
+  const score = submission.teacher_review?.finalScore;
+  const scoreLine = score !== undefined && score !== null && String(score) !== ''
+    ? `<p><strong>Score:</strong> ${escapeHtmlEmail(String(score))}</p>`
+    : '';
+  const textScoreLine = score !== undefined && score !== null && String(score) !== ''
+    ? `Score: ${score}\n`
+    : '';
+  const accessLine = safeBaseUrl
+    ? `Open praxis here: ${safeBaseUrl}`
+    : `Open praxis from your usual class link to view the feedback.`;
+  const buttonHtml = safeBaseUrl
+    ? `<p><a href="${escapeHtmlEmail(safeBaseUrl)}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#4c6fe7;color:#ffffff;text-decoration:none;font-weight:600;">View feedback</a></p>`
+    : '';
+
+  await sendEmail({
+    to: studentEmail,
+    subject: `Feedback ready: ${assignment.title || 'Assignment'}`,
+    html: `
+      <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
+        <p>Hi ${safeStudentName},</p>
+        <p>Your teacher has reviewed <strong>${safeTitle}</strong>.</p>
+        ${scoreLine}
+        ${buttonHtml}
+      </div>
+    `,
+    text: `Hi ${studentName},\n\nYour teacher has reviewed "${assignment.title || 'Assignment'}".\n${textScoreLine}\n${accessLine}`,
+    idempotencyKey: makeIdempotencyKey([
+      'grade-published',
+      assignment.id,
+      submission.student_id,
+      getTeacherReviewSavedAt(submission.teacher_review),
+    ]),
+  });
+}
+
 async function processUpcomingDeadlineReminders() {
   if (!canSendNotificationEmails() || deadlineReminderInFlight) return;
   deadlineReminderInFlight = true;
@@ -403,7 +512,7 @@ async function ensureStudentCanAccessAssignment(assignmentId, studentId) {
 async function getSubmissionRecord(submissionId) {
   const { data, error } = await supabase
     .from('submissions')
-    .select('id, assignment_id, student_id')
+    .select('id, assignment_id, student_id, teacher_review')
     .eq('id', submissionId)
     .maybeSingle();
   if (error) throw error;
@@ -507,6 +616,8 @@ app.post('/api/auth/signup', async (req, res) => {
     if (!email || !password || !name || !role) {
       return res.status(400).json({ error: 'email, password, name and role are required' });
     }
+    const passwordError = validatePasswordStrength(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
     const { data, error } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -571,11 +682,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email, redirectTo: requestedRedirect } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
-    const redirectFromClient = String(requestedRedirect || '').trim();
-    const safeClientRedirect = /^https?:\/\//i.test(redirectFromClient) && !/localhost(?::\d+)?/i.test(redirectFromClient)
-      ? redirectFromClient.replace(/\/+$/, '')
-      : '';
-    const redirectTo = `${safeClientRedirect || getRequestBaseUrl(req)}/?reset=1`;
+    const redirectTo = `${getPasswordResetBaseUrl(req, requestedRedirect)}/?reset=1`;
     const { error } = await supabase.auth.resetPasswordForEmail(String(email).trim(), {
       redirectTo,
     });
@@ -591,10 +698,48 @@ app.post('/api/auth/update-password', async (req, res) => {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
     const password = String(req.body?.password || '');
-    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    const passwordError = validatePasswordStrength(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
     const { error } = await supabase.auth.admin.updateUserById(user.id, { password });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/notifications/status', async (req, res) => {
+  try {
+    const { error, status } = await requireTeacherProfile(req);
+    if (error) return res.status(status).json({ error });
+    res.json({
+      emailEnabled: canSendNotificationEmails(),
+      hasResendApiKey: Boolean(RESEND_API_KEY),
+      hasFromEmail: Boolean(NOTIFY_FROM_EMAIL),
+      publicBaseUrl: getConfiguredPublicBaseUrl(),
+      forgotPasswordRedirectBase: getPasswordResetBaseUrl(req, req.query?.redirectTo),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/notifications/test', async (req, res) => {
+  try {
+    const { user, error, status } = await requireTeacherProfile(req);
+    if (error) return res.status(status).json({ error });
+    if (!canSendNotificationEmails()) {
+      return res.status(400).json({ error: 'Email notifications are disabled. Set RESEND_API_KEY and NOTIFY_FROM_EMAIL.' });
+    }
+    if (!user.email) return res.status(400).json({ error: 'Your account has no email address to test.' });
+    const result = await sendEmail({
+      to: user.email,
+      subject: 'praxis email test',
+      html: '<div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;"><p>This is a praxis email test. If you received this, notification email delivery is configured.</p></div>',
+      text: 'This is a praxis email test. If you received this, notification email delivery is configured.',
+      idempotencyKey: makeIdempotencyKey(['notification-test', user.id, new Date().toISOString()]),
+    });
+    res.json({ ok: true, result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1199,7 +1344,7 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
 
     let { data, error } = await supabase
       .from('submissions')
-      .select('id')
+      .select('id, teacher_review')
       .eq('assignment_id', assignmentId)
       .eq('student_id', studentId)
       .maybeSingle();
@@ -1214,6 +1359,12 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
         .select('*, profiles(id, name)')
         .single();
       if (updateError) return res.status(400).json({ error: updateError.message });
+      notifyStudentAboutGradedSubmission({
+        assignment: ownedAssignment,
+        submission: updated,
+        previousTeacherReview: data.teacher_review,
+        baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+      }).catch((emailError) => console.error('Grade notification email failed:', emailError));
       return res.json({ submission: updated });
     }
 
@@ -1229,6 +1380,12 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
       .single();
 
     if (createError) return res.status(400).json({ error: createError.message });
+    notifyStudentAboutGradedSubmission({
+      assignment: ownedAssignment,
+      submission: created,
+      previousTeacherReview: null,
+      baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+    }).catch((emailError) => console.error('Grade notification email failed:', emailError));
     res.json({ submission: created });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1242,8 +1399,9 @@ app.patch('/api/submissions/:id', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
     const submission = await getSubmissionRecord(req.params.id);
     if (!submission) return res.status(404).json({ error: 'Submission not found' });
+    let ownedAssignment = null;
     if (submission.student_id !== user.id) {
-      const ownedAssignment = await ensureTeacherOwnsAssignment(submission.assignment_id, user.id);
+      ownedAssignment = await ensureTeacherOwnsAssignment(submission.assignment_id, user.id);
       if (!ownedAssignment) {
         return res.status(403).json({ error: 'You do not have permission to update this submission.' });
       }
@@ -1255,6 +1413,14 @@ app.patch('/api/submissions/:id', async (req, res) => {
       .select('*, profiles(id, name)')
       .single();
     if (error) return res.status(400).json({ error: error.message });
+    if (ownedAssignment) {
+      notifyStudentAboutGradedSubmission({
+        assignment: ownedAssignment,
+        submission: data,
+        previousTeacherReview: submission.teacher_review,
+        baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+      }).catch((emailError) => console.error('Grade notification email failed:', emailError));
+    }
     res.json({ submission: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
