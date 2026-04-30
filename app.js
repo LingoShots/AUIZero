@@ -1691,14 +1691,9 @@ async function refreshWorkspaceAfterAccountSecurity() {
         await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
       }
     } else if (currentProfile.role === "teacher" || (currentProfile.role === "admin" && ui.adminViewingAsTeacher)) {
-      const data = await Auth.apiFetch("/api/classes");
-      currentClasses = data.classes || currentClasses;
-      currentClassId = preferredClassId && currentClasses.some((cls) => cls.id === preferredClassId)
-        ? preferredClassId
-        : await resolveTeacherStartingClass(currentProfile, currentClasses);
-      if (currentClassId) {
-        await loadTeacherClassContext(currentClassId);
-      }
+      // Preserve the already-loaded teacher workspace. A password action should
+      // never be allowed to replace classes/students with an empty transient response.
+      currentClassId = preferredClassId || currentClassId;
     }
   } catch (error) {
     console.error("Could not refresh workspace after account security action:", error);
