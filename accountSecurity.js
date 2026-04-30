@@ -89,6 +89,90 @@
     `;
   }
 
+  function escapeHtml(value = "") {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderResetPasswordScreen({
+    appEl,
+    productName = "praxis",
+    auth,
+    onBeforeRender,
+    onCancel,
+    onSuccess,
+  } = {}) {
+    if (!appEl || !auth?.updatePassword) return;
+    if (typeof onBeforeRender === "function") onBeforeRender();
+    document.title = `${productName} · Reset password`;
+    appEl.innerHTML = `
+      <div style="min-height:100vh;display:grid;place-items:center;padding:20px;">
+        <div style="width:100%;max-width:400px;background:rgba(255,255,255,0.92);border:1px solid rgba(217,227,240,0.92);border-radius:20px;padding:32px;box-shadow:0 18px 42px rgba(21,39,74,0.10);backdrop-filter:blur(16px);">
+          <h1 style="margin:0 0 8px;font-family:'Manrope','Avenir Next','Segoe UI',sans-serif;font-size:1.35rem;letter-spacing:-0.03em;">Reset your password</h1>
+          <p class="subtle" style="margin:0 0 16px;">Choose a new password for your ${escapeHtml(productName)} account.</p>
+          <div class="field-stack">
+            <div class="field">
+              <label for="reset-password-input">New password</label>
+              <input id="reset-password-input" type="password" placeholder="8+ characters, 1 number" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="reset-password-confirm">Confirm password</label>
+              <input id="reset-password-confirm" type="password" placeholder="Repeat your new password" autocomplete="new-password" />
+            </div>
+            <p id="reset-password-error" style="display:none;margin:0;font-size:0.88rem;"></p>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="button-ghost" type="button" data-reset-action="cancel">Cancel</button>
+              <button class="button" type="button" data-reset-action="save">Save new password</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    appEl.querySelector("[data-reset-action='cancel']")?.addEventListener("click", () => {
+      if (typeof onCancel === "function") {
+        onCancel();
+      } else {
+        window.location.href = "/";
+      }
+    });
+    appEl.querySelector("[data-reset-action='save']")?.addEventListener("click", async () => {
+      const password = document.getElementById("reset-password-input")?.value || "";
+      const confirm = document.getElementById("reset-password-confirm")?.value || "";
+      const errEl = document.getElementById("reset-password-error");
+      if (errEl) errEl.style.display = "none";
+      const validation = validatePasswordPair(password, confirm);
+      if (!validation.ok) {
+        if (errEl) {
+          errEl.textContent = validation.message;
+          errEl.style.display = "block";
+          errEl.style.color = "var(--danger)";
+        }
+        return;
+      }
+      try {
+        await auth.updatePassword(password);
+        if (errEl) {
+          errEl.textContent = "Password updated. You can sign in now.";
+          errEl.style.display = "block";
+          errEl.style.color = "var(--sage)";
+        }
+        setTimeout(() => {
+          if (typeof onSuccess === "function") onSuccess();
+        }, 800);
+      } catch (error) {
+        if (errEl) {
+          errEl.textContent = error.message;
+          errEl.style.display = "block";
+          errEl.style.color = "var(--danger)";
+        }
+      }
+    });
+  }
+
   window.AccountSecurity = {
     PASSWORD_REQUIREMENT_TEXT,
     validatePassword,
@@ -98,5 +182,6 @@
     markPasswordUpdated,
     renderUpgradeBanner,
     renderChangePasswordModal,
+    renderResetPasswordScreen,
   };
 })();
