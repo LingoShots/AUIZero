@@ -122,6 +122,7 @@ const ui = {
   chatInput: "",
   chatLoading: false,
   latestDraftFeedbackByAssignmentId: {},
+  showPasswordModal: false,
   adminView: "teachers",
   adminSelectedTeacherId: null,
   adminSelectedClassId: null,
@@ -1632,6 +1633,7 @@ function resetAppShellState() {
   ui.studentStepOverrides = {};
   ui.showDraftFeedbackPrompt = false;
   ui.latestDraftFeedbackByAssignmentId = {};
+  ui.showPasswordModal = false;
   ui.notice = "";
 }
 async function bootApp(profile) {
@@ -3053,6 +3055,57 @@ if (action === "sign-out") {
     setTimeout(() => renderAuthScreen(), 0);
     return;
   }
+
+  if (action === "account-security-change-password") {
+    ui.showPasswordModal = true;
+    render();
+    window.requestAnimationFrame(() => document.getElementById("account-password-input")?.focus());
+    return;
+  }
+
+  if (action === "account-security-dismiss") {
+    window.AccountSecurity?.dismissUpgradePrompt(currentProfile);
+    render();
+    return;
+  }
+
+  if (action === "account-security-cancel") {
+    ui.showPasswordModal = false;
+    render();
+    return;
+  }
+
+  if (action === "account-security-save") {
+    const passwordInput = document.getElementById("account-password-input");
+    const confirmInput = document.getElementById("account-password-confirm");
+    const errEl = document.getElementById("account-password-error");
+    const password = passwordInput?.value || "";
+    const confirm = confirmInput?.value || "";
+    const validation = window.AccountSecurity?.validatePasswordPair(password, confirm) || { ok: false, message: "Password could not be checked." };
+    if (errEl) {
+      errEl.style.display = "none";
+    }
+    if (!validation.ok) {
+      if (errEl) {
+        errEl.textContent = validation.message;
+        errEl.style.display = "block";
+      }
+      return;
+    }
+    try {
+      await Auth.updatePassword(password);
+      window.AccountSecurity?.markPasswordUpdated(currentProfile);
+      ui.showPasswordModal = false;
+      ui.notice = "Password updated.";
+      render();
+    } catch (error) {
+      if (errEl) {
+        errEl.textContent = error.message;
+        errEl.style.display = "block";
+      }
+    }
+    return;
+  }
   
   if (action === "focus-brief") {
     ui.selectedAssignmentId = null;
@@ -4076,9 +4129,10 @@ function render() {
     <div class="app-shell">
       ${renderTopbar()}
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
+      ${window.AccountSecurity?.renderUpgradeBanner(currentProfile) || ""}
       ${ui.role === "admin" && !ui.adminViewingAsTeacher ? renderAdminWorkspace() : ui.role === "teacher" || ui.adminViewingAsTeacher ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderDraftFeedbackModal();
+  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderDraftFeedbackModal() + (window.AccountSecurity?.renderChangePasswordModal(ui.showPasswordModal) || "");
 
   // Start chat timer if student is on step 1 and there's a time limit
   if (ui.role === "student" && ui.studentStep === 1) {
@@ -4206,8 +4260,15 @@ function bindAuthScreenEvents(joinClassId = null) {
       errEl.style.display = "block";
       return;
     }
+    const validation = window.AccountSecurity?.validatePassword(password);
+    if (validation && !validation.ok) {
+      errEl.textContent = validation.message;
+      errEl.style.display = "block";
+      return;
+    }
     try {
       const profile = await Auth.signUp(email, password, name, joinClassId ? "student" : authUiState.signupRole);
+      window.AccountSecurity?.markPasswordUpdated(profile);
       await Auth.joinClassIfInvited();
       await bootApp(profile);
     } catch (error) {
@@ -4262,7 +4323,8 @@ function renderAuthScreen(joinClassId = null, inviteInfo = null) {
           <div style="display:grid;gap:12px;">
             <input id="auth-signup-name" type="text" placeholder="Full name" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
             <input id="auth-signup-email" type="email" placeholder="Email" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
-            <input id="auth-signup-password" type="password" placeholder="Password (min 6 characters)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <input id="auth-signup-password" type="password" placeholder="Password (8+ characters, 1 number)" style="border:1px solid #ddd2c2;border-radius:10px;padding:12px 14px;width:100%;font:inherit;box-sizing:border-box;" />
+            <p class="subtle" style="font-size:0.8rem;margin:-4px 0 0;">${escapeHtml(window.AccountSecurity?.PASSWORD_REQUIREMENT_TEXT || "Use at least 8 characters and 1 number.")}</p>
             <div style="display:flex;gap:8px;">
               <button type="button" data-auth-role="student" id="role-btn-student" style="flex:1;padding:10px;border:2px solid var(--accent);border-radius:10px;background:#e7eeff;font:inherit;font-weight:700;cursor:pointer;color:var(--accent-deep);">Student</button>
               ${!joinClassId ? `<button type="button" data-auth-role="teacher" id="role-btn-teacher" style="flex:1;padding:10px;border:1px solid #ddd2c2;border-radius:10px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:#667063;">Teacher</button>` : ''}
@@ -4288,7 +4350,7 @@ function renderResetPasswordScreen() {
         <div class="field-stack">
           <div class="field">
             <label for="reset-password-input">New password</label>
-            <input id="reset-password-input" type="password" placeholder="At least 6 characters" />
+            <input id="reset-password-input" type="password" placeholder="8+ characters, 1 number" />
           </div>
           <div class="field">
             <label for="reset-password-confirm">Confirm password</label>
@@ -4311,8 +4373,9 @@ function renderResetPasswordScreen() {
     const confirm = document.getElementById('reset-password-confirm').value;
     const errEl = document.getElementById('reset-password-error');
     errEl.style.display = 'none';
-    if (!password || password.length < 6) {
-      errEl.textContent = 'Password must be at least 6 characters.';
+    const validation = window.AccountSecurity?.validatePassword(password) || { ok: false, message: "Password could not be checked." };
+    if (!validation.ok) {
+      errEl.textContent = validation.message;
       errEl.style.display = 'block';
       errEl.style.color = 'var(--danger)';
       return;
@@ -4552,6 +4615,7 @@ function renderTopbar() {
           `}
           ` : ""}
         ${ui.adminViewingAsTeacher ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
+        <button class="button-ghost" data-action="account-security-change-password">Change password</button>
         <button class="button-ghost" data-action="sign-out">Sign out</button>
       </div>
     </header>
