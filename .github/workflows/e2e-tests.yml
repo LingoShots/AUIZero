@@ -1,0 +1,84 @@
+name: Playwright E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_file:
+        description: "Which E2E test should run?"
+        required: true
+        default: "auth"
+        type: choice
+        options:
+          - auth
+          - teacher
+          - student
+          - full-flow
+          - all
+
+jobs:
+  e2e:
+    name: Run ${{ inputs.test_file }} Playwright test
+    runs-on: ubuntu-latest
+
+    env:
+      TEACHER_EMAIL: ${{ secrets.TEACHER_EMAIL }}
+      TEACHER_PASSWORD: ${{ secrets.TEACHER_PASSWORD }}
+      STUDENT_EMAIL: ${{ secrets.STUDENT_EMAIL }}
+      STUDENT_PASSWORD: ${{ secrets.STUDENT_PASSWORD }}
+      PLAYWRIGHT_HTML_OPEN: never
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install app and test dependencies
+        run: npm install
+
+      - name: Install Chromium browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run selected Playwright tests
+        shell: bash
+        run: |
+          case "${{ inputs.test_file }}" in
+            auth)
+              npx playwright test tests/e2e/auth.spec.js
+              ;;
+            teacher)
+              npx playwright test tests/e2e/teacher.spec.js
+              ;;
+            student)
+              npx playwright test tests/e2e/student.spec.js
+              ;;
+            full-flow)
+              npx playwright test tests/e2e/full-flow.spec.js
+              ;;
+            all)
+              npx playwright test
+              ;;
+            *)
+              echo "Unknown test choice: ${{ inputs.test_file }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ inputs.test_file }}-html-report
+          path: playwright-report/
+          if-no-files-found: ignore
+
+      - name: Upload screenshots, videos, and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ inputs.test_file }}-failure-artifacts
+          path: test-results/
+          if-no-files-found: ignore
