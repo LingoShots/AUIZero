@@ -36,7 +36,7 @@
   }
 
   function buildStateSnapshot(state, currentProfile) {
-    const assignments = Array.isArray(state?.assignments)
+    const assignments = currentProfile?.role === "student" && Array.isArray(state?.assignments)
       ? state.assignments.map((assignment) => ({ ...assignment }))
       : [];
     const users = Array.isArray(state?.users)
