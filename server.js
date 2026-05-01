@@ -76,33 +76,6 @@ function getBearerToken(req) {
   return auth.slice(7);
 }
 
-function decodeJwtPayload(token) {
-  try {
-    const parts = String(token || '').split('.');
-    if (parts.length < 2) return null;
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    return JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
-  } catch (_) {
-    return null;
-  }
-}
-
-function getServerKeyDebugInfo() {
-  const payload = decodeJwtPayload(SUPABASE_SERVER_KEY);
-  const key = String(SUPABASE_SERVER_KEY || '');
-  const isSecretKey = key.startsWith('sb_secret_');
-  return {
-    keySource: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SUPABASE_SERVICE_ROLE_KEY' : (process.env.SUPABASE_SERVICE_KEY ? 'SUPABASE_SERVICE_KEY' : 'missing'),
-    jwtShaped: Boolean(payload),
-    keyFormat: isSecretKey ? 'sb_secret' : (payload ? 'jwt' : (key ? 'unknown' : 'missing')),
-    role: payload?.role || null,
-    ref: payload?.ref || null,
-    issuer: payload?.iss || null,
-    isServiceRole: payload?.role === 'service_role',
-    isSecretKey,
-  };
-}
-
 function getRequestScopedSupabase(req) {
   const token = getBearerToken(req);
   if (!process.env.SUPABASE_URL || !SUPABASE_BROWSER_KEY || !token) {
@@ -669,8 +642,6 @@ app.post('/api/auth/signup', async (req, res) => {
   let createdUserEmail = null;
   try {
     const { email, password, name, role } = req.body;
-    const debugEmail = String(email || '').trim().toLowerCase();
-    console.info('[SIGNUP DEBUG] start', { email: debugEmail, role, hasName: Boolean(name), hasPassword: Boolean(password) });
     if (!email || !password || !name || !role) {
       return res.status(400).json({ error: 'email, password, name and role are required' });
     }
@@ -685,33 +656,12 @@ app.post('/api/auth/signup', async (req, res) => {
       user_metadata: { name, role },
       email_confirm: true,
     });
-    console.info('[SIGNUP DEBUG] createUser result', {
-      email: debugEmail,
-      ok: !error,
-      userId: data?.user?.id || null,
-      error: error?.message || null,
-    });
     if (error) return res.status(400).json({ error: error.message });
     createdUserId = data?.user?.id || null;
     createdUserEmail = data?.user?.email || email;
     if (!createdUserId) {
-      console.error('[SIGNUP DEBUG] createUser missing user id', { email: debugEmail, data });
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
-
-    const { data: serverClientSession, error: serverClientSessionError } = await supabase.auth.getSession();
-    const { data: userAuthClientSession, error: userAuthClientSessionError } = await supabaseUserAuth.auth.getSession();
-    console.info('[SIGNUP DEBUG] server client auth context before profile insert', {
-      email: debugEmail,
-      userId: createdUserId,
-      serverKey: getServerKeyDebugInfo(),
-      clientSessionUserId: serverClientSession?.session?.user?.id || null,
-      clientSessionRole: serverClientSession?.session?.user?.role || null,
-      clientSessionError: serverClientSessionError?.message || null,
-      userAuthClientSessionUserId: userAuthClientSession?.session?.user?.id || null,
-      userAuthClientSessionError: userAuthClientSessionError?.message || null,
-      requestHadBearer: Boolean(getBearerToken(req)),
-    });
 
     // Create profile manually instead of relying on a database trigger.
     const { data: profile, error: profileError } = await supabase
@@ -723,16 +673,6 @@ app.post('/api/auth/signup', async (req, res) => {
       })
       .select()
       .single();
-    console.info('[SIGNUP DEBUG] profile insert result', {
-      email: debugEmail,
-      userId: createdUserId,
-      ok: !profileError && Boolean(profile),
-      profileId: profile?.id || null,
-      error: profileError?.message || null,
-      code: profileError?.code || null,
-      details: profileError?.details || null,
-      hint: profileError?.hint || null,
-    });
     if (profileError || !profile) {
       const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
       if (deleteError) {
@@ -741,19 +681,8 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
 
-    console.info('[SIGNUP DEBUG] sending success response', {
-      email: debugEmail,
-      userId: createdUserId,
-      profileId: profile?.id || null,
-    });
     return res.status(201).json({ profile });
   } catch (error) {
-    console.error('[SIGNUP DEBUG] catch', {
-      email: createdUserEmail || req.body?.email || null,
-      createdUserId,
-      message: error?.message || null,
-      stack: error?.stack || null,
-    });
     if (createdUserId) {
       try {
         const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
@@ -1067,50 +996,21 @@ app.post('/api/classes/:classId/join', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
-    console.info('[JOIN DEBUG] start', {
-      classId: req.params.classId,
-      userId: user.id,
-      email: user.email || null,
-      hasBearer: Boolean(getBearerToken(req)),
-    });
     const profile = await getProfile(user.id);
-    console.info('[JOIN DEBUG] profile result', {
-      classId: req.params.classId,
-      userId: user.id,
-      role: profile?.role || null,
-      hasProfile: Boolean(profile),
-    });
     if (profile?.role !== 'student') {
       return res.status(403).json({ error: 'Only student accounts can join classes.' });
     }
-    const { data, error, label, attempts } = await writeWithRequestScopedFallback(req, (client) => client
+    const { error } = await writeWithRequestScopedFallback(req, (client) => client
       .from('class_members')
       .insert({ class_id: req.params.classId, student_id: user.id })
       .select('class_id, student_id')
       .single());
-    console.info('[JOIN DEBUG] insert result', {
-      classId: req.params.classId,
-      userId: user.id,
-      ok: !error || error?.code === '23505',
-      label,
-      error: error?.message || null,
-      code: error?.code || null,
-      details: error?.details || null,
-      hint: error?.hint || null,
-      attempts,
-      joined: Boolean(data),
-    });
     if (error?.code === '23505') {
       return res.json({ ok: true, alreadyJoined: true });
     }
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
   } catch (error) {
-    console.error('[JOIN DEBUG] catch', {
-      classId: req.params.classId,
-      message: error?.message || null,
-      stack: error?.stack || null,
-    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -1213,19 +1113,10 @@ async function writeWithRequestScopedFallback(req, writeFn) {
   }
   candidates.push({ client: supabase, label: 'server key' });
 
-  const attempts = [];
-  let lastResult = { data: null, error: null, label: '', attempts };
+  let lastResult = { data: null, error: null, label: '' };
   for (const candidate of candidates) {
     const { data, error } = await writeFn(candidate.client);
-    attempts.push({
-      label: candidate.label,
-      ok: !error,
-      error: error?.message || null,
-      code: error?.code || null,
-      details: error?.details || null,
-      hint: error?.hint || null,
-    });
-    lastResult = { data, error, label: candidate.label, attempts };
+    lastResult = { data, error, label: candidate.label };
     if (!error) return lastResult;
     if (!/row-level security policy/i.test(error.message || '')) break;
   }
