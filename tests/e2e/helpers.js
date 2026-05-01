@@ -210,7 +210,7 @@ async function gradeSubmittedAssignment(page, title) {
   await submittedCard.getByRole("button", { name: /grade/i }).click();
 
   await expect(page.getByText(/student text/i)).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: /suggest grade/i }).click();
+  await page.getByRole("button", { name: /suggest rubric scores/i }).click();
 
   await expect(page.getByText(/ai suggested grade/i)).toBeVisible({ timeout: 90_000 });
   await page.getByRole("button", { name: /use this score/i }).click();
