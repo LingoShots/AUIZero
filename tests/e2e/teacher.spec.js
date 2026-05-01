@@ -12,7 +12,7 @@ test.describe("Teacher workflow", () => {
   test("teacher dashboard loads after login", async ({ page }) => {
     await login(page, "teacher");
 
-    await expect(page.getByText(/teacher review/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/class work/i)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/current class:/i)).toBeVisible();
   });
 

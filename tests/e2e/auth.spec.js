@@ -6,7 +6,7 @@ test.describe("Authentication", () => {
     test.skip(!hasCredentials("teacher"), "Set TEACHER_EMAIL and TEACHER_PASSWORD to run this test.");
 
     await login(page, "teacher");
-    await expect(page.getByText(/teacher review/i)).toBeVisible();
+    await expect(page.getByText(/class work/i)).toBeVisible();
   });
 
   test("student can log in successfully", async ({ page }) => {
