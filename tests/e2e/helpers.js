@@ -71,13 +71,18 @@ async function createManualAssignment(page, title) {
 
   // The manual setup lives inside a details panel. Clicking the summary opens it
   // without requiring us to change the app code.
-  const manualSummary = page.locator("summary").filter({ hasText: /manual assignment setup/i }).first();
-  if (await manualSummary.count()) {
+  const manualPanel = page.locator("details").filter({ hasText: /manual assignment setup/i }).first();
+  const manualSummary = manualPanel.locator("summary").first();
+  if ((await manualPanel.getAttribute("open")) === null && await manualSummary.count()) {
     await manualSummary.click();
   }
 
-  await page.getByLabel(/assignment title/i).fill(title);
-  await page.getByLabel(/task prompt/i).fill(prompt);
+  const manualTitleInput = manualPanel.locator('[data-teacher-field="title"]');
+  const manualPromptInput = manualPanel.locator('[data-teacher-field="prompt"]');
+  await expect(manualTitleInput).toBeVisible();
+  await expect(manualPromptInput).toBeVisible();
+  await manualTitleInput.fill(title);
+  await manualPromptInput.fill(prompt);
 
   const saveButton = page.getByRole("button", { name: /save assignment/i }).last();
   await expect(saveButton).toBeEnabled();
