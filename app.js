@@ -1132,6 +1132,20 @@ function populateTeacherDraftFromAssignment(assignment) {
   ui.editingAssignmentId = assignment.id;
 }
 
+function isTeacherAssignmentSaveReady() {
+  return Boolean(
+    ui.teacherAssist ||
+    ((ui.teacherDraft?.title || "").trim() && (ui.teacherDraft?.prompt || "").trim())
+  );
+}
+
+function syncTeacherAssignmentSaveButtons() {
+  const saveReady = isTeacherAssignmentSaveReady();
+  document.querySelectorAll('[data-action="save-assignment"]').forEach((button) => {
+    button.disabled = Boolean(ui.aiAssistLoading) || !saveReady;
+  });
+}
+
 function inferTeacherBriefSettings(text = "") {
   const brief = String(text || "");
   const inferred = {};
@@ -3766,6 +3780,7 @@ async function handleChange(event) {
     } else if (target.dataset.teacherField === "disableChatbot" && !target.checked && Number(ui.teacherDraft.chatTimeLimit) < 0) {
       ui.teacherDraft.chatTimeLimit = 0;
     }
+    syncTeacherAssignmentSaveButtons();
     return;
   }
 
@@ -3930,6 +3945,7 @@ function handleInput(event) {
 
   if (target.dataset.teacherField) {
     ui.teacherDraft[target.dataset.teacherField] = target.value;
+    syncTeacherAssignmentSaveButtons();
     return;
   }
 
