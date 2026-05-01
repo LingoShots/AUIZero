@@ -194,12 +194,20 @@ function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
 
   const requestedTotalPoints = Number(schema?.totalPoints || 0);
   const criteria = coalesceSharedCriteria(rawCriteria, requestedTotalPoints);
-  const totalPoints = Number(requestedTotalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
+  const criteriaTotalPoints = criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0);
+  // Score against the criteria that actually parsed. This prevents a declared
+  // 20-point total from blocking a 3 x 5-point rubric that should score as 15.
+  const totalPoints = Number(criteriaTotalPoints || requestedTotalPoints || 0);
+  const totalMismatch = requestedTotalPoints > 0
+    && totalPoints > 0
+    && Math.abs(requestedTotalPoints - totalPoints) > 0.001;
 
   return {
     title: String(schema?.title || fileName || 'Uploaded rubric').trim(),
     subtitle: String(schema?.subtitle || '').trim(),
     totalPoints: Number.isFinite(totalPoints) ? totalPoints : 0,
+    declaredTotalPoints: totalMismatch ? requestedTotalPoints : null,
+    criteriaTotalPoints: Number.isFinite(criteriaTotalPoints) ? criteriaTotalPoints : 0,
     notes: (Array.isArray(schema?.notes) ? schema.notes : [])
       .map((note) => String(note || '').trim())
       .filter(Boolean),

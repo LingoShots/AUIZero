@@ -157,12 +157,21 @@
     const criteria = schema?.preserveCriteria
       ? rawCriteria
       : coalesceSharedRubricCriteria(rawCriteria, requestedTotalPoints);
-    const totalPoints = Number(requestedTotalPoints || criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0));
+    const criteriaTotalPoints = criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0);
+    // The clickable rubric can only score the criteria that actually parsed.
+    // If an uploaded rubric declares 20 points but only 3 x 5-point criteria parsed,
+    // use 15 for scoring so students are not blocked by stale rubric metadata.
+    const totalPoints = Number(criteriaTotalPoints || requestedTotalPoints || 0);
+    const totalMismatch = requestedTotalPoints > 0
+      && totalPoints > 0
+      && Math.abs(requestedTotalPoints - totalPoints) > 0.001;
 
     return {
       title: String(schema?.title || fallbackName || "Uploaded rubric").trim(),
       subtitle: String(schema?.subtitle || "").trim(),
       totalPoints: Number.isFinite(totalPoints) ? totalPoints : 0,
+      declaredTotalPoints: totalMismatch ? requestedTotalPoints : null,
+      criteriaTotalPoints: Number.isFinite(criteriaTotalPoints) ? criteriaTotalPoints : 0,
       notes: safeArray(schema?.notes).map((note) => String(note || "").trim()).filter(Boolean),
       criteria,
       attribution: String(schema?.attribution || "").trim(),

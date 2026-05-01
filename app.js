@@ -566,6 +566,9 @@ function applySavedRubricSelection(rubricId) {
     || serializeRubricSchemaForPrompt(savedRubric.schema, savedRubric.name)
     || serializeRubricDataForPrompt(savedRubric.data);
   ui.teacherDraft.uploadedRubricName = savedRubric.name;
+  if (Number(ui.teacherDraft.uploadedRubricSchema?.totalPoints || 0) > 0) {
+    ui.teacherDraft.totalPoints = Number(ui.teacherDraft.uploadedRubricSchema.totalPoints);
+  }
   ui.selectedSavedRubricId = savedRubric.id;
   ui.teacherAssist = null;
   ui.notice = `Loaded saved rubric "${savedRubric.name}". You can save manually or use Format With AI.`;
@@ -4290,6 +4293,9 @@ async function uploadRubricFile(file) {
       ui.teacherDraft.uploadedRubricName = file.name;
       ui.teacherDraft.uploadedRubricData = data.rubricData || null;
       ui.teacherDraft.uploadedRubricSchema = data.schema || null;
+      if (Number(ui.teacherDraft.uploadedRubricSchema?.totalPoints || 0) > 0) {
+        ui.teacherDraft.totalPoints = Number(ui.teacherDraft.uploadedRubricSchema.totalPoints);
+      }
       ui.selectedSavedRubricId = "";
       ui.teacherAssist = null;
       saveRubricToLibrary(file.name, data.text, data.rubricData || null, data.schema || null);
@@ -8921,6 +8927,7 @@ function normalizeAssignment(assignment) {
     || serializeRubricSchemaForPrompt(rubricSchema, assignment?.uploadedRubricName || assignment?.title || "Uploaded rubric")
     || serializeRubricDataForPrompt(uploadedRubricData)
     || "";
+  const rubricTotalPoints = Number(rubricSchema?.totalPoints || normalizedRubric.reduce((sum, row) => sum + Number(row?.points || 0), 0) || assignment?.totalPoints || 20);
 
   return {
     id: assignment?.id || uid("assignment"),
@@ -8932,6 +8939,7 @@ function normalizeAssignment(assignment) {
     languageLevel,
     wordCountMin: ranges.min,
     wordCountMax: Math.max(ranges.max, ranges.min),
+    totalPoints: Number.isFinite(rubricTotalPoints) ? rubricTotalPoints : 20,
     ideaRequestLimit: Number(assignment?.ideaRequestLimit ?? 3),
     feedbackRequestLimit: Number(assignment?.feedbackRequestLimit ?? 2),
     disableChatbot: isChatDisabled(assignment),
