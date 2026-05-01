@@ -42,6 +42,8 @@ const DEADLINE_REMINDER_POLL_MS = Math.max(5 * 60 * 1000, Number(process.env.ASS
 const DEADLINE_REMINDER_WINDOW_MS = Math.max(5 * 60 * 1000, Number(process.env.ASSIGNMENT_REMINDER_WINDOW_MS || 20 * 60 * 1000));
 let deadlineReminderJob = null;
 let deadlineReminderInFlight = false;
+const ACCOUNT_SETUP_INCOMPLETE_MESSAGE = "Your login worked, but your account setup is incomplete. Please ask your teacher (if you're a student) or contact support so we can finish setting up your account.";
+const SIGNUP_PROFILE_ERROR_MESSAGE = "We couldn't finish setting up your account. Please try creating your account again. If this keeps happening, ask your teacher (if you're a student) or contact support.";
 
 if (!process.env.SUPABASE_URL || !SUPABASE_SERVER_KEY) {
   console.warn('Supabase server client is missing SUPABASE_URL or a service-role key.');
@@ -448,7 +450,10 @@ async function requireTeacherProfile(req) {
   const user = await getUser(req);
   if (!user) return { user: null, profile: null, error: 'Not authenticated', status: 401 };
   const profile = await getProfile(user.id);
- if (profile?.role !== 'teacher' && profile?.role !== 'admin') {
+  if (!profile) {
+    return { user, profile: null, error: ACCOUNT_SETUP_INCOMPLETE_MESSAGE, status: 409 };
+  }
+  if (profile.role !== 'teacher' && profile.role !== 'admin') {
     return { user, profile, error: 'Teacher access required', status: 403 };
   }
   return { user, profile, error: null, status: 200 };
@@ -611,10 +616,15 @@ app.post('/api/generate', async (req, res) => {
 
 // Sign up
 app.post('/api/auth/signup', async (req, res) => {
+  let createdUserId = null;
+  let createdUserEmail = null;
   try {
     const { email, password, name, role } = req.body;
     if (!email || !password || !name || !role) {
       return res.status(400).json({ error: 'email, password, name and role are required' });
+    }
+    if (!['student', 'teacher'].includes(role)) {
+      return res.status(400).json({ error: 'Please choose student or teacher.' });
     }
     const passwordError = validatePasswordStrength(password);
     if (passwordError) return res.status(400).json({ error: passwordError });
@@ -625,17 +635,43 @@ app.post('/api/auth/signup', async (req, res) => {
       email_confirm: true,
     });
     if (error) return res.status(400).json({ error: error.message });
+    createdUserId = data?.user?.id || null;
+    createdUserEmail = data?.user?.email || email;
+    if (!createdUserId) {
+      return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
+    }
 
-    // Create profile manually instead of relying on trigger
-    await supabase.from('profiles').insert({
-      id: data.user.id,
-      name,
-      role,
-    });
+    // Create profile manually instead of relying on a database trigger.
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .insert({
+        id: createdUserId,
+        name,
+        role,
+      })
+      .select()
+      .single();
+    if (profileError || !profile) {
+      const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
+      if (deleteError) {
+        console.error('ORPHAN AUTH USER - manual cleanup needed:', createdUserId, createdUserEmail, deleteError.message);
+      }
+      return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
+    }
 
-    res.json({ user: data.user });
+    res.json({ user: data.user, profile });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (createdUserId) {
+      try {
+        const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
+        if (deleteError) {
+          console.error('ORPHAN AUTH USER - manual cleanup needed:', createdUserId, createdUserEmail || req.body?.email, deleteError.message);
+        }
+      } catch (deleteError) {
+        console.error('ORPHAN AUTH USER - manual cleanup needed:', createdUserId, createdUserEmail || req.body?.email, deleteError.message);
+      }
+    }
+    res.status(500).json({ error: createdUserId ? SIGNUP_PROFILE_ERROR_MESSAGE : error.message });
   }
 });
 
@@ -646,6 +682,7 @@ app.post('/api/auth/signin', async (req, res) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return res.status(401).json({ error: error.message });
     const profile = await getProfile(data.user.id);
+    if (!profile) return res.status(409).json({ error: ACCOUNT_SETUP_INCOMPLETE_MESSAGE });
     res.json({ session: data.session, profile });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -751,6 +788,7 @@ app.get('/api/auth/me', async (req, res) => {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
     const profile = await getProfile(user.id);
+    if (!profile) return res.status(409).json({ error: ACCOUNT_SETUP_INCOMPLETE_MESSAGE });
     res.json({ profile });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1216,16 +1254,43 @@ app.get('/api/assignments/:assignmentId/submissions', async (req, res) => {
   try {
     const { user, error: teacherError, status } = await requireTeacherProfile(req);
     if (teacherError) return res.status(status).json({ error: teacherError });
-    const ownedAssignment = await ensureTeacherOwnsAssignment(req.params.assignmentId, user.id);
+    let ownedAssignment = null;
+    try {
+      ownedAssignment = await ensureTeacherOwnsAssignment(req.params.assignmentId, user.id);
+    } catch (accessError) {
+      console.error('Could not verify teacher assignment access:', req.params.assignmentId, user.id, accessError.message);
+      return res.status(400).json({ error: 'Could not verify access to this assignment. Please refresh and try again.' });
+    }
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only view submissions for your own assignments.' });
-    const { data, error } = await supabase
-      .from('submissions')
-      .select('*, profiles(id, name)')
-      .eq('assignment_id', req.params.assignmentId);
-    if (error) return res.status(400).json({ error: error.message });
+    const requestScopedSupabase = getRequestScopedSupabase(req);
+    const candidates = [];
+    if (requestScopedSupabase && requestScopedSupabase !== supabase) {
+      candidates.push(requestScopedSupabase);
+    }
+    candidates.push(supabase);
+
+    let data = null;
+    let lastError = null;
+    for (const client of candidates) {
+      const result = await client
+        .from('submissions')
+        .select('*, profiles(id, name)')
+        .eq('assignment_id', req.params.assignmentId);
+      if (!result.error) {
+        data = result.data || [];
+        lastError = null;
+        break;
+      }
+      lastError = result.error;
+    }
+    if (lastError) {
+      console.error('Could not load assignment submissions:', req.params.assignmentId, lastError.message);
+      return res.status(400).json({ error: 'Could not load submissions for this assignment. Please refresh and try again.' });
+    }
     res.json({ submissions: data });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Unexpected submissions endpoint failure:', error);
+    res.status(500).json({ error: 'Could not load submissions right now. Please refresh and try again.' });
   }
 });
 
