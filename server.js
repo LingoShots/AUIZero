@@ -620,6 +620,8 @@ app.post('/api/auth/signup', async (req, res) => {
   let createdUserEmail = null;
   try {
     const { email, password, name, role } = req.body;
+    const debugEmail = String(email || '').trim().toLowerCase();
+    console.info('[SIGNUP DEBUG] start', { email: debugEmail, role, hasName: Boolean(name), hasPassword: Boolean(password) });
     if (!email || !password || !name || !role) {
       return res.status(400).json({ error: 'email, password, name and role are required' });
     }
@@ -634,10 +636,17 @@ app.post('/api/auth/signup', async (req, res) => {
       user_metadata: { name, role },
       email_confirm: true,
     });
+    console.info('[SIGNUP DEBUG] createUser result', {
+      email: debugEmail,
+      ok: !error,
+      userId: data?.user?.id || null,
+      error: error?.message || null,
+    });
     if (error) return res.status(400).json({ error: error.message });
     createdUserId = data?.user?.id || null;
     createdUserEmail = data?.user?.email || email;
     if (!createdUserId) {
+      console.error('[SIGNUP DEBUG] createUser missing user id', { email: debugEmail, data });
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
 
@@ -651,6 +660,16 @@ app.post('/api/auth/signup', async (req, res) => {
       })
       .select()
       .single();
+    console.info('[SIGNUP DEBUG] profile insert result', {
+      email: debugEmail,
+      userId: createdUserId,
+      ok: !profileError && Boolean(profile),
+      profileId: profile?.id || null,
+      error: profileError?.message || null,
+      code: profileError?.code || null,
+      details: profileError?.details || null,
+      hint: profileError?.hint || null,
+    });
     if (profileError || !profile) {
       const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
       if (deleteError) {
@@ -661,6 +680,12 @@ app.post('/api/auth/signup', async (req, res) => {
 
     res.json({ user: data.user, profile });
   } catch (error) {
+    console.error('[SIGNUP DEBUG] catch', {
+      email: createdUserEmail || req.body?.email || null,
+      createdUserId,
+      message: error?.message || null,
+      stack: error?.stack || null,
+    });
     if (createdUserId) {
       try {
         const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
