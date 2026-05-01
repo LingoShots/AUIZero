@@ -42,7 +42,7 @@ test("AI assist utils parse fenced JSON responses", () => {
   assert.deepEqual(parsed, ["one", "two"]);
 });
 
-test("storage snapshot strips teacher submissions and extra users", () => {
+test("storage snapshot strips teacher assignments, submissions, and extra users", () => {
   const snapshot = storageUtils.buildStateSnapshot({
     users: [
       { id: "teacher-1", name: "Teacher" },
@@ -57,7 +57,7 @@ test("storage snapshot strips teacher submissions and extra users", () => {
 
   assert.deepEqual(snapshot.users, []);
   assert.deepEqual(snapshot.submissions, []);
-  assert.equal(snapshot.assignments.length, 1);
+  assert.deepEqual(snapshot.assignments, []);
 });
 
 test("storage snapshot keeps only the active student submission", () => {

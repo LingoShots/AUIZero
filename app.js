@@ -18,6 +18,7 @@ const {
 const {
   loadStateSnapshot,
   persistStateSnapshot,
+  safeReadJson,
 } = window.StorageUtils;
 const {
   parseJsonResponse,
@@ -41,6 +42,11 @@ let currentClassId = null;
 let currentClassMembers = [];
 let reviewRefreshTimer = null;
 let storageWarningShown = false;
+
+function getProfileScopedStorageKey(baseKey, profile = currentProfile) {
+  if (!profile?.id || !profile?.role) return baseKey;
+  return `${baseKey}:${profile.role}:${profile.id}`;
+}
 
 const BASE_ERROR_CODES = [
   { code: "CS",  label: "Comma splice: two complete sentences joined with only a comma" },
@@ -1546,11 +1552,28 @@ async function bootApp(profile) {
   }
 
   if (profile.role === 'teacher' || (profile.role === 'admin' && ui.adminViewingAsTeacher)) {
-    const data = await Auth.apiFetch('/api/classes');
-    currentClasses = data.classes || [];
-    currentClassId = await resolveTeacherStartingClass(profile, currentClasses);
-    if (currentClassId) {
-      await loadTeacherClassContext(currentClassId);
+    state.assignments = [];
+    state.submissions = [];
+    currentClassMembers = [];
+    try {
+      const data = await Auth.apiFetch('/api/classes');
+      if (data?.error) throw new Error(data.error);
+      currentClasses = data.classes || [];
+      currentClassId = await resolveTeacherStartingClass(profile, currentClasses);
+      if (currentClassId) {
+        await loadTeacherClassContext(currentClassId);
+      } else {
+        persistState();
+      }
+    } catch (error) {
+      console.error("Could not load teacher classes:", error.message, error);
+      currentClasses = [];
+      currentClassId = null;
+      currentClassMembers = [];
+      state.assignments = [];
+      state.submissions = [];
+      ui.notice = "We couldn't load your classes from the server just now. Please refresh in a moment.";
+      persistState();
     }
   } else {
     const localSubmissions = safeArray(state.submissions).slice();
@@ -1600,26 +1623,41 @@ async function loadAdminData() {
 }
 
 async function loadTeacherClassContext(classId) {
-  const previousAssignments = safeArray(state.assignments).slice();
-  const previousSubmissions = safeArray(state.submissions).slice();
-  const previousMembers = safeArray(currentClassMembers).slice();
   currentClassId = classId || null;
   saveActiveClassId(currentProfile, currentClassId);
   ui.selectedAssignmentId = null;
   ui.selectedReviewSubmissionId = null;
   ui.selectedReviewStudentId = null;
 
-  if (!currentClassId) return;
+  if (!currentClassId) {
+    currentClassMembers = [];
+    state.assignments = [];
+    state.submissions = [];
+    persistState();
+    return;
+  }
 
-  const [membersData, assignData] = await Promise.all([
-    Auth.apiFetch(`/api/classes/${currentClassId}/members`),
-    Auth.apiFetch(`/api/classes/${currentClassId}/assignments`)
-  ]);
+  let membersData = null;
+  let assignData = null;
+  try {
+    [membersData, assignData] = await Promise.all([
+      Auth.apiFetch(`/api/classes/${currentClassId}/members`),
+      Auth.apiFetch(`/api/classes/${currentClassId}/assignments`)
+    ]);
+  } catch (error) {
+    console.error("Could not load teacher class context:", error.message, error);
+    currentClassMembers = [];
+    state.assignments = [];
+    state.submissions = [];
+    ui.notice = "We couldn't load this class from the server just now.";
+    persistState();
+    return;
+  }
 
   if (membersData?.error || assignData?.error) {
-    currentClassMembers = previousMembers;
-    state.assignments = previousAssignments;
-    state.submissions = previousSubmissions;
+    currentClassMembers = [];
+    state.assignments = [];
+    state.submissions = [];
     ui.notice = assignData?.error || membersData?.error || "We couldn't load this class right now.";
     persistState();
     return;
@@ -1722,7 +1760,9 @@ async function loadStudentAssignmentsForCurrentClass() {
     persistState();
   } catch (error) {
     console.error("Could not load student assignments:", error.message, error);
+    state.assignments = [];
     ui.notice = "We couldn't load assignments from the server just now.";
+    persistState();
   }
 }
 
@@ -4746,9 +4786,11 @@ function renderAdminClassDetail() {
 }
 
 function renderTeacherWorkspace() {
-  const assignments = state.assignments;
+  const assignments = currentClassId
+    ? state.assignments.filter((assignment) => !assignment.classId || assignment.classId === currentClassId)
+    : [];
   const classRoster = currentClassMembers.filter((member) => member?.id !== currentProfile?.id);
-  const selectedAssignment = state.assignments.find(a => a.id === ui.selectedAssignmentId) || null;
+  const selectedAssignment = assignments.find(a => a.id === ui.selectedAssignmentId) || null;
   const submissions = state.submissions.filter(s => s.assignmentId === ui.selectedAssignmentId);
   const selectedSubmission = selectedAssignment && ui.teacherView === "grading"
     ? getSelectedReviewSubmission()
@@ -9232,9 +9274,35 @@ function createDemoState() {
 }
 
 function loadState(profile = currentProfile) {
+  const storageKey = getProfileScopedStorageKey(STORAGE_KEY, profile);
+  const backupKey = getProfileScopedStorageKey(STORAGE_BACKUP_KEY, profile);
+  const hasScopedState = Boolean(
+    window.localStorage.getItem(storageKey) || window.localStorage.getItem(backupKey)
+  );
+  if (hasScopedState) {
+    return loadStateSnapshot({
+      storageKey,
+      backupKey,
+      normalizeState,
+      createBlankState,
+      currentProfile: profile,
+    });
+  }
+
+  const legacySnapshot = safeReadJson(STORAGE_KEY) || safeReadJson(STORAGE_BACKUP_KEY);
+  if (legacySnapshot) {
+    const migrated = normalizeState(legacySnapshot);
+    if (profile?.role === "student" && profile?.id) {
+      migrated.users = migrated.users.filter((user) => user?.id === profile.id);
+      migrated.submissions = migrated.submissions.filter((submission) => submission?.studentId === profile.id);
+      migrated.assignments = [];
+      return migrated;
+    }
+  }
+
   return loadStateSnapshot({
-    storageKey: STORAGE_KEY,
-    backupKey: STORAGE_BACKUP_KEY,
+    storageKey,
+    backupKey,
     normalizeState,
     createBlankState,
     currentProfile: profile,
@@ -9329,11 +9397,13 @@ async function submitStudentSubmissionToServer(submission) {
 }
 
 function persistState() {
+  const storageKey = getProfileScopedStorageKey(STORAGE_KEY, currentProfile);
+  const backupKey = getProfileScopedStorageKey(STORAGE_BACKUP_KEY, currentProfile);
   const result = persistStateSnapshot({
     state,
     currentProfile,
-    storageKey: STORAGE_KEY,
-    backupKey: STORAGE_BACKUP_KEY,
+    storageKey,
+    backupKey,
   });
   if (!result.ok) {
     console.error("Could not persist local state:", result.error);
