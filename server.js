@@ -55,6 +55,29 @@ function getBearerToken(req) {
   return auth.slice(7);
 }
 
+function decodeJwtPayload(token) {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function getServerKeyDebugInfo() {
+  const payload = decodeJwtPayload(SUPABASE_SERVER_KEY);
+  return {
+    keySource: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SUPABASE_SERVICE_ROLE_KEY' : (process.env.SUPABASE_SERVICE_KEY ? 'SUPABASE_SERVICE_KEY' : 'missing'),
+    jwtShaped: Boolean(payload),
+    role: payload?.role || null,
+    ref: payload?.ref || null,
+    issuer: payload?.iss || null,
+    isServiceRole: payload?.role === 'service_role',
+  };
+}
+
 function getRequestScopedSupabase(req) {
   const token = getBearerToken(req);
   if (!process.env.SUPABASE_URL || !SUPABASE_BROWSER_KEY || !token) {
@@ -649,6 +672,17 @@ app.post('/api/auth/signup', async (req, res) => {
       console.error('[SIGNUP DEBUG] createUser missing user id', { email: debugEmail, data });
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
+
+    const { data: serverClientSession, error: serverClientSessionError } = await supabase.auth.getSession();
+    console.info('[SIGNUP DEBUG] server client auth context before profile insert', {
+      email: debugEmail,
+      userId: createdUserId,
+      serverKey: getServerKeyDebugInfo(),
+      clientSessionUserId: serverClientSession?.session?.user?.id || null,
+      clientSessionRole: serverClientSession?.session?.user?.role || null,
+      clientSessionError: serverClientSessionError?.message || null,
+      requestHadBearer: Boolean(getBearerToken(req)),
+    });
 
     // Create profile manually instead of relying on a database trigger.
     const { data: profile, error: profileError } = await supabase
