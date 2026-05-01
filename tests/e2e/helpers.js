@@ -71,9 +71,9 @@ async function createManualAssignment(page, title) {
 
   // The manual setup lives inside a details panel. Clicking the summary opens it
   // without requiring us to change the app code.
-  const manualSetup = page.getByText(/manual assignment setup/i).first();
-  if (await manualSetup.count()) {
-    await manualSetup.click();
+  const manualSummary = page.locator("summary").filter({ hasText: /manual assignment setup/i }).first();
+  if (await manualSummary.count()) {
+    await manualSummary.click();
   }
 
   await page.getByLabel(/assignment title/i).fill(title);

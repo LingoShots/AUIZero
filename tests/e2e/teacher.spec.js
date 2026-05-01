@@ -36,7 +36,6 @@ test.describe("Teacher workflow", () => {
     await login(page, "teacher");
     await selectTeacherTestClass(page);
 
-    // TODO: add data-testid="assignment-list" to avoid relying on the CSS class.
-    await expect(page.locator(".assignment-list")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: /^assignments$/i })).toBeVisible({ timeout: 20_000 });
   });
 });
