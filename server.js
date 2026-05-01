@@ -678,7 +678,12 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
 
-    res.json({ user: data.user, profile });
+    console.info('[SIGNUP DEBUG] sending success response', {
+      email: debugEmail,
+      userId: createdUserId,
+      profileId: profile?.id || null,
+    });
+    return res.status(201).json({ profile });
   } catch (error) {
     console.error('[SIGNUP DEBUG] catch', {
       email: createdUserEmail || req.body?.email || null,
@@ -999,19 +1004,50 @@ app.post('/api/classes/:classId/join', async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    console.info('[JOIN DEBUG] start', {
+      classId: req.params.classId,
+      userId: user.id,
+      email: user.email || null,
+      hasBearer: Boolean(getBearerToken(req)),
+    });
     const profile = await getProfile(user.id);
+    console.info('[JOIN DEBUG] profile result', {
+      classId: req.params.classId,
+      userId: user.id,
+      role: profile?.role || null,
+      hasProfile: Boolean(profile),
+    });
     if (profile?.role !== 'student') {
       return res.status(403).json({ error: 'Only student accounts can join classes.' });
     }
-    const { error } = await writeWithRequestScopedFallback(req, (client) => client
+    const { data, error, label, attempts } = await writeWithRequestScopedFallback(req, (client) => client
       .from('class_members')
-      .upsert(
-        { class_id: req.params.classId, student_id: user.id },
-        { onConflict: 'class_id,student_id' }
-      ));
+      .insert({ class_id: req.params.classId, student_id: user.id })
+      .select('class_id, student_id')
+      .single());
+    console.info('[JOIN DEBUG] insert result', {
+      classId: req.params.classId,
+      userId: user.id,
+      ok: !error || error?.code === '23505',
+      label,
+      error: error?.message || null,
+      code: error?.code || null,
+      details: error?.details || null,
+      hint: error?.hint || null,
+      attempts,
+      joined: Boolean(data),
+    });
+    if (error?.code === '23505') {
+      return res.json({ ok: true, alreadyJoined: true });
+    }
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
   } catch (error) {
+    console.error('[JOIN DEBUG] catch', {
+      classId: req.params.classId,
+      message: error?.message || null,
+      stack: error?.stack || null,
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -1114,10 +1150,19 @@ async function writeWithRequestScopedFallback(req, writeFn) {
   }
   candidates.push({ client: supabase, label: 'server key' });
 
-  let lastResult = { data: null, error: null, label: '' };
+  const attempts = [];
+  let lastResult = { data: null, error: null, label: '', attempts };
   for (const candidate of candidates) {
     const { data, error } = await writeFn(candidate.client);
-    lastResult = { data, error, label: candidate.label };
+    attempts.push({
+      label: candidate.label,
+      ok: !error,
+      error: error?.message || null,
+      code: error?.code || null,
+      details: error?.details || null,
+      hint: error?.hint || null,
+    });
+    lastResult = { data, error, label: candidate.label, attempts };
     if (!error) return lastResult;
     if (!/row-level security policy/i.test(error.message || '')) break;
   }
