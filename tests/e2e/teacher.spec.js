@@ -12,15 +12,15 @@ test.describe("Teacher workflow", () => {
   test("teacher dashboard loads after login", async ({ page }) => {
     await login(page, "teacher");
 
-    await expect(page.getByText(/class work/i)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/current class:/i)).toBeVisible();
+    await expect(page.getByText(/class work/i).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("banner").getByText(/current class:/i)).toBeVisible();
   });
 
   test("teacher can navigate to the existing test class", async ({ page }) => {
     await login(page, "teacher");
     await selectTeacherTestClass(page);
 
-    await expect(page.getByText(/assignments/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^assignments$/i })).toBeVisible();
   });
 
   test("teacher can create and publish a new assignment", async ({ page }) => {

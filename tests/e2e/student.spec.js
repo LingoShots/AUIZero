@@ -12,7 +12,7 @@ test.describe("Student workflow", () => {
   test("student dashboard loads after login", async ({ page }) => {
     await login(page, "student");
 
-    await expect(page.getByText(/student view/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/student view/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByLabel(/select assignment/i)).toBeVisible();
   });
 
@@ -33,6 +33,6 @@ test.describe("Student workflow", () => {
     await login(page, "student");
     await openFirstStudentAssignment(page);
 
-    await expect(page.getByText(/your task/i)).toBeVisible();
+    await expect(page.getByText(/your task/i).first()).toBeVisible();
   });
 });

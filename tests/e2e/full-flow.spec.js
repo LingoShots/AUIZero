@@ -32,7 +32,7 @@ test.describe("Full teacher to student to teacher flow", () => {
 
       await gradeSubmittedAssignment(teacherPage, title);
 
-      await expect(teacherPage.getByText(/last saved|graded/i)).toBeVisible();
+      await expect(teacherPage.getByText(/last saved/i).first()).toBeVisible();
     } finally {
       await studentContext.close();
       await teacherContext.close();
