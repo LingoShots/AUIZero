@@ -1028,6 +1028,32 @@ function sanitizeSubmissionPayload(payload = {}) {
   return sanitizePayload(payload, SUBMISSION_ALLOWED_FIELDS);
 }
 
+async function assignmentWriteWithFallback(req, writeFn) {
+  return writeWithRequestScopedFallback(req, writeFn);
+}
+
+async function submissionWriteWithFallback(req, writeFn) {
+  return writeWithRequestScopedFallback(req, writeFn);
+}
+
+async function writeWithRequestScopedFallback(req, writeFn) {
+  const requestScopedSupabase = getRequestScopedSupabase(req);
+  const candidates = [];
+  if (requestScopedSupabase && requestScopedSupabase !== supabase) {
+    candidates.push({ client: requestScopedSupabase, label: 'teacher session' });
+  }
+  candidates.push({ client: supabase, label: 'server key' });
+
+  let lastResult = { data: null, error: null, label: '' };
+  for (const candidate of candidates) {
+    const { data, error } = await writeFn(candidate.client);
+    lastResult = { data, error, label: candidate.label };
+    if (!error) return lastResult;
+    if (!/row-level security policy/i.test(error.message || '')) break;
+  }
+  return lastResult;
+}
+
 async function queryAssignmentsForClass(req, classId, accessRole) {
   const requestScopedSupabase = getRequestScopedSupabase(req);
   const candidates = [];
@@ -1090,20 +1116,23 @@ app.post('/api/classes/:classId/assignments', async (req, res) => {
     const ownedClass = await ensureTeacherOwnsClass(req.params.classId, user.id);
     if (!ownedClass) return res.status(403).json({ error: 'You can only add assignments to your own classes.' });
     const payload = sanitizeAssignmentPayload(req.body);
-    const { data, error } = await supabase
+    const { data, error, label } = await assignmentWriteWithFallback(req, (client) => client
       .from('assignments')
       .insert({ ...payload, class_id: req.params.classId })
       .select()
-      .single();
+      .single());
     if (error) {
       if (/row-level security policy/i.test(error.message || "")) {
         return res.status(400).json({
          error: SUPABASE_SERVER_KEY
-            ? 'Assignment save is blocked by Supabase RLS. The service role key is set but Supabase rejected the write — check the assignments INSERT policy in your Supabase dashboard.'
+            ? 'Assignment save is blocked by Supabase RLS. The teacher session and server key were rejected - check the assignments INSERT policy in your Supabase dashboard.'
             : 'Assignment save failed: SUPABASE_SERVICE_ROLE_KEY is missing from server environment. Add it to your .env file or hosting platform settings.'
         });
       }
       return res.status(400).json({ error: error.message });
+    }
+    if (label && label !== 'server key') {
+      console.info(`Assignment created with ${label} after teacher ownership verification.`);
     }
     res.json({ assignment: data });
   } catch (error) {
@@ -1120,13 +1149,25 @@ app.patch('/api/assignments/:id', async (req, res) => {
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only update assignments in your own classes.' });
     const ownedClass = await ensureTeacherOwnsClass(ownedAssignment.class_id, user.id);
     const payload = sanitizeAssignmentPayload(req.body);
-    const { data, error } = await supabase
+    const { data, error, label } = await assignmentWriteWithFallback(req, (client) => client
       .from('assignments')
       .update(payload)
       .eq('id', req.params.id)
       .select()
-      .single();
-    if (error) return res.status(400).json({ error: error.message });
+      .single());
+    if (error) {
+      if (/row-level security policy/i.test(error.message || "")) {
+        return res.status(400).json({
+          error: SUPABASE_SERVER_KEY
+            ? 'Assignment update is blocked by Supabase RLS. The teacher session and server key were rejected - check the assignments UPDATE policy in your Supabase dashboard.'
+            : 'Assignment update failed: SUPABASE_SERVICE_ROLE_KEY is missing from server environment. Add it to your .env file or hosting platform settings.'
+        });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+    if (label && label !== 'server key') {
+      console.info(`Assignment updated with ${label} after teacher ownership verification.`);
+    }
     if (ownedAssignment.status !== 'published' && data?.status === 'published') {
       notifyStudentsAboutAssignment({
         assignment: data,
@@ -1245,15 +1286,16 @@ app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
     if (!accessibleAssignment) {
       return res.status(403).json({ error: 'You do not have access to this assignment.' });
     }
-    let { data, error } = await supabase
+    const submissionClient = getRequestScopedSupabase(req) || supabase;
+    let { data, error } = await submissionClient
       .from('submissions')
       .select('*')
       .eq('assignment_id', req.params.assignmentId)
       .eq('student_id', user.id)
       .single();
     if (error && error.code === 'PGRST116') {
-      // No submission yet — create one
-      const { data: newData, error: createError } = await supabase
+      // No submission yet - create one using the student's authenticated session when available.
+      const { data: newData, error: createError } = await submissionWriteWithFallback(req, (client) => client
         .from('submissions')
         .insert({
           assignment_id: req.params.assignmentId,
@@ -1261,7 +1303,7 @@ app.get('/api/assignments/:assignmentId/my-submission', async (req, res) => {
           started_at: new Date().toISOString(),
         })
         .select()
-        .single();
+        .single());
       if (createError) return res.status(400).json({ error: createError.message });
       data = newData;
     } else if (error) {
@@ -1292,7 +1334,8 @@ app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: existing, error: existingError } = await supabase
+    const submissionClient = getRequestScopedSupabase(req) || supabase;
+    const { data: existing, error: existingError } = await submissionClient
       .from('submissions')
       .select('id')
       .eq('assignment_id', req.params.assignmentId)
@@ -1301,17 +1344,17 @@ app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
     if (existingError) return res.status(400).json({ error: existingError.message });
 
     if (existing?.id) {
-      const { data, error } = await supabase
+      const { data, error } = await submissionWriteWithFallback(req, (client) => client
         .from('submissions')
         .update(nextPayload)
         .eq('id', existing.id)
         .select('*, profiles(id, name)')
-        .single();
+        .single());
       if (error) return res.status(400).json({ error: error.message });
       return res.json({ submission: data });
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await submissionWriteWithFallback(req, (client) => client
       .from('submissions')
       .insert({
         assignment_id: req.params.assignmentId,
@@ -1320,7 +1363,7 @@ app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
         ...nextPayload,
       })
       .select('*, profiles(id, name)')
-      .single();
+      .single());
     if (error) return res.status(400).json({ error: error.message });
     res.json({ submission: data });
   } catch (error) {
@@ -1342,7 +1385,8 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
     if (!enrolledStudent) return res.status(400).json({ error: 'That student is not enrolled in this class.' });
     const payload = { ...sanitizeSubmissionPayload(req.body), updated_at: new Date().toISOString() };
 
-    let { data, error } = await supabase
+    const submissionClient = getRequestScopedSupabase(req) || supabase;
+    let { data, error } = await submissionClient
       .from('submissions')
       .select('id, teacher_review')
       .eq('assignment_id', assignmentId)
@@ -1352,12 +1396,12 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
     if (error) return res.status(400).json({ error: error.message });
 
     if (data?.id) {
-      const { data: updated, error: updateError } = await supabase
+      const { data: updated, error: updateError } = await submissionWriteWithFallback(req, (client) => client
         .from('submissions')
         .update(payload)
         .eq('id', data.id)
         .select('*, profiles(id, name)')
-        .single();
+        .single());
       if (updateError) return res.status(400).json({ error: updateError.message });
       notifyStudentAboutGradedSubmission({
         assignment: ownedAssignment,
@@ -1368,7 +1412,7 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
       return res.json({ submission: updated });
     }
 
-    const { data: created, error: createError } = await supabase
+    const { data: created, error: createError } = await submissionWriteWithFallback(req, (client) => client
       .from('submissions')
       .insert({
         assignment_id: assignmentId,
@@ -1377,7 +1421,7 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
         ...payload,
       })
       .select('*, profiles(id, name)')
-      .single();
+      .single());
 
     if (createError) return res.status(400).json({ error: createError.message });
     notifyStudentAboutGradedSubmission({
@@ -1406,12 +1450,12 @@ app.patch('/api/submissions/:id', async (req, res) => {
         return res.status(403).json({ error: 'You do not have permission to update this submission.' });
       }
     }
-    const { data, error } = await supabase
+    const { data, error } = await submissionWriteWithFallback(req, (client) => client
       .from('submissions')
       .update({ ...sanitizeSubmissionPayload(req.body), updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select('*, profiles(id, name)')
-      .single();
+      .single());
     if (error) return res.status(400).json({ error: error.message });
     if (ownedAssignment) {
       notifyStudentAboutGradedSubmission({
