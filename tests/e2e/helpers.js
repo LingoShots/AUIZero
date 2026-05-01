@@ -104,7 +104,7 @@ async function publishAssignment(page, title) {
     await publishButton.click();
   }
 
-  await expect(assignmentCard.getByText(/published/i)).toBeVisible({ timeout: 30_000 });
+  await expect(assignmentCard.locator(".pill", { hasText: /^published$/i })).toBeVisible({ timeout: 30_000 });
 }
 
 async function createAndPublishAssignment(page, title) {
