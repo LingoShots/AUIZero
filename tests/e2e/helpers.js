@@ -49,7 +49,7 @@ async function selectTeacherTestClass(page) {
     await page.waitForLoadState("networkidle").catch(() => {});
   }
 
-  await expect(page.getByText(/current class:/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("banner").getByText(/current class:/i)).toBeVisible({ timeout: 20_000 });
 }
 
 async function selectStudentTestClass(page) {
@@ -137,14 +137,14 @@ async function openFirstStudentAssignment(page) {
   expect(firstAssignment, "student should have at least one published assignment").toBeTruthy();
 
   await assignmentSelect.selectOption(firstAssignment);
-  await expect(page.getByText(/your task/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/your task/i).first()).toBeVisible({ timeout: 20_000 });
 }
 
 async function sendChatMessage(page, message) {
   await page.getByPlaceholder(/type your answer here/i).fill(message);
   await page.getByRole("button", { name: /^send$/i }).click();
 
-  await expect(page.getByText(message)).toBeVisible();
+  await expect(page.getByText(message).first()).toBeVisible();
 
   // VERIFY: The loading dots use a CSS class rather than an accessible label.
   await expect(page.locator(".chat-loading")).toHaveCount(0, { timeout: 60_000 });
@@ -187,7 +187,7 @@ async function completeStudentDraftFlow(page) {
   await page.locator('button[data-action="select-self-assessment-band"]').first().click();
   await page.getByRole("button", { name: /submit assignment/i }).click();
 
-  await expect(page.getByText(/submitted!/i)).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText(/submitted!/i).first()).toBeVisible({ timeout: 45_000 });
 }
 
 async function gradeSubmittedAssignment(page, title) {
@@ -201,22 +201,20 @@ async function gradeSubmittedAssignment(page, title) {
   await expect(assignmentCard).toBeVisible({ timeout: 30_000 });
   await assignmentCard.getByRole("button", { name: /review students/i }).click();
 
-  await expect(page.getByText(/submitted/i)).toBeVisible({ timeout: 30_000 });
-
   // TODO: add data-testid="submitted-student-card". For now, open the first card
   // with a Submitted status in this assignment's review list.
   const submittedCard = page.locator(".submission-card").filter({ hasText: /submitted/i }).first();
   await expect(submittedCard).toBeVisible({ timeout: 30_000 });
   await submittedCard.getByRole("button", { name: /grade/i }).click();
 
-  await expect(page.getByText(/student text/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/student text/i).first()).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: /suggest rubric scores/i }).click();
 
-  await expect(page.getByText(/ai suggested grade/i)).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByText(/ai suggested grade/i).first()).toBeVisible({ timeout: 90_000 });
   await page.getByRole("button", { name: /use this score/i }).click();
   await page.getByRole("button", { name: /submit grade/i }).click();
 
-  await expect(page.getByText(/last saved|graded/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/last saved/i).first()).toBeVisible({ timeout: 30_000 });
 }
 
 module.exports = {

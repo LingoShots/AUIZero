@@ -6,14 +6,14 @@ test.describe("Authentication", () => {
     test.skip(!hasCredentials("teacher"), "Set TEACHER_EMAIL and TEACHER_PASSWORD to run this test.");
 
     await login(page, "teacher");
-    await expect(page.getByText(/class work/i)).toBeVisible();
+    await expect(page.getByText(/class work/i).first()).toBeVisible();
   });
 
   test("student can log in successfully", async ({ page }) => {
     test.skip(!hasCredentials("student"), "Set STUDENT_EMAIL and STUDENT_PASSWORD to run this test.");
 
     await login(page, "student");
-    await expect(page.getByText(/student view/i)).toBeVisible();
+    await expect(page.getByText(/student view/i).first()).toBeVisible();
   });
 
   test("login with wrong password shows an error", async ({ page }) => {
