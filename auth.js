@@ -2,10 +2,24 @@
 const Auth = (() => {
   let session = null;
   let profile = null;
+  const ACCOUNT_SETUP_INCOMPLETE_MESSAGE = "Your login worked, but your account setup is incomplete. Please ask your teacher (if you're a student) or contact support so we can finish setting up your account.";
 
   function getSession() { return session; }
   function getProfile() { return profile; }
   function getToken() { return session?.access_token || null; }
+  function clearStoredSession() {
+    session = null;
+    profile = null;
+    localStorage.removeItem('auizero_session');
+    sessionStorage.removeItem('auizero_session');
+  }
+  function assertUsableProfile(nextProfile) {
+    if (!nextProfile?.id || !nextProfile?.role) {
+      clearStoredSession();
+      throw new Error(ACCOUNT_SETUP_INCOMPLETE_MESSAGE);
+    }
+    return nextProfile;
+  }
 
   function authHeaders() {
     const headers = {
@@ -49,7 +63,7 @@ const Auth = (() => {
     }).then(r => r.json());
     if (data.error) throw new Error(data.error);
     session = data.session;
-    profile = data.profile;
+    profile = assertUsableProfile(data.profile);
     if (stayLoggedIn) {
       localStorage.setItem('auizero_session', JSON.stringify(session));
       sessionStorage.removeItem('auizero_session');
@@ -75,10 +89,7 @@ const Auth = (() => {
       method: 'POST',
       headers: authHeaders()
     });
-    session = null;
-    profile = null;
-    localStorage.removeItem('auizero_session');
-    sessionStorage.removeItem('auizero_session');
+    clearStoredSession();
   }
 
   async function restoreSession() {
@@ -102,19 +113,17 @@ const Auth = (() => {
         }
       }
       if (data.error) {
-        session = null;
-        profile = null;
-        localStorage.removeItem('auizero_session');
-        sessionStorage.removeItem('auizero_session');
+        clearStoredSession();
+        return null;
+      }
+      if (!data.profile?.id || !data.profile?.role) {
+        clearStoredSession();
         return null;
       }
       profile = data.profile;
       return profile;
     } catch {
-      session = null;
-      profile = null;
-      localStorage.removeItem('auizero_session');
-      sessionStorage.removeItem('auizero_session');
+      clearStoredSession();
       return null;
     }
   }

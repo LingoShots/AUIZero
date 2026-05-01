@@ -1524,6 +1524,11 @@ function resetAppShellState() {
   ui.notice = "";
 }
 async function bootApp(profile) {
+  if (!profile?.id || !profile?.role) {
+    resetAppShellState();
+    renderAuthScreen();
+    return;
+  }
   currentProfile = profile;
   storageWarningShown = false;
   state = loadState(profile);
