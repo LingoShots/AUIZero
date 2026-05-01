@@ -10,7 +10,6 @@ const app = express();
 app.use(express.static(__dirname));
 app.use(express.json({ limit: '10mb' }))
 
-// Supabase admin client (service role — server only)
 const SUPABASE_SERVER_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_SERVICE_KEY;
@@ -19,9 +18,27 @@ const SUPABASE_BROWSER_KEY =
   process.env.SUPABASE_PUBLISHABLE_KEY ||
   process.env.SUPABASE_PUBLIC_KEY;
 
+const SERVER_CLIENT_AUTH_OPTIONS = {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+};
+
+// Supabase admin client (secret/service role — server only).
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  SUPABASE_SERVER_KEY
+  SUPABASE_SERVER_KEY,
+  SERVER_CLIENT_AUTH_OPTIONS
+);
+
+// User-auth client for user session operations. Keep this separate so sign-in
+// and refresh calls cannot pollute the admin client's Authorization context.
+const supabaseUserAuth = createClient(
+  process.env.SUPABASE_URL,
+  SUPABASE_BROWSER_KEY,
+  SERVER_CLIENT_AUTH_OPTIONS
 );
 
 if (!SUPABASE_SERVER_KEY) {
@@ -49,6 +66,10 @@ if (!process.env.SUPABASE_URL || !SUPABASE_SERVER_KEY) {
   console.warn('Supabase server client is missing SUPABASE_URL or a service-role key.');
 }
 
+if (!process.env.SUPABASE_URL || !SUPABASE_BROWSER_KEY) {
+  console.warn('Supabase user-auth client is missing SUPABASE_URL or a publishable/anon key.');
+}
+
 function getBearerToken(req) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return null;
@@ -68,13 +89,17 @@ function decodeJwtPayload(token) {
 
 function getServerKeyDebugInfo() {
   const payload = decodeJwtPayload(SUPABASE_SERVER_KEY);
+  const key = String(SUPABASE_SERVER_KEY || '');
+  const isSecretKey = key.startsWith('sb_secret_');
   return {
     keySource: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SUPABASE_SERVICE_ROLE_KEY' : (process.env.SUPABASE_SERVICE_KEY ? 'SUPABASE_SERVICE_KEY' : 'missing'),
     jwtShaped: Boolean(payload),
+    keyFormat: isSecretKey ? 'sb_secret' : (payload ? 'jwt' : (key ? 'unknown' : 'missing')),
     role: payload?.role || null,
     ref: payload?.ref || null,
     issuer: payload?.iss || null,
     isServiceRole: payload?.role === 'service_role',
+    isSecretKey,
   };
 }
 
@@ -84,6 +109,7 @@ function getRequestScopedSupabase(req) {
     return supabase;
   }
   return createClient(process.env.SUPABASE_URL, SUPABASE_BROWSER_KEY, {
+    ...SERVER_CLIENT_AUTH_OPTIONS,
     global: {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -96,7 +122,7 @@ function getRequestScopedSupabase(req) {
 async function getUser(req) {
   const token = getBearerToken(req);
   if (!token) return null;
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  const { data: { user }, error } = await supabaseUserAuth.auth.getUser(token);
   if (error || !user) return null;
   return user;
 }
@@ -674,6 +700,7 @@ app.post('/api/auth/signup', async (req, res) => {
     }
 
     const { data: serverClientSession, error: serverClientSessionError } = await supabase.auth.getSession();
+    const { data: userAuthClientSession, error: userAuthClientSessionError } = await supabaseUserAuth.auth.getSession();
     console.info('[SIGNUP DEBUG] server client auth context before profile insert', {
       email: debugEmail,
       userId: createdUserId,
@@ -681,6 +708,8 @@ app.post('/api/auth/signup', async (req, res) => {
       clientSessionUserId: serverClientSession?.session?.user?.id || null,
       clientSessionRole: serverClientSession?.session?.user?.role || null,
       clientSessionError: serverClientSessionError?.message || null,
+      userAuthClientSessionUserId: userAuthClientSession?.session?.user?.id || null,
+      userAuthClientSessionError: userAuthClientSessionError?.message || null,
       requestHadBearer: Boolean(getBearerToken(req)),
     });
 
@@ -743,7 +772,7 @@ app.post('/api/auth/signup', async (req, res) => {
 app.post('/api/auth/signin', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabaseUserAuth.auth.signInWithPassword({ email, password });
     if (error) return res.status(401).json({ error: error.message });
     const profile = await getProfile(data.user.id);
     if (!profile) return res.status(409).json({ error: ACCOUNT_SETUP_INCOMPLETE_MESSAGE });
@@ -759,7 +788,7 @@ app.post('/api/auth/refresh', async (req, res) => {
     const { refresh_token } = req.body;
     if (!refresh_token) return res.status(400).json({ error: 'refresh_token required' });
 
-    const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+    const { data, error } = await supabaseUserAuth.auth.refreshSession({ refresh_token });
     if (error) return res.status(401).json({ error: error.message });
 
     res.json({ session: data.session });
@@ -784,7 +813,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const { email, redirectTo: requestedRedirect } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
     const redirectTo = `${getPasswordResetBaseUrl(req, requestedRedirect)}/?reset=1`;
-    const { error } = await supabase.auth.resetPasswordForEmail(String(email).trim(), {
+    const { error } = await supabaseUserAuth.auth.resetPasswordForEmail(String(email).trim(), {
       redirectTo,
     });
     if (error) return res.status(400).json({ error: error.message });
