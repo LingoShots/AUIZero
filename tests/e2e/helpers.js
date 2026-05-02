@@ -231,8 +231,19 @@ async function completeStudentDraftFlow(page) {
   console.log("[STUDENT FLOW CHECKPOINT] self-assessment step opened");
 
   // TODO: add data-testid="self-assessment-rubric-option" to the rubric cells.
-  await page.locator('button[data-action="select-self-assessment-band"]').first().click();
-  console.log("[STUDENT FLOW CHECKPOINT] rubric option selected");
+  const selfAssessmentButtons = page.locator('button[data-action="select-self-assessment-band"]');
+  const criterionIds = await selfAssessmentButtons.evaluateAll((buttons) => {
+    return [...new Set(buttons.map((button) => button.dataset.criterionId).filter(Boolean))];
+  });
+  console.log(`[STUDENT FLOW CHECKPOINT] found ${criterionIds.length} rubric criteria`);
+
+  for (const criterionId of criterionIds) {
+    await page
+      .locator(`button[data-action="select-self-assessment-band"][data-criterion-id="${criterionId}"]`)
+      .first()
+      .click();
+  }
+  console.log(`[STUDENT FLOW CHECKPOINT] all ${criterionIds.length} rubric scores selected`);
   await page.getByRole("button", { name: /submit assignment/i }).click();
   console.log("[STUDENT FLOW CHECKPOINT] submit clicked");
 
