@@ -289,12 +289,8 @@ async function gradeSubmittedAssignment(page, title, testInfo = null) {
   }
   console.log("[TEACHER FLOW CHECKPOINT] suggest clicked, screenshot taken");
 
-  const gradeSuggestionOutcome = await Promise.race([
-    expect(page.getByText(/ai suggested grade/i).first()).toBeVisible({ timeout: 90_000 }).then(() => "suggestion"),
-    expect(page.getByText(/falling back|failed|error/i).first()).toBeVisible({ timeout: 90_000 }).then(() => "error"),
-  ]);
-  console.log(`[TEACHER FLOW CHECKPOINT] grade suggestion wait outcome: ${gradeSuggestionOutcome}`);
-  expect(gradeSuggestionOutcome, "AI suggested grade panel should render before grading continues").toBe("suggestion");
+  await expect(page.getByText(/ai suggested grade/i).first()).toBeVisible({ timeout: 90_000 });
+  console.log("[TEACHER FLOW CHECKPOINT] AI suggested grade panel visible");
   await page.getByRole("button", { name: /use this score/i }).click();
   await page.getByRole("button", { name: /submit grade/i }).click();
 
