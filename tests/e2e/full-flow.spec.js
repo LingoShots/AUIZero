@@ -12,6 +12,10 @@ test.describe("Full teacher to student to teacher flow", () => {
   test.skip(!hasAllCredentials(), "Set all four TEACHER_* and STUDENT_* secrets to run the full flow.");
 
   test("teacher creates, student submits, and teacher grades an assignment", async ({ browser }, testInfo) => {
+    // This path intentionally exercises multiple AI-backed calls, so it needs a
+    // longer timeout than the smaller smoke tests.
+    test.setTimeout(420_000);
+
     const title = `E2E Test Assignment ${Date.now()}`;
 
     const teacherContext = await browser.newContext();
