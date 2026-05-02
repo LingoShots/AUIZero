@@ -258,7 +258,7 @@ async function completeStudentDraftFlow(page) {
   console.log("[STUDENT FLOW CHECKPOINT] submission confirmed");
 }
 
-async function gradeSubmittedAssignment(page, title) {
+async function gradeSubmittedAssignment(page, title, testInfo = null) {
   await selectTeacherTestClass(page);
 
   // Refresh the teacher view so the submission created in the student context is loaded.
@@ -277,8 +277,24 @@ async function gradeSubmittedAssignment(page, title) {
 
   await expect(page.getByText(/student text/i).first()).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: /suggest rubric scores/i }).click();
+  const suggestScreenshotPath = testInfo?.outputPath
+    ? testInfo.outputPath("after-suggest-click.png")
+    : "after-suggest-click.png";
+  await page.screenshot({ path: suggestScreenshotPath, fullPage: true });
+  if (testInfo?.attach) {
+    await testInfo.attach("after-suggest-click", {
+      path: suggestScreenshotPath,
+      contentType: "image/png",
+    });
+  }
+  console.log("[TEACHER FLOW CHECKPOINT] suggest clicked, screenshot taken");
 
-  await expect(page.getByText(/ai suggested grade/i).first()).toBeVisible({ timeout: 90_000 });
+  const gradeSuggestionOutcome = await Promise.race([
+    expect(page.getByText(/ai suggested grade/i).first()).toBeVisible({ timeout: 90_000 }).then(() => "suggestion"),
+    expect(page.getByText(/falling back|failed|error/i).first()).toBeVisible({ timeout: 90_000 }).then(() => "error"),
+  ]);
+  console.log(`[TEACHER FLOW CHECKPOINT] grade suggestion wait outcome: ${gradeSuggestionOutcome}`);
+  expect(gradeSuggestionOutcome, "AI suggested grade panel should render before grading continues").toBe("suggestion");
   await page.getByRole("button", { name: /use this score/i }).click();
   await page.getByRole("button", { name: /submit grade/i }).click();
 
