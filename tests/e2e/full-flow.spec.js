@@ -23,6 +23,13 @@ test.describe("Full teacher to student to teacher flow", () => {
     const teacherPage = await teacherContext.newPage();
     const studentPage = await studentContext.newPage();
 
+    teacherPage.on("console", (msg) => {
+      console.log(`[BROWSER ${msg.type()}]`, msg.text());
+    });
+    teacherPage.on("pageerror", (err) => {
+      console.log("[BROWSER ERROR]", err.message);
+    });
+
     try {
       await login(teacherPage, "teacher");
       await createAndPublishAssignment(teacherPage, title);
@@ -34,7 +41,7 @@ test.describe("Full teacher to student to teacher flow", () => {
       await openStudentAssignment(studentPage, title);
       await completeStudentDraftFlow(studentPage);
 
-      await gradeSubmittedAssignment(teacherPage, title);
+      await gradeSubmittedAssignment(teacherPage, title, testInfo);
 
       await expect(teacherPage.getByText(/last saved/i).first()).toBeVisible();
     } finally {
