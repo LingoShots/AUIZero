@@ -180,9 +180,13 @@ async function completeStudentDraftFlow(page) {
 
   await page.getByPlaceholder(/start your draft here/i).fill(draftText);
   console.log("[STUDENT FLOW CHECKPOINT] draft filled");
+
   // Scope this by step because the draft and feedback "Next" buttons can both
-  // exist in the DOM, even when only one is visible.
-  await page.locator('button[data-action="student-next-step"][data-step="3"]').click();
+  // exist in the DOM, even when only one is visible. The enabled state updates
+  // after the app re-renders, so wait for the disabled attribute to clear first.
+  const draftNext = page.locator('button[data-action="student-next-step"][data-step="3"]');
+  await expect(draftNext).toBeEnabled({ timeout: 15_000 });
+  await draftNext.click();
   console.log("[STUDENT FLOW CHECKPOINT] draft next clicked");
   const feedbackModalButton = page.getByRole("button", { name: /yes, get ai feedback/i });
   const feedbackModalAppeared = await feedbackModalButton.waitFor({ state: "visible", timeout: 10_000 })
@@ -217,7 +221,9 @@ async function completeStudentDraftFlow(page) {
 
   // VERIFY: There are several "Next" buttons across the wizard; this one is scoped
   // by the current step's data-action because the visible label is intentionally simple.
-  await page.locator('button[data-action="student-next-step"][data-step="4"]').click();
+  const finalNext = page.locator('button[data-action="student-next-step"][data-step="4"]');
+  await expect(finalNext).toBeEnabled({ timeout: 15_000 });
+  await finalNext.click();
   await expect(page.getByRole("heading", { name: /rate yourself and submit/i })).toBeVisible();
   console.log("[STUDENT FLOW CHECKPOINT] self-assessment step opened");
 
