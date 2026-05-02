@@ -62,35 +62,39 @@ async function selectStudentTestClass(page) {
   }
 }
 
-async function createManualAssignment(page, title) {
-  const prompt = [
+async function createAiAssistedAssignment(page, title) {
+  const brief = [
     "Write one paragraph about a learning goal that matters to you.",
-    "Explain your main idea clearly, give at least two details, and finish with a concluding sentence.",
-    "Use your own words and aim for about 100 words.",
+    "Aim for 250 to 400 words.",
+    "Give one feedback check.",
+    "Include a simple rubric that scores ideas, organization, and language.",
   ].join(" ");
 
-  // The manual setup lives inside a details panel. Clicking the summary opens it
-  // without requiring us to change the app code.
-  const manualPanel = page.locator("details").filter({ hasText: /manual assignment setup/i }).first();
-  const manualSummary = manualPanel.locator("summary").first();
-  if ((await manualPanel.getAttribute("open")) === null && await manualSummary.count()) {
-    await manualSummary.click();
-  }
+  await page.locator("#teacher-brief").fill(brief);
+  console.log("[TEACHER FLOW CHECKPOINT] AI brief filled");
+  await page.getByRole("button", { name: /create student-ready version/i }).click();
+  console.log("[TEACHER FLOW CHECKPOINT] AI generation started");
 
-  const manualTitleInput = manualPanel.locator('[data-teacher-field="title"]');
-  const manualPromptInput = manualPanel.locator('[data-teacher-field="prompt"]');
-  await expect(manualTitleInput).toBeVisible();
-  await expect(manualPromptInput).toBeVisible();
-  await manualTitleInput.fill(title);
-  await manualPromptInput.fill(prompt);
+  const generatedAssignment = page.locator("#teacher-generated-assignment");
+  const generatedTitleInput = generatedAssignment.locator('[data-assist-field="title"]').first();
+  await expect(generatedTitleInput).toBeVisible({ timeout: 90_000 });
+  console.log("[TEACHER FLOW CHECKPOINT] AI generation completed");
+  await generatedTitleInput.fill(title);
+  console.log("[TEACHER FLOW CHECKPOINT] generated title overridden");
 
-  const saveButton = page.getByRole("button", { name: /save assignment/i }).last();
-  await expect(saveButton).toBeEnabled();
+  // The generated path must include rubric rows so the student self-assessment step works.
+  await expect(generatedAssignment.locator('[data-rubric-field="name"]').first()).toBeVisible({ timeout: 30_000 });
+  console.log("[TEACHER FLOW CHECKPOINT] generated rubric visible");
+
+  const saveButton = generatedAssignment.getByRole("button", { name: /^save assignment$/i });
+  await expect(saveButton).toBeEnabled({ timeout: 60_000 });
   await saveButton.click();
+  console.log("[TEACHER FLOW CHECKPOINT] generated assignment saved");
 
   // TODO: add data-testid="assignment-card" to assignment cards for stability.
   const assignmentCard = page.locator(".assignment-card").filter({ hasText: title }).first();
   await expect(assignmentCard).toBeVisible({ timeout: 30_000 });
+  console.log("[TEACHER FLOW CHECKPOINT] assignment card visible");
 }
 
 async function publishAssignment(page, title) {
@@ -109,7 +113,7 @@ async function publishAssignment(page, title) {
 
 async function createAndPublishAssignment(page, title) {
   await selectTeacherTestClass(page);
-  await createManualAssignment(page, title);
+  await createAiAssistedAssignment(page, title);
   await publishAssignment(page, title);
 }
 
@@ -164,35 +168,65 @@ async function completeStudentDraftFlow(page) {
     "If I keep practising, I think my writing will become clearer and more organized.",
   ].join(" ");
 
+  console.log("[STUDENT FLOW CHECKPOINT] starting chat");
   await sendChatMessage(page, "Hello, I have a question about the prompt");
+  console.log("[STUDENT FLOW CHECKPOINT] first chat message sent");
   await sendChatMessage(page, "Thanks for the help");
+  console.log("[STUDENT FLOW CHECKPOINT] second chat message sent");
 
   await page.getByRole("button", { name: /next:\s*write draft/i }).click();
   await expect(page.getByRole("heading", { name: /write your draft/i })).toBeVisible();
+  console.log("[STUDENT FLOW CHECKPOINT] draft step opened");
 
   await page.getByPlaceholder(/start your draft here/i).fill(draftText);
+  console.log("[STUDENT FLOW CHECKPOINT] draft filled");
   await page.getByRole("button", { name: /^next$/i }).click();
-  await expect(page.getByRole("heading", { name: /review feedback/i })).toBeVisible();
+  console.log("[STUDENT FLOW CHECKPOINT] draft next clicked");
+  const feedbackModalButton = page.getByRole("button", { name: /yes, get ai feedback/i });
+  const feedbackModalAppeared = await feedbackModalButton.waitFor({ state: "visible", timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (feedbackModalAppeared) {
+    console.log("[STUDENT FLOW CHECKPOINT] draft feedback modal visible");
+    await feedbackModalButton.click();
+    console.log("[STUDENT FLOW CHECKPOINT] feedback modal accepted");
+  } else {
+    console.log("[STUDENT FLOW CHECKPOINT] draft feedback modal not shown");
+  }
+  await expect(page.getByRole("heading", { name: /review feedback and write your final version/i })).toBeVisible({ timeout: 30_000 });
+  console.log("[STUDENT FLOW CHECKPOINT] feedback/final step opened");
 
-  await page.getByRole("button", { name: /get ai feedback/i }).first().click();
+  const feedbackCard = page.locator(".feedback-card");
+  if (!feedbackModalAppeared) {
+    const feedbackButton = page.getByRole("button", { name: /get ai feedback/i }).first();
+    await expect(feedbackButton).toBeEnabled({ timeout: 10_000 });
+    await feedbackButton.click();
+    console.log("[STUDENT FLOW CHECKPOINT] manual feedback button clicked");
+  }
 
   // TODO: add data-testid="feedback-card" so this waits on a stable element.
-  await expect(page.locator(".feedback-card")).toHaveCount(1, { timeout: 90_000 });
+  await expect(feedbackCard).toHaveCount(1, { timeout: 90_000 });
+  console.log("[STUDENT FLOW CHECKPOINT] AI feedback received");
 
   const finalEditor = page.getByPlaceholder(/write your final version here/i);
   await expect(finalEditor).toBeVisible();
   await finalEditor.fill(`${draftText} I also checked that my conclusion connects back to my main idea.`);
+  console.log("[STUDENT FLOW CHECKPOINT] final text filled");
 
   // VERIFY: There are several "Next" buttons across the wizard; this one is scoped
   // by the current step's data-action because the visible label is intentionally simple.
   await page.locator('button[data-action="student-next-step"][data-step="4"]').click();
   await expect(page.getByRole("heading", { name: /rate yourself and submit/i })).toBeVisible();
+  console.log("[STUDENT FLOW CHECKPOINT] self-assessment step opened");
 
   // TODO: add data-testid="self-assessment-rubric-option" to the rubric cells.
   await page.locator('button[data-action="select-self-assessment-band"]').first().click();
+  console.log("[STUDENT FLOW CHECKPOINT] rubric option selected");
   await page.getByRole("button", { name: /submit assignment/i }).click();
+  console.log("[STUDENT FLOW CHECKPOINT] submit clicked");
 
   await expect(page.getByText(/submitted!/i).first()).toBeVisible({ timeout: 45_000 });
+  console.log("[STUDENT FLOW CHECKPOINT] submission confirmed");
 }
 
 async function gradeSubmittedAssignment(page, title) {
