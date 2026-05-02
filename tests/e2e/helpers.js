@@ -180,7 +180,9 @@ async function completeStudentDraftFlow(page) {
 
   await page.getByPlaceholder(/start your draft here/i).fill(draftText);
   console.log("[STUDENT FLOW CHECKPOINT] draft filled");
-  await page.getByRole("button", { name: /^next$/i }).click();
+  // Scope this by step because the draft and feedback "Next" buttons can both
+  // exist in the DOM, even when only one is visible.
+  await page.locator('button[data-action="student-next-step"][data-step="3"]').click();
   console.log("[STUDENT FLOW CHECKPOINT] draft next clicked");
   const feedbackModalButton = page.getByRole("button", { name: /yes, get ai feedback/i });
   const feedbackModalAppeared = await feedbackModalButton.waitFor({ state: "visible", timeout: 10_000 })
