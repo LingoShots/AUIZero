@@ -242,8 +242,15 @@ async function completeStudentDraftFlow(page) {
       .locator(`button[data-action="select-self-assessment-band"][data-criterion-id="${criterionId}"]`)
       .first()
       .click();
+    await expect(
+      page.locator(`button[data-action="select-self-assessment-band"][data-criterion-id="${criterionId}"].is-selected`),
+    ).toHaveCount(1, { timeout: 5_000 });
+    console.log(`[STUDENT FLOW CHECKPOINT] criterion ${criterionId} scored`);
   }
   console.log(`[STUDENT FLOW CHECKPOINT] all ${criterionIds.length} rubric scores selected`);
+
+  const selfAssessmentScore = await page.locator(".rubric-schema-score").first().textContent();
+  console.log(`[STUDENT FLOW CHECKPOINT] self-assessment score before submit: ${selfAssessmentScore?.trim()}`);
   await page.getByRole("button", { name: /submit assignment/i }).click();
   console.log("[STUDENT FLOW CHECKPOINT] submit clicked");
 
