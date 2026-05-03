@@ -66,6 +66,18 @@
     );
   }
 
+  function getStudentSelfAssessmentCompletion(rubricSchema, submission) {
+    const criteria = safeArray(rubricSchema?.criteria).filter((criterion) => criterion?.id);
+    const rowScoreMap = getStudentSelfAssessmentRowScoreMap(submission);
+    const missingCriteria = criteria.filter((criterion) => !rowScoreMap.has(criterion.id));
+    return {
+      requiredCount: criteria.length,
+      selectedCount: criteria.length - missingCriteria.length,
+      missingCriteria,
+      isComplete: criteria.length === 0 || missingCriteria.length === 0,
+    };
+  }
+
   function findClosestBand(criterion, desiredPoints) {
     const bands = getCriterionBands(criterion);
     if (!bands.length) return null;
@@ -161,6 +173,7 @@
     buildTeacherReviewRowScore,
     getTeacherReviewRowScoreMap,
     getStudentSelfAssessmentRowScoreMap,
+    getStudentSelfAssessmentCompletion,
     findClosestBand,
     calculateTeacherReviewSummary,
     buildCriterionAnalytics,

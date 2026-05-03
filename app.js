@@ -32,6 +32,7 @@ const {
   buildTeacherReviewRowScore,
   getTeacherReviewRowScoreMap,
   getStudentSelfAssessmentRowScoreMap,
+  getStudentSelfAssessmentCompletion,
   findClosestBand,
   buildCriterionAnalytics,
 } = window.ReviewUtils;
@@ -150,6 +151,7 @@ const ui = {
   adminTeachers: [],
   adminClassDetail: null,
   adminSelectedAssignmentId: null,
+  reopenSubmissionPrompt: null,
 };
 
 let state = { assignments: [], submissions: [], users: [] };
@@ -1146,6 +1148,24 @@ function syncTeacherAssignmentSaveButtons() {
   const saveReady = isTeacherAssignmentSaveReady();
   document.querySelectorAll('[data-action="save-assignment"]').forEach((button) => {
     button.disabled = Boolean(ui.aiAssistLoading) || !saveReady;
+  });
+}
+
+function syncDraftFeedbackButtons() {
+  const assignment = getStudentAssignment();
+  const submission = getStudentSubmission();
+  const feedbackButton = getStudentFeedbackButtonState({
+    loading: ui.draftFeedbackLoading,
+    feedbackUsed: Number(submission?.feedbackHistory?.length || 0),
+    feedbackLimit: Number(assignment?.feedbackRequestLimit ?? 0),
+  });
+  document.querySelectorAll('[data-action="request-feedback"]').forEach((button) => {
+    button.disabled = feedbackButton.disabled;
+    button.textContent = feedbackButton.label;
+  });
+  document.querySelectorAll('[data-action="prompt-request-feedback"]').forEach((button) => {
+    button.disabled = feedbackButton.disabled;
+    button.textContent = ui.draftFeedbackLoading ? "Checking…" : "Yes, get AI feedback";
   });
 }
 
@@ -3324,10 +3344,16 @@ if (action === "select-assignment") {
   return;
 }
   if (action === "student-next-step") {
+    const submission = getStudentSubmission();
+    if (isStudentSubmissionLocked(submission)) {
+      rememberStudentStep(4);
+      ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+      render();
+      return;
+    }
     const nextStep = Number(target.dataset.step);
     if (nextStep === 2) {
       const notes = document.getElementById("chat-skip-notes");
-      const submission = getStudentSubmission();
       if (notes && submission) {
         submission.outline.partOne = notes.value.trim();
         submission.updatedAt = new Date().toISOString();
@@ -3337,7 +3363,6 @@ if (action === "select-assignment") {
     }
     if (nextStep === 3) {
       const assignment = getStudentAssignment();
-      const submission = getStudentSubmission();
 
       if (submission && !submission.finalText?.trim() && submission.draftText?.trim()) {
         submission.finalText = submission.draftText;
@@ -3362,6 +3387,12 @@ if (action === "select-assignment") {
   if (action === "skip-chat-to-draft") {
     const submission = getStudentSubmission();
     if (!submission) return;
+    if (isStudentSubmissionLocked(submission)) {
+      rememberStudentStep(4);
+      ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+      render();
+      return;
+    }
     const notes = document.getElementById("chat-skip-notes");
     pauseActiveChatSession();
     submission.chatSkippedAt = new Date().toISOString();
@@ -3377,6 +3408,13 @@ if (action === "select-assignment") {
   }
 
   if (action === "student-prev-step") {
+    const submission = getStudentSubmission();
+    if (isStudentSubmissionLocked(submission)) {
+      rememberStudentStep(4);
+      ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+      render();
+      return;
+    }
     const targetStep = Number(target.dataset.step);
     if (ui.studentStep === 1 && targetStep !== 1) {
       pauseActiveChatSession();
@@ -3680,6 +3718,12 @@ if (action === "select-assignment") {
     const submission = getStudentSubmission();
     const assignment = getStudentAssignment();
     if (!submission || !assignment) return;
+    if (isStudentSubmissionLocked(submission)) {
+      rememberStudentStep(4);
+      ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+      render();
+      return;
+    }
     const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
     const criterion = safeArray(rubricSchema?.criteria).find((item) => item.id === target.dataset.criterionId);
     if (!criterion) return;
@@ -3747,6 +3791,47 @@ if (action === "select-assignment") {
     replaceSubmissionInState(savedSubmission);
     ui.selectedReviewSubmissionId = savedSubmission.id;
     ui.notice = `Marked ${savedSubmission._studentName || "student"} as ${getSubmissionStatusDisplay(nextStatus).toLowerCase()}.`;
+    persistState();
+    render();
+    return;
+  }
+
+  if (action === "open-reopen-submission-modal") {
+    const submission = getSelectedReviewSubmission();
+    if (!submission) return;
+    ui.reopenSubmissionPrompt = {
+      submissionId: submission.id,
+      studentName: submission._studentName || getUserById(submission.studentId)?.name || "this student",
+    };
+    render();
+    return;
+  }
+
+  if (action === "close-reopen-submission-modal") {
+    ui.reopenSubmissionPrompt = null;
+    render();
+    return;
+  }
+
+  if (action === "confirm-reopen-submission") {
+    const submission = getSelectedReviewSubmission();
+    const assignment = getSelectedAssignment();
+    if (!submission || !assignment) {
+      ui.reopenSubmissionPrompt = null;
+      render();
+      return;
+    }
+
+    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
+    submission.status = "draft";
+    submission.teacherReview.status = "draft";
+    submission.updatedAt = new Date().toISOString();
+
+    const savedSubmission = await upsertTeacherReviewSubmission(assignment, submission);
+    replaceSubmissionInState(savedSubmission);
+    ui.selectedReviewSubmissionId = savedSubmission.id;
+    ui.reopenSubmissionPrompt = null;
+    ui.notice = `Reopened ${savedSubmission._studentName || "student"} for editing and resubmission.`;
     persistState();
     render();
     return;
@@ -4110,7 +4195,7 @@ function render() {
       ${window.AccountSecurity?.renderUpgradeBanner(currentProfile) || ""}
       ${ui.role === "admin" && !ui.adminViewingAsTeacher ? renderAdminWorkspace() : ui.role === "teacher" || ui.adminViewingAsTeacher ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
-  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderDraftFeedbackModal() + (window.AccountSecurity?.renderChangePasswordModal(ui.showPasswordModal) || "");
+  ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderDraftFeedbackModal() + renderReopenSubmissionModal() + (window.AccountSecurity?.renderChangePasswordModal(ui.showPasswordModal) || "");
 
   // Start chat timer if student is on step 1 and there's a time limit
   if (ui.role === "student" && ui.studentStep === 1) {
@@ -4501,6 +4586,24 @@ function renderDraftFeedbackModal() {
         <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
           <button class="button-ghost" data-action="continue-without-feedback">No, continue</button>
           <button class="button-secondary" data-action="prompt-request-feedback" ${feedbackButton.disabled ? "disabled" : ""}>${ui.draftFeedbackLoading ? "Checking…" : "Yes, get AI feedback"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderReopenSubmissionModal() {
+  if (!ui.reopenSubmissionPrompt) return "";
+  const studentName = ui.reopenSubmissionPrompt.studentName || "this student";
+  return `
+    <div style="position:fixed;inset:0;background:rgba(10,18,33,0.38);z-index:1000;display:grid;place-items:center;padding:20px;">
+      <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:560px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
+        <p class="mini-label" style="margin-bottom:6px;">Reopen submission</p>
+        <h3 style="margin:0 0 8px;">Reopen this submission for ${escapeHtml(studentName)}?</h3>
+        <p class="subtle" style="margin:0 0 16px;">They'll be able to edit and resubmit. Their existing work and writing process evidence will remain visible — future changes will update the same submission record.</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+          <button class="button-ghost" data-action="close-reopen-submission-modal">Cancel</button>
+          <button class="button-secondary" data-action="confirm-reopen-submission">Reopen for student</button>
         </div>
       </div>
     </div>
@@ -5397,6 +5500,7 @@ function renderTeacherGrading(assignment, submission) {
   const nextStudentId = getNextReviewStudentId(submission.studentId, assignment.id);
   const deadlinePassed = canMarkLateOrMissing(assignment);
   const currentStatus = submission.status || submission.teacherReview?.status || "not_started";
+  const canReopenSubmission = isStudentSubmissionLocked(submission);
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.uploadedRubricData || assignment.rubric, assignment.uploadedRubricName || assignment.title);
   const playback = getPlaybackState(submission);
 
@@ -5423,7 +5527,7 @@ function renderTeacherGrading(assignment, submission) {
           <div style="margin-bottom:16px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;">
             <p class="mini-label" style="margin-bottom:8px;">Submission status</p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              ${["draft", "submitted"].map((status) => {
+              ${["submitted"].map((status) => {
                 const isActive = currentStatus === status;
                 return `<button class="button-ghost" data-action="set-review-status" data-status="${status}" style="background:${isActive ? "#dff3e4" : "#fff"};border-color:${isActive ? "#4f8f68" : "var(--line)"};color:${isActive ? "#1f5c38" : "var(--ink)"};">${escapeHtml(getSubmissionStatusDisplay(status))}</button>`;
               }).join("")}
@@ -5431,6 +5535,7 @@ function renderTeacherGrading(assignment, submission) {
                 const isActive = currentStatus === status;
                 return `<button class="button-ghost" data-action="set-review-status" data-status="${status}" style="background:${isActive ? "#fde7e7" : "#fff"};border-color:${isActive ? "#c56b6b" : "var(--line)"};color:${isActive ? "#8a2f2f" : "var(--ink)"};">${escapeHtml(getSubmissionStatusDisplay(status))}</button>`;
               }).join("")}
+              ${canReopenSubmission ? `<button class="button-secondary" data-action="open-reopen-submission-modal">Reopen for student</button>` : `<span class="pill">In progress</span>`}
             </div>
             ${deadlinePassed ? `
               <p style="font-size:0.78rem;color:var(--muted);margin:8px 0 0;">Deadline has passed, so you can mark this student as late or missing.</p>
@@ -5769,6 +5874,9 @@ function renderStudentWorkspace() {
 }
 
 function renderStudentStep(assignment, submission) {
+  if (isStudentSubmissionLocked(submission)) {
+    return renderStudentFinalStep(assignment, submission);
+  }
   if (ui.studentStep === 1) {
     return renderStudentIdeasStep(assignment, submission);
   }
@@ -5993,6 +6101,7 @@ function renderStudentFinalStep(assignment, submission) {
   const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
   const selfAssessmentRowMap = getStudentSelfAssessmentRowScoreMap(submission);
   const selfAssessmentScore = Array.from(selfAssessmentRowMap.values()).reduce((sum, entry) => sum + Number(entry?.points ?? 0), 0);
+  const selfAssessmentCompletion = getStudentSelfAssessmentCompletion(rubricSchema, submission);
   const teacherReviewRows = getTeacherReviewRowsForExport(assignment, submission);
 
   if (submission.teacherReview?.savedAt) {
@@ -6066,6 +6175,38 @@ function renderStudentFinalStep(assignment, submission) {
       </div>
     `;
   }
+  if (submission.status === "submitted") {
+    return `
+      <div class="step-card wizard-card">
+        <div class="step-head">
+          <div>
+            <div class="step-number">4</div>
+            <h3>Submitted</h3>
+            <p class="subtle">Your work is locked while your teacher reviews it.</p>
+          </div>
+        </div>
+        <div id="submitted-confirmation" class="submitted-banner" style="margin-bottom:16px;">
+          <div class="submitted-icon">✓</div>
+          <div>
+            <strong>Submitted!</strong>
+            <p>Your work was handed in on ${escapeHtml(formatDateTime(submission.submittedAt))}. Your teacher will review it soon.</p>
+          </div>
+          <button class="button-secondary" data-action="download-work" style="flex-shrink:0;margin-left:auto;">⬇ Download my work</button>
+        </div>
+        <details class="teacher-ready-card">
+          <summary style="cursor:pointer;font-weight:600;">View submitted writing and reflection</summary>
+          <div style="margin-top:14px;">
+            <p class="mini-label">Your submitted writing</p>
+            <div style="background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:0.92rem;line-height:1.8;white-space:pre-wrap;word-break:break-word;">${escapeHtml(submission.finalText || submission.draftText || "No final text recorded.")}</div>
+            <div class="field" style="margin-top:14px;">
+              <label>Reflection — what you improved</label>
+              <div style="background:#fbfdff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;white-space:pre-wrap;line-height:1.65;">${escapeHtml(submission.reflections?.improved || "No reflection recorded.")}</div>
+            </div>
+          </div>
+        </details>
+      </div>
+    `;
+  }
   return `
     <div class="step-card wizard-card">
       <div class="step-head">
@@ -6095,11 +6236,14 @@ function renderStudentFinalStep(assignment, submission) {
             })}
           </div>
         ` : `<p class="subtle">No rubric available for self-assessment yet.</p>`}
+        ${!selfAssessmentCompletion.isComplete ? `
+          <div class="notice" style="margin-top:14px;">Please rate yourself on all rubric items before submitting. (${selfAssessmentCompletion.selectedCount}/${selfAssessmentCompletion.requiredCount} complete)</div>
+        ` : ""}
       </div>
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="3">Back</button>
         <span></span>
-        <button class="button" data-action="submit-final" ${submission.status === "submitted" ? "disabled" : ""}>Submit assignment</button>
+        <button class="button" data-action="submit-final" ${!selfAssessmentCompletion.isComplete ? "disabled title='Rate yourself on all rubric items before submitting'" : ""}>Submit assignment</button>
       </div>
       ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
       ${submission.status === "submitted" ? `
@@ -6429,6 +6573,12 @@ async function handleFeedbackRequest() {
   if (!assignment || !submission) {
     return;
   }
+  if (isStudentSubmissionLocked(submission)) {
+    rememberStudentStep(4);
+    ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+    render();
+    return;
+  }
 
   if (submission.feedbackHistory.length >= assignment.feedbackRequestLimit) {
     ui.notice = "You have used all your draft checks for this assignment.";
@@ -6438,8 +6588,10 @@ async function handleFeedbackRequest() {
 
   ui.draftFeedbackLoading = true;
   ui.notice = "Checking your draft...";
+  syncDraftFeedbackButtons();
   render();
 
+  let shouldScrollToFeedbackNotice = false;
   try {
     let items;
     try {
@@ -6457,11 +6609,17 @@ async function handleFeedbackRequest() {
     ui.latestDraftFeedbackByAssignmentId[assignment.id] = safeArray(items).slice();
     submission.updatedAt = new Date().toISOString();
     ui.notice = "Draft check added. Use it to improve your own writing.";
+    shouldScrollToFeedbackNotice = true;
     persistState();
     await flushCurrentStudentWork();
   } finally {
     ui.draftFeedbackLoading = false;
     render();
+    if (shouldScrollToFeedbackNotice) {
+      window.requestAnimationFrame(() => {
+        document.querySelector(".wizard-card .notice")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
   }
 }
 
@@ -6498,10 +6656,24 @@ async function handleSubmission() {
   if (!submission || !assignment) {
     return;
   }
+  if (isStudentSubmissionLocked(submission)) {
+    rememberStudentStep(4);
+    ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+    render();
+    return;
+  }
   const finalEditor = document.getElementById("final-editor");
   const finalText = finalEditor ? finalEditor.value.trim() : submission.finalText?.trim();
   if (!finalText) {
     ui.notice = "Write your final text before submitting.";
+    render();
+    return;
+  }
+  const rubricSchema = assignment.uploadedRubricSchema || assignment.rubricSchema || getRubricSchema(assignment.rubric, assignment.uploadedRubricName || assignment.title);
+  const selfAssessmentCompletion = getStudentSelfAssessmentCompletion(rubricSchema, submission);
+  if (!selfAssessmentCompletion.isComplete) {
+    rememberStudentStep(4);
+    ui.notice = "Please rate yourself on all rubric items before submitting.";
     render();
     return;
   }
@@ -6891,7 +7063,7 @@ function getStudentAssignmentBuckets() {
   publishedAssignments.forEach((assignment) => {
     const submission = getStudentSubmissionForAssignment(assignment.id);
     const status = submission?.status || "draft";
-    const hasSubmitted = SubmissionUtils.isSubmissionSubmitted(submission) || ["late", "missing"].includes(status);
+    const hasSubmitted = status !== "draft" && (SubmissionUtils.isSubmissionSubmitted(submission) || ["late", "missing"].includes(status));
     const bucketItem = {
       assignment,
       submission,
@@ -6997,7 +7169,7 @@ function getRememberedStudentStep(assignmentId = ui.selectedStudentAssignmentId)
 }
 
 function getStudentStepForSubmission(submission) {
-  if (submission?.status === "submitted" || submission?.submittedAt) return 3;
+  if (isStudentSubmissionLocked(submission)) return 4;
   const hasFinalWork = Boolean(
     submission?.finalText?.trim() ||
     submission?.reflections?.improved?.trim() ||
@@ -7011,6 +7183,14 @@ function getStudentStepForSubmission(submission) {
   );
   if (hasDraftWork) return 2;
   return 1;
+}
+
+function isStudentSubmissionLocked(submission) {
+  const status = String(submission?.status || "").trim().toLowerCase();
+  if (status === "draft" || status === "returned" || status === "reopened") {
+    return false;
+  }
+  return status === "submitted" || Boolean(submission?.teacherReview?.savedAt);
 }
 
 function ensureStudentSubmission() {
@@ -7055,7 +7235,7 @@ function hydrateSelections() {
   if (studentSubmission) {
     const rememberedStep = getRememberedStudentStep(ui.selectedStudentAssignmentId);
     const derivedStep = getStudentStepForSubmission(studentSubmission);
-    ui.studentStep = rememberedStep || derivedStep;
+    ui.studentStep = isStudentSubmissionLocked(studentSubmission) ? derivedStep : (rememberedStep || derivedStep);
   }
 
   const reviewRoster = getReviewRoster(ui.selectedAssignmentId);
