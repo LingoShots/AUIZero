@@ -49,6 +49,7 @@ Manual assignment creation needs it’s own save button as the save button at th
 There should be a notification message or something to let teacher know assignment has been created and ready to publish Remove student focus box from all workflows 
 Add assignment type and min max word limits to format with ai set up, as currently they only appear after format with AI
 - Also, if all the buttons show at the top, there will be no need for the manual set up section at all because you can just do manual set up at the top if you prefer. Only change needed is to remove the lock on the save button that requires you to format with AI before saving. That will give teachers the option to manual fill or fill with AI. Then, put the format with AI button right next to the Teacher Brief box so it’s clearly the next step 1. Fill out teacher brief 2. Hit format with AI 3. Check all settings 4. Save 
+ Verify AI provider rate limits and concurrent request capacity for pilot-scale usage (12+ students simultaneously)
 
 
 [22/4/26, 21:41:28] Danny AUI New: Copy grade works well. Maybe it should be called "copy grade and feedback" instead though
