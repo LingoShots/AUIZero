@@ -8,6 +8,13 @@ const lineNumberUtils = require("../line-number-utils.js");
 const submissionUtils = require("../submission-utils.js");
 const submissionRegressionFixture = require("./fixtures/submission-regression-fixture.js");
 
+global.window = global.window || {};
+require("../rubric-utils.js");
+require("../review-utils.js");
+
+const rubricUtils = global.window.RubricUtils;
+const reviewUtils = global.window.ReviewUtils;
+
 function createMemoryStorage({ failFirstWrite = false } = {}) {
   const store = new Map();
   let writes = 0;
@@ -40,6 +47,59 @@ test("deadline utils split and combine deadline parts", () => {
 test("AI assist utils parse fenced JSON responses", () => {
   const parsed = aiAssistUtils.parseJsonResponse("```json\n[\"one\", \"two\"]\n```", []);
   assert.deepEqual(parsed, ["one", "two"]);
+});
+
+test("rubric mismatch regression uses parsed criteria total instead of stale declared total", () => {
+  const parsedRubric = rubricUtils.normalizeRubricSchema({
+    title: "Pilot mismatch rubric",
+    totalPoints: 20,
+    preserveCriteria: true,
+    criteria: [
+      {
+        id: "ideas",
+        name: "Ideas",
+        maxScore: 5,
+        levels: [{ id: "ideas-excellent", label: "Excellent", score: 5, description: "Clear ideas" }],
+      },
+      {
+        id: "organization",
+        name: "Organization",
+        maxScore: 5,
+        levels: [{ id: "organization-excellent", label: "Excellent", score: 5, description: "Logical order" }],
+      },
+      {
+        id: "language",
+        name: "Language",
+        maxScore: 5,
+        levels: [{ id: "language-excellent", label: "Excellent", score: 5, description: "Accurate language" }],
+      },
+    ],
+  });
+
+  assert.equal(parsedRubric.criteria.length, 3);
+  assert.equal(parsedRubric.totalPoints, 15);
+  assert.equal(parsedRubric.criteriaTotalPoints, 15);
+  assert.equal(parsedRubric.declaredTotalPoints, 20);
+
+  const matrixRubric = rubricUtils.rubricSchemaToMatrixData(parsedRubric, "Pilot mismatch rubric");
+  assert.equal(matrixRubric.rows.length, 3);
+  assert.equal(matrixRubric.rows.reduce((sum, row) => sum + Number(row.points || 0), 0), 15);
+
+  const submission = {
+    selfAssessment: {
+      rowScores: parsedRubric.criteria.map((criterion) => ({
+        criterionId: criterion.id,
+        bandId: criterion.levels[0].id,
+        points: Number(criterion.levels[0].score || 0),
+        maxPoints: Number(criterion.maxScore || 0),
+      })),
+    },
+  };
+  const selfAssessmentMap = reviewUtils.getStudentSelfAssessmentRowScoreMap(submission);
+  const selfAssessmentScore = Array.from(selfAssessmentMap.values()).reduce((sum, row) => sum + Number(row.points || 0), 0);
+
+  assert.equal(selfAssessmentMap.size, 3);
+  assert.equal(selfAssessmentScore, 15);
 });
 
 test("storage snapshot strips teacher assignments, submissions, and extra users", () => {
