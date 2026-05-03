@@ -7,6 +7,12 @@
   - [ ] Assignment creation ("Create student-ready version")
   - [ ] Student AI feedback request
 - [ ] Ghost account login bug — if you wait too long to log in, it logs you into a ghost account
+- [ ] Add a dedicated regression check for the pilot rubric mismatch bug: a rubric parsed as 3 criteria / 15 points must not block student submission.
+- [ ] Add failed-submit protection test: student final work stays saved locally/server-queued when submit fails, and the UI does not show false success.
+- [ ] Add draft persistence regression test: student draft survives refresh/reload after Save Draft/autosave.
+- [ ] Add teacher-receives-submission regression test outside the skipped full-flow test.
+- [ ] Add a 4-criteria / 20-point rubric regression test so the normal rubric path stays covered.
+- [ ] Verify publish email fires only after server-confirmed publish and publish failure shows a clear failure message.
 
 ## ✨ UX polish (quick wins)
 - [ ] Save assignment button: change to "Saving..." on click, then scroll up to created assignment in tray and highlight publish button + suggest the teacher publish when ready
@@ -21,6 +27,13 @@
 - [ ] Two reusable Praxis-supported writing task models for every teacher when they set up a class — listed as "Demo task" or similar
 - [ ] Toggle (like chatbot on/off) for the chat to auto-generate an outline after chat conversation, viewable on the drafting page
 - [ ] Ability for teacher to accept or reject AI suggestions
+
+## 🧱 Refactor / architecture
+- [ ] Continue modularizing only after pilot-critical bugs/tests are stable.
+- [ ] Consider `student-workflow.js` for step navigation, draft/final transitions, submit, and feedback request handlers.
+- [ ] Consider `teacher-assignments.js` for create/edit/publish/delete assignment handlers.
+- [ ] Consider `teacher-review.js` for grading handlers, annotation controls, and playback controls.
+- [ ] Keep large render extraction for later; render functions are still tightly coupled to global state.
 
 ## ✅ Done
 - [x] Delete test assignments + submission data so they don't skew real keystroke analytics
