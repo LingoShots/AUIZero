@@ -28,6 +28,7 @@
 - [ ] Two reusable Praxis-supported writing task models for every teacher when they set up a class — listed as "Demo task" or similar
 - [ ] Toggle (like chatbot on/off) for the chat to auto-generate an outline after chat conversation, viewable on the drafting page
 - [ ] Ability for teacher to accept or reject AI suggestions
+- [ ] Attempt history — should re-submission create a new attempt record with separate grading, or continue updating the same submission as iteration? Needs product decision before implementation.
 
 ## 🧱 Refactor / architecture
 - [ ] Continue modularizing only after pilot-critical bugs/tests are stable.

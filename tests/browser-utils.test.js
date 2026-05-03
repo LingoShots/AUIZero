@@ -138,6 +138,61 @@ test("rubric mismatch regression uses parsed criteria total instead of stale dec
   assert.equal(selfAssessmentScore, 15);
 });
 
+test("self-assessment completion requires every parsed criterion without checking total points", () => {
+  const parsedRubric = rubricUtils.normalizeRubricSchema({
+    title: "Three criterion rubric",
+    totalPoints: 20,
+    preserveCriteria: true,
+    criteria: [
+      {
+        id: "ideas",
+        name: "Ideas",
+        maxScore: 5,
+        levels: [{ id: "ideas-good", label: "Good", score: 5, description: "Clear ideas" }],
+      },
+      {
+        id: "organization",
+        name: "Organization",
+        maxScore: 5,
+        levels: [{ id: "organization-good", label: "Good", score: 5, description: "Logical order" }],
+      },
+      {
+        id: "language",
+        name: "Language",
+        maxScore: 5,
+        levels: [{ id: "language-good", label: "Good", score: 5, description: "Accurate language" }],
+      },
+    ],
+  });
+
+  const partialSubmission = {
+    selfAssessment: {
+      rowScores: [
+        { criterionId: "ideas", bandId: "ideas-good", points: 5 },
+        { criterionId: "organization", bandId: "organization-good", points: 5 },
+      ],
+    },
+  };
+  const partialCompletion = reviewUtils.getStudentSelfAssessmentCompletion(parsedRubric, partialSubmission);
+  assert.equal(partialCompletion.requiredCount, 3);
+  assert.equal(partialCompletion.selectedCount, 2);
+  assert.equal(partialCompletion.isComplete, false);
+
+  const completeSubmission = {
+    selfAssessment: {
+      rowScores: [
+        ...partialSubmission.selfAssessment.rowScores,
+        { criterionId: "language", bandId: "language-good", points: 5 },
+      ],
+    },
+  };
+  const completeCompletion = reviewUtils.getStudentSelfAssessmentCompletion(parsedRubric, completeSubmission);
+  assert.equal(completeCompletion.requiredCount, 3);
+  assert.equal(completeCompletion.selectedCount, 3);
+  assert.equal(completeCompletion.isComplete, true);
+  assert.equal(parsedRubric.totalPoints, 15);
+});
+
 test("storage snapshot strips teacher assignments, submissions, and extra users", () => {
   const snapshot = storageUtils.buildStateSnapshot({
     users: [
