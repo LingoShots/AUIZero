@@ -21,6 +21,8 @@ const {
   safeReadJson,
 } = window.StorageUtils;
 const {
+  getStudentFeedbackButtonState,
+  getTeacherGenerateButtonState,
   parseJsonResponse,
   stringifyLinesWithMarkers,
 } = window.AiAssistUtils;
@@ -112,6 +114,7 @@ const ui = {
   teacherDraft: null,
   teacherAssist: null,
   aiAssistLoading: false,
+  draftFeedbackLoading: false,
   selectedSavedRubricId: "",
   selectedAssignmentId: null,
   expandedAssignmentBriefId: null,
@@ -4484,6 +4487,11 @@ function renderDraftFeedbackModal() {
   const submission = getStudentSubmission();
   const used = Number(submission?.feedbackHistory?.length || 0);
   const limit = Number(assignment?.feedbackRequestLimit || 0);
+  const feedbackButton = getStudentFeedbackButtonState({
+    loading: ui.draftFeedbackLoading,
+    feedbackUsed: used,
+    feedbackLimit: limit,
+  });
   return `
     <div style="position:fixed;inset:0;background:rgba(10,18,33,0.38);z-index:1000;display:grid;place-items:center;padding:20px;">
       <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:520px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
@@ -4492,7 +4500,7 @@ function renderDraftFeedbackModal() {
         <p class="subtle" style="margin:0 0 16px;">You still have ${Math.max(0, limit - used)} of ${limit} draft feedback check${limit === 1 ? "" : "s"} available. AI feedback can point out places to improve before you move to the final step.</p>
         <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
           <button class="button-ghost" data-action="continue-without-feedback">No, continue</button>
-          <button class="button-secondary" data-action="prompt-request-feedback">Yes, get AI feedback</button>
+          <button class="button-secondary" data-action="prompt-request-feedback" ${feedbackButton.disabled ? "disabled" : ""}>${ui.draftFeedbackLoading ? "Checking…" : "Yes, get AI feedback"}</button>
         </div>
       </div>
     </div>
@@ -4971,13 +4979,18 @@ function renderTeacherWorkspace() {
               <p class="subtle">Describe the assignment in plain English, then click Create student-ready version.</p>
             </div>
             <textarea id="teacher-brief" data-teacher-field="brief" class="teacher-brief" placeholder="Example: My 7th grade students need a short opinion paragraph about whether school uniforms help learning. Keep the language simple, ask for one real example, and aim for 250 to 350 words. Give them 2 feedback checks.">${escapeHtml(ui.teacherDraft.brief)}</textarea>
+            ${(() => {
+              const generateButton = getTeacherGenerateButtonState({ loading: ui.aiAssistLoading });
+              return `
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-top:10px;">
               <button class="button" data-action="generate-teacher-assist"
-                ${ui.aiAssistLoading ? "disabled" : ""}>
-                ${ui.aiAssistLoading ? "Generating…" : "Create student-ready version →"}
+                ${generateButton.disabled ? "disabled" : ""}>
+                ${generateButton.label}
               </button>
               <span class="subtle" style="font-size:0.78rem;">Advances to Step 3</span>
             </div>
+              `;
+            })()}
           </div>
           ${ui.aiAssistLoading ? `
             <div class="teacher-ready-card" style="padding:16px;border-color:var(--accent);">
@@ -5911,7 +5924,11 @@ function renderStudentReviewStep(assignment, submission) {
   const feedbackEntries = safeArray(submission?.feedbackHistory);
   const feedbackLimit = Number(assignment?.feedbackRequestLimit ?? 3);
   const feedbackUsed = feedbackEntries.length;
-  const feedbackDisabled = feedbackUsed >= feedbackLimit;
+  const feedbackButton = getStudentFeedbackButtonState({
+    loading: ui.draftFeedbackLoading,
+    feedbackUsed,
+    feedbackLimit,
+  });
 
   return `
     <div class="step-card wizard-card">
@@ -5924,7 +5941,7 @@ function renderStudentReviewStep(assignment, submission) {
       </div>
       <div class="field-grid compact-grid">
         <div class="field inline-end">
-          <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
+          <button class="button-secondary" data-action="request-feedback" ${feedbackButton.disabled ? "disabled" : ""}>${feedbackButton.label}</button>
         </div>
       </div>
       <div class="feedback-list">
@@ -5963,7 +5980,7 @@ function renderStudentReviewStep(assignment, submission) {
       <p id="draft-save-status" class="subtle" style="margin:8px 0 0;min-height:1.2em;">${escapeHtml(ui.draftSaveMessage || "")}</p>
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="2">Back</button>
-        <button class="button-secondary" data-action="request-feedback" ${feedbackDisabled ? "disabled" : ""}>Get AI feedback (${feedbackUsed}/${feedbackLimit})</button>
+        <button class="button-secondary" data-action="request-feedback" ${feedbackButton.disabled ? "disabled" : ""}>${feedbackButton.label}</button>
         <button class="button" data-action="student-next-step" data-step="4" ${!submission.finalText?.trim() && !submission.draftText?.trim() ? "disabled" : ""}>Next</button>
       </div>
       ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
@@ -6403,6 +6420,10 @@ async function handleIdeaRequest() {
 }
 
 async function handleFeedbackRequest() {
+  if (ui.draftFeedbackLoading) {
+    return;
+  }
+
   const assignment = getStudentAssignment();
   const submission = getStudentSubmission();
   if (!assignment || !submission) {
@@ -6415,27 +6436,33 @@ async function handleFeedbackRequest() {
     return;
   }
 
+  ui.draftFeedbackLoading = true;
   ui.notice = "Checking your draft...";
   render();
-  let items;
-  try {
-    items = await requestDraftFeedbackFromAi(assignment, submission);
-  } catch (error) {
-    console.error("Falling back to local draft feedback:", error);
-    items = generateFeedback(assignment, submission);
-  }
 
-  submission.feedbackHistory.push({
-    id: uid("feedback"),
-    timestamp: new Date().toISOString(),
-    items,
-  });
-  ui.latestDraftFeedbackByAssignmentId[assignment.id] = safeArray(items).slice();
-  submission.updatedAt = new Date().toISOString();
-  ui.notice = "Draft check added. Use it to improve your own writing.";
-  persistState();
-  await flushCurrentStudentWork();
-  render();
+  try {
+    let items;
+    try {
+      items = await requestDraftFeedbackFromAi(assignment, submission);
+    } catch (error) {
+      console.error("Falling back to local draft feedback:", error);
+      items = generateFeedback(assignment, submission);
+    }
+
+    submission.feedbackHistory.push({
+      id: uid("feedback"),
+      timestamp: new Date().toISOString(),
+      items,
+    });
+    ui.latestDraftFeedbackByAssignmentId[assignment.id] = safeArray(items).slice();
+    submission.updatedAt = new Date().toISOString();
+    ui.notice = "Draft check added. Use it to improve your own writing.";
+    persistState();
+    await flushCurrentStudentWork();
+  } finally {
+    ui.draftFeedbackLoading = false;
+    render();
+  }
 }
 
 function getRenderableDraftFeedbackEntries(assignment, submission) {

@@ -3,11 +3,12 @@
 ## 🐛 Bugs (do first — affects users now)
 - [ ] Admin view counts assignments and submissions that have already been deleted (stale cache or query bug)
 - [ ] "Last saved" message after submit grade should say "Grade submitted to student"
-- [ ] AI buttons should disable while thinking — prevent double-requests on:
-  - [ ] Assignment creation ("Create student-ready version")
-  - [ ] Student AI feedback request
+- [x] AI buttons should disable while thinking — prevent double-requests on:
+  - [x] Assignment creation ("Create student-ready version")
+  - [x] Student AI feedback request
 - [ ] Ghost account login bug — if you wait too long to log in, it logs you into a ghost account
 - [ ] Add a dedicated regression check for the pilot rubric mismatch bug: a rubric parsed as 3 criteria / 15 points must not block student submission.
+- [ ] UI/integration test that completes a student submission against a 3-criteria/15-point rubric — guards against future code changes that could re-introduce a gate on rubric completeness.
 - [ ] Add failed-submit protection test: student final work stays saved locally/server-queued when submit fails, and the UI does not show false success.
 - [ ] Add draft persistence regression test: student draft survives refresh/reload after Save Draft/autosave.
 - [ ] Add teacher-receives-submission regression test outside the skipped full-flow test.
