@@ -78,6 +78,20 @@
     };
   }
 
+  function resetTeacherReviewForReopen(review = {}) {
+    return {
+      ...review,
+      status: "draft",
+      rowScores: [],
+      suggestedRowScores: [],
+      suggestedGrade: null,
+      finalScore: "",
+      finalNotes: "",
+      savedAt: null,
+      acceptedAt: null,
+    };
+  }
+
   function findClosestBand(criterion, desiredPoints) {
     const bands = getCriterionBands(criterion);
     if (!bands.length) return null;
@@ -174,6 +188,7 @@
     getTeacherReviewRowScoreMap,
     getStudentSelfAssessmentRowScoreMap,
     getStudentSelfAssessmentCompletion,
+    resetTeacherReviewForReopen,
     findClosestBand,
     calculateTeacherReviewSummary,
     buildCriterionAnalytics,

@@ -33,6 +33,7 @@ const {
   getTeacherReviewRowScoreMap,
   getStudentSelfAssessmentRowScoreMap,
   getStudentSelfAssessmentCompletion,
+  resetTeacherReviewForReopen,
   findClosestBand,
   buildCriterionAnalytics,
 } = window.ReviewUtils;
@@ -49,6 +50,10 @@ let storageWarningShown = false;
 function getProfileScopedStorageKey(baseKey, profile = currentProfile) {
   if (!profile?.id || !profile?.role) return baseKey;
   return `${baseKey}:${profile.role}:${profile.id}`;
+}
+
+function isAdminTeacherView() {
+  return ui.role === "admin" && currentProfile?.role === "admin" && ui.adminViewingAsTeacher;
 }
 
 const BASE_ERROR_CODES = [
@@ -1564,6 +1569,14 @@ function resetAppShellState() {
   ui.showDraftFeedbackPrompt = false;
   ui.latestDraftFeedbackByAssignmentId = {};
   ui.showPasswordModal = false;
+  ui.adminViewingAsTeacher = false;
+  ui.adminView = "teachers";
+  ui.adminSelectedTeacherId = null;
+  ui.adminSelectedClassId = null;
+  ui.adminSelectedClassName = "";
+  ui.adminTeachers = [];
+  ui.adminClassDetail = null;
+  ui.adminSelectedAssignmentId = null;
   ui.notice = "";
 }
 async function bootApp(profile) {
@@ -1578,17 +1591,26 @@ async function bootApp(profile) {
   ui.teacherDraft = createBlankTeacherDraft();
   ui.role = profile.role;
   ui.activeUserId = profile.id;
+  if (profile.role !== "admin") {
+    ui.adminViewingAsTeacher = false;
+    ui.adminView = "teachers";
+    ui.adminSelectedTeacherId = null;
+    ui.adminSelectedClassId = null;
+    ui.adminSelectedClassName = "";
+    ui.adminClassDetail = null;
+    ui.adminSelectedAssignmentId = null;
+  }
 
   // Auto-join class if arriving via invite link
   try { await Auth.joinClassIfInvited(); } catch(e) { console.warn("Join class skipped:", e.message); }
 
-  if (profile.role === 'admin' && !ui.adminViewingAsTeacher) {
+  if (profile.role === 'admin' && !isAdminTeacherView()) {
     await loadAdminData();
     render();
     return;
   }
 
-  if (profile.role === 'teacher' || (profile.role === 'admin' && ui.adminViewingAsTeacher)) {
+  if (profile.role === 'teacher' || isAdminTeacherView()) {
     state.assignments = [];
     state.submissions = [];
     currentClassMembers = [];
@@ -1642,7 +1664,7 @@ async function refreshWorkspaceAfterAccountSecurity() {
       if (ui.selectedStudentAssignmentId) {
         await loadStudentSubmissionForAssignment(ui.selectedStudentAssignmentId);
       }
-    } else if (currentProfile.role === "teacher" || (currentProfile.role === "admin" && ui.adminViewingAsTeacher)) {
+    } else if (currentProfile.role === "teacher" || isAdminTeacherView()) {
       // Preserve the already-loaded teacher workspace. A password action should
       // never be allowed to replace classes/students with an empty transient response.
       currentClassId = preferredClassId || currentClassId;
@@ -2032,7 +2054,7 @@ function getSubmissionStatusSignature(submissions = state.submissions) {
 async function refreshTeacherAssignmentStatusData(options = {}) {
   const { forceRender = false } = options;
   if (
-    (currentProfile?.role !== "teacher" && !ui.adminViewingAsTeacher)
+    (currentProfile?.role !== "teacher" && !isAdminTeacherView())
     || ui.teacherView !== "assignments"
     || !currentClassId
     || !state.assignments.length
@@ -3822,9 +3844,8 @@ if (action === "select-assignment") {
       return;
     }
 
-    submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
     submission.status = "draft";
-    submission.teacherReview.status = "draft";
+    submission.teacherReview = resetTeacherReviewForReopen(createDefaultTeacherReview(submission.teacherReview));
     submission.updatedAt = new Date().toISOString();
 
     const savedSubmission = await upsertTeacherReviewSubmission(assignment, submission);
@@ -4193,7 +4214,7 @@ function render() {
       ${renderTopbar()}
       ${ui.notice ? `<div class="notice">${escapeHtml(ui.notice)}</div>` : ""}
       ${window.AccountSecurity?.renderUpgradeBanner(currentProfile) || ""}
-      ${ui.role === "admin" && !ui.adminViewingAsTeacher ? renderAdminWorkspace() : ui.role === "teacher" || ui.adminViewingAsTeacher ? renderTeacherWorkspace() : renderStudentWorkspace()}
+      ${ui.role === "admin" && !isAdminTeacherView() ? renderAdminWorkspace() : ui.role === "teacher" || isAdminTeacherView() ? renderTeacherWorkspace() : renderStudentWorkspace()}
     </div>
   ` + renderInvitePanel() + renderPasteWarning() + renderClassModal() + renderDraftFeedbackModal() + renderReopenSubmissionModal() + (window.AccountSecurity?.renderChangePasswordModal(ui.showPasswordModal) || "");
 
@@ -4625,7 +4646,7 @@ function renderTopbar() {
       </div>
       <div class="toolbar">
         ${currentProfile ? `<span style="font-size:0.85rem;color:var(--muted);">${escapeHtml(currentProfile.name)} · ${escapeHtml(currentProfile.role)}</span>` : ""}
-       ${ui.role === "teacher" || ui.adminViewingAsTeacher ? `
+       ${ui.role === "teacher" || isAdminTeacherView() ? `
           ${currentClassId ? `<span class="pill">Current class: ${escapeHtml(currentClasses.find((c) => c.id === currentClassId)?.name || "None")}</span>` : ""}
           ${currentClasses.length === 0 ? `
             <button class="button-secondary" data-action="create-class">+ Create first class</button>
@@ -4639,7 +4660,7 @@ function renderTopbar() {
            <button class="button-secondary" data-action="invite-by-email">✉ Invite students</button>
           `}
           ` : ""}
-        ${ui.adminViewingAsTeacher ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
+        ${isAdminTeacherView() ? `<button class="button-ghost" data-action="admin-exit-teacher-view" style="color:var(--accent-deep);">← Back to admin</button>` : ""}
         <button class="button-ghost" data-action="account-security-change-password">Change password</button>
         <button class="button-ghost" data-action="sign-out">Sign out</button>
       </div>
@@ -4664,7 +4685,7 @@ function renderHero() {
 }
 
 function renderAdminWorkspace() {
-  if (ui.adminViewingAsTeacher) return renderTeacherWorkspace();
+  if (isAdminTeacherView()) return renderTeacherWorkspace();
 
   if (ui.adminView === "class" && ui.adminSelectedClassId) {
     return renderAdminClassDetail();
