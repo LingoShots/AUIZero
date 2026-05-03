@@ -1858,15 +1858,22 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
     safeArray(localReview.annotations).length ||
     safeArray(localReview.rowScores).length
   );
-  const mergedTeacherReview = serverHasReview || !localHasReview
-    ? createDefaultTeacherReview({
-        ...localReview,
-        ...serverReview,
-        rowScores: safeArray(serverReview.rowScores).length ? serverReview.rowScores : localReview.rowScores,
-        suggestedRowScores: safeArray(serverReview.suggestedRowScores).length ? serverReview.suggestedRowScores : localReview.suggestedRowScores,
-        annotations: safeArray(serverReview.annotations).length ? serverReview.annotations : localReview.annotations,
-      })
-    : localReview;
+  // Detect a server-side reopen: status is back to draft AND server review is empty.
+  // In this case, the teacher explicitly cleared the review and we must not restore
+  // the locally-cached graded review.
+  const serverReopenDetected = server.status === "draft" && !serverHasReview;
+
+  const mergedTeacherReview = serverReopenDetected
+    ? serverReview
+    : (serverHasReview || !localHasReview
+        ? createDefaultTeacherReview({
+            ...localReview,
+            ...serverReview,
+            rowScores: safeArray(serverReview.rowScores).length ? serverReview.rowScores : localReview.rowScores,
+            suggestedRowScores: safeArray(serverReview.suggestedRowScores).length ? serverReview.suggestedRowScores : localReview.suggestedRowScores,
+            annotations: safeArray(serverReview.annotations).length ? serverReview.annotations : localReview.annotations,
+          })
+        : localReview);
   const reviewedStatus = ["graded", "late", "missing"].includes(server.status) || Boolean(mergedTeacherReview.savedAt)
     ? server.status
     : "";
