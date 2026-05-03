@@ -49,6 +49,42 @@ test("AI assist utils parse fenced JSON responses", () => {
   assert.deepEqual(parsed, ["one", "two"]);
 });
 
+test("AI action buttons are disabled while requests are pending", () => {
+  assert.deepEqual(aiAssistUtils.getTeacherGenerateButtonState({ loading: true }), {
+    disabled: true,
+    label: "Generating…",
+  });
+  assert.deepEqual(aiAssistUtils.getTeacherGenerateButtonState({ loading: false }), {
+    disabled: false,
+    label: "Create student-ready version →",
+  });
+
+  assert.deepEqual(aiAssistUtils.getStudentFeedbackButtonState({
+    loading: true,
+    feedbackUsed: 0,
+    feedbackLimit: 2,
+  }), {
+    disabled: true,
+    label: "Checking…",
+  });
+  assert.deepEqual(aiAssistUtils.getStudentFeedbackButtonState({
+    loading: false,
+    feedbackUsed: 2,
+    feedbackLimit: 2,
+  }), {
+    disabled: true,
+    label: "Get AI feedback (2/2)",
+  });
+  assert.deepEqual(aiAssistUtils.getStudentFeedbackButtonState({
+    loading: false,
+    feedbackUsed: 1,
+    feedbackLimit: 2,
+  }), {
+    disabled: false,
+    label: "Get AI feedback (1/2)",
+  });
+});
+
 test("rubric mismatch regression uses parsed criteria total instead of stale declared total", () => {
   const parsedRubric = rubricUtils.normalizeRubricSchema({
     title: "Pilot mismatch rubric",

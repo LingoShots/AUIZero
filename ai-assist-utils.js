@@ -68,8 +68,30 @@
     }).join("\n");
   }
 
+  function getTeacherGenerateButtonState({ loading = false } = {}) {
+    return {
+      disabled: Boolean(loading),
+      label: loading ? "Generating…" : "Create student-ready version →",
+    };
+  }
+
+  function getStudentFeedbackButtonState({
+    loading = false,
+    feedbackUsed = 0,
+    feedbackLimit = 0,
+  } = {}) {
+    const used = Number(feedbackUsed || 0);
+    const limit = Number(feedbackLimit || 0);
+    return {
+      disabled: Boolean(loading) || used >= limit,
+      label: loading ? "Checking…" : `Get AI feedback (${used}/${limit})`,
+    };
+  }
+
   return {
     extractJsonBlock,
+    getStudentFeedbackButtonState,
+    getTeacherGenerateButtonState,
     parseJsonResponse,
     stringifyLinesWithMarkers,
     stripCodeFence,
