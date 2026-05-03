@@ -193,6 +193,29 @@ test("self-assessment completion requires every parsed criterion without checkin
   assert.equal(parsedRubric.totalPoints, 15);
 });
 
+test("reopened submissions must clear active graded-review lock fields", () => {
+  const reopenedReview = reviewUtils.resetTeacherReviewForReopen({
+    status: "graded",
+    rubricType: "matrix",
+    rowScores: [{ criterionId: "ideas", points: 4 }],
+    suggestedRowScores: [{ criterionId: "ideas", points: 4 }],
+    suggestedGrade: { totalScore: 4 },
+    finalScore: 4,
+    finalNotes: "Old feedback",
+    annotations: [{ id: "note-1", selectedText: "sample", note: "old note" }],
+    savedAt: "2026-05-03T10:00:00.000Z",
+    acceptedAt: "2026-05-03T10:01:00.000Z",
+  });
+
+  assert.equal(reopenedReview.status, "draft");
+  assert.equal(reopenedReview.savedAt, null);
+  assert.equal(reopenedReview.finalScore, "");
+  assert.deepEqual(reopenedReview.rowScores, []);
+  assert.deepEqual(reopenedReview.suggestedRowScores, []);
+  assert.equal(reopenedReview.suggestedGrade, null);
+  assert.equal(reopenedReview.annotations.length, 1);
+});
+
 test("storage snapshot strips teacher assignments, submissions, and extra users", () => {
   const snapshot = storageUtils.buildStateSnapshot({
     users: [
