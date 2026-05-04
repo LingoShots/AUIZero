@@ -17,6 +17,8 @@
 - [ ] "1 paste flag" note in assignment tray should be clickable and take you to that student
 - [ ] Writing fluency section: show all 5 items not just the first 3 (clarify which are weighted lower / not shown)
 - [ ] Remove all mentions of "AUIZero" — replace with "praxis" throughout the app (UI text, page titles, emails, etc.). UI/branding only — don't rename the GitHub repo, Railway project, env vars, or `AUIZero-v1` localStorage keys without a migration plan.
+- [ ] Rename "Teacher notes" label to "Feedback for student" (or similar). After PR consolidating AI feedback into one studentComment field, the textbox is now pre-filled with student-facing content, so the current label is misleading. Optional alternative: split into two fields — "Feedback for student" (public, shown to student) + "Teacher notes" (private, teacher-only). The split is more product work and probably overkill unless teachers ask for it.
+- [ ] Pre-save: rubric panel header still shows the auto-total while teacher is editing the Final score override input. Only updates after Submit grade. Could fix with an `oninput` handler on the override input that writes to a UI state field. Defer unless teachers complain — current behavior is acceptable since the input itself shows what they typed.
 
 ## 🚀 Features (need design thought first)
 - [ ] Two reusable Praxis-supported writing task models for every teacher when they set up a class — listed as "Demo task" or similar
@@ -24,6 +26,7 @@
 - [ ] Ability for teacher to accept or reject AI suggestions
 - [ ] Attempt history — should re-submission create a new attempt record with separate grading, or continue updating the same submission as iteration? Needs product decision before implementation.
 - [ ] Student side assignment tray is not clean. Should be separate sections for new, submitted, and graded assignments. Consider how Canvas or other LMS show/ organise students' assignments
+- [ ] Per-criterion editable scores in the rubric grid. Currently teachers can override the Final score total at the bottom, but each individual band click locks them to the band's default value (e.g., "Unsatisfactory · 2 pts" only allows 2). Real AUI rubrics support a range (e.g., "Unsatisfactory range is 2–1 points"), so teachers should be able to click a band AND fine-tune the points (e.g., click "Unsatisfactory" → score becomes editable → type 1 or 1.5). Bigger change: touches state model (rowScore.points becomes editable independent of band default), render (click-to-edit interaction), and persistence. Not urgent — Final score override at the bottom covers most of the same need for now.
 
 ## 🧱 Refactor / architecture
 - [ ] Continue modularizing only after pilot-critical bugs/tests are stable.
@@ -48,6 +51,10 @@
 - [x] Submit grade button disables + shows "Submitting…" during request
 - [x] Show "Grade submitted to student" confirmation in grading panel after submit
 - [x] Optional reflection textarea on self-assessment screen (non-blocking for submit)
+- [x] Editable Final score input on grading screen — teacher can override rubric total
+- [x] Fixed flicker: Final score input briefly showed auto total instead of override during save
+- [x] Hide "Auto total" labels when teacher has set a manual override
+- [x] Consolidated AI feedback: one studentComment used for both the suggested-grade panel and the Teacher Notes default. Removed duplicate justification field. Saves output tokens per grade suggestion.
 
 ## To check / consider
 
@@ -58,5 +65,5 @@ Add assignment type and min/max word limits to format with AI set up, as current
 - Also, if all the buttons show at the top, there will be no need for the manual set up section at all because you can just do manual set up at the top if you prefer. Only change needed is to remove the lock on the save button that requires you to format with AI before saving. That will give teachers the option to manual fill or fill with AI. Then, put the format with AI button right next to the Teacher Brief box so it's clearly the next step 1. Fill out teacher brief 2. Hit format with AI 3. Check all settings 4. Save.
 - Verify AI provider rate limits and concurrent request capacity for pilot-scale usage (12+ students simultaneously).
 
-[22/4/26, 21:41:28] Danny AUI New: Copy grade works well. Maybe it should be called "copy grade and feedback" instead though.
-[22/4/26, 21:42:11] Danny AUI New: And maybe add a brief explanation of what it will do (e.g. it will copy the rubric grades and any comments you made on the assignment when grading it). Fix AI feedback.
+Danny AUI New: Copy grade works well. Maybe it should be called "copy grade and feedback" instead though.
+Danny AUI New: And maybe add a brief explanation of what it will do (e.g. it will copy the rubric grades and any comments you made on the assignment when grading it). Fix AI feedback.
