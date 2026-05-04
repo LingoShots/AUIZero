@@ -158,6 +158,7 @@ const ui = {
   adminSelectedAssignmentId: null,
   gradeSuggestionLoading: false,
   gradeSubmitting: false,
+  pendingFinalScoreOverride: null,
   reopenSubmissionPrompt: null,
 };
 
@@ -3794,17 +3795,18 @@ if (action === "select-assignment") {
        const overrideRaw = finalScoreInput ? finalScoreInput.value : "";
        const notesInput = document.getElementById("teacher-review-notes");
        const notesValue = notesInput ? notesInput.value.trim() : "";
+       const overrideNum = overrideRaw === "" ? null : Number(overrideRaw);
+       const validOverride = overrideNum !== null && !Number.isNaN(overrideNum) ? overrideNum : null;
        ui.gradeSubmitting = true;
+       // Stash the captured override so the re-render between now and the
+       // server response shows what the teacher typed, not the stale value.
+       ui.pendingFinalScoreOverride = validOverride;
        render();
-
-      try {
+       try {
          submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
          const summary = calculateTeacherReviewSummary(assignment, submission);
          submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
-         const overrideNum = overrideRaw === "" ? null : Number(overrideRaw);
-         submission.teacherReview.finalScore = (overrideNum !== null && !Number.isNaN(overrideNum))
-           ? overrideNum
-           : summary.totalScore;
+         submission.teacherReview.finalScore = validOverride !== null ? validOverride : summary.totalScore;
          submission.teacherReview.finalNotes = notesValue;
          submission.teacherReview.status = "graded";
          submission.teacherReview.savedAt = new Date().toISOString();
@@ -3815,6 +3817,7 @@ if (action === "select-assignment") {
          persistState();
        } finally {
          ui.gradeSubmitting = false;
+         ui.pendingFinalScoreOverride = null;
          render();
        }
        return;
@@ -5770,22 +5773,28 @@ function renderTeacherGrading(assignment, submission) {
           </div>
 
           <div class="field" style="margin-bottom:12px;">
-               <label for="teacher-review-final-score">Final score (out of ${reviewSummary.maxScore})</label>
-               <div style="display:flex;align-items:center;gap:8px;">
-                 <input
-                   type="number"
-                   id="teacher-review-final-score"
-                   step="0.5"
-                   min="0"
-                   max="${reviewSummary.maxScore}"
-                   value="${escapeAttribute(String(reviewScore !== "" ? reviewScore : reviewSummary.totalScore))}"
-                   style="padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;font-weight:700;font-size:1rem;width:120px;text-align:center;"
-                 />
-                 <span style="color:var(--muted);">/ ${reviewSummary.maxScore}</span>
-                 <span style="font-size:0.78rem;color:var(--muted);">Auto total: ${reviewSummary.totalScore}/${reviewSummary.maxScore}</span>
-               </div>
-               <p style="font-size:0.78rem;color:var(--muted);margin-top:6px;">Edit this number to override the rubric total. Changing rubric scores will recalculate it.</p>
-             </div>
+                <label for="teacher-review-final-score">Final score (out of ${reviewSummary.maxScore})</label>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <input
+                    type="number"
+                    id="teacher-review-final-score"
+                    step="0.5"
+                    min="0"
+                    max="${reviewSummary.maxScore}"
+                    value="${escapeAttribute(String(
+                      ui.pendingFinalScoreOverride !== null
+                        ? ui.pendingFinalScoreOverride
+                        : (reviewScore !== "" ? reviewScore : reviewSummary.totalScore)
+                    ))}"
+                    style="padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;font-weight:700;font-size:1rem;width:120px;text-align:center;"
+                  />
+                  <span style="color:var(--muted);">/ ${reviewSummary.maxScore}</span>
+                  ${(typeof submission.teacherReview?.finalScore === "number" && submission.teacherReview.finalScore !== reviewSummary.totalScore) ? "" : `
+                    <span style="font-size:0.78rem;color:var(--muted);">Auto total: ${reviewSummary.totalScore}/${reviewSummary.maxScore}</span>
+                  `}
+                </div>
+                <p style="font-size:0.78rem;color:var(--muted);margin-top:6px;">Edit this number to override the rubric total. Changing rubric scores will recalculate it.</p>
+              </div>
 
           <div class="field" style="margin-bottom:12px;">
             <label for="teacher-review-notes">Teacher notes</label>
