@@ -2,7 +2,7 @@
 
 ## 🐛 Bugs (do first — affects users now)
 - [ ] Admin view counts assignments and submissions that have already been deleted (stale cache or query bug)
-- [ ] "Last saved" message after submit grade should say "Grade submitted to student"
+- [x] "Last saved" message after submit grade should say "Grade submitted to student"
 - [x] AI buttons should disable while thinking — prevent double-requests on:
   - [x] Assignment creation ("Create student-ready version")
   - [x] Student AI feedback request
