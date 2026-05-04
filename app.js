@@ -3797,7 +3797,7 @@ if (action === "select-assignment") {
     const savedSubmission = await upsertTeacherReviewSubmission(assignment, submission);
     replaceSubmissionInState(savedSubmission);
     ui.selectedReviewSubmissionId = savedSubmission.id;
-    ui.notice = "Grade submitted.";
+    ui.notice = "Grade submitted to student.";
     persistState();
     render();
     return;
@@ -5766,7 +5766,7 @@ function renderTeacherGrading(assignment, submission) {
           </div>
 
           ${submission.teacherReview?.savedAt ? `
-            <p style="font-size:0.8rem;color:var(--sage);margin-bottom:8px;">✓ Last saved ${escapeHtml(formatDateTime(submission.teacherReview.savedAt))}</p>
+            <p style="font-size:0.8rem;color:var(--sage);margin-bottom:8px;">✓ Grade saved ${escapeHtml(formatDateTime(submission.teacherReview.savedAt))}</p>
           ` : ""}
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="button-secondary" data-action="generate-grade" ${ui.gradeSuggestionLoading ? "disabled" : ""}>${ui.gradeSuggestionLoading ? "Thinking…" : "Suggest Grade"}</button>
