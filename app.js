@@ -3688,10 +3688,10 @@ if (action === "select-assignment") {
     submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
     submission.teacherReview.rowScores = safeArray(submission.teacherReview.suggestedGrade.rowScores).map((entry) => ({ ...entry }));
     submission.teacherReview.finalScore = submission.teacherReview.suggestedGrade.totalScore;
-    submission.teacherReview.finalNotes = submission.teacherReview.suggestedGrade.justification;
+    submission.teacherReview.finalNotes = submission.teacherReview.suggestedGrade.studentComment || "";
     submission.teacherReview.status = "graded";
     submission.teacherReview.acceptedAt = new Date().toISOString();
-    ui.notice = "Suggested grade copied into the editable review.";
+    ui.notice = "Suggested grade and comment copied — review and submit when ready.";
     persistState();
     render();
     window.requestAnimationFrame(() => {
@@ -5687,7 +5687,6 @@ function renderTeacherGrading(assignment, submission) {
             <div id="suggested-grade-panel" style="margin-bottom:16px;padding:14px;background:#f4efe6;border-radius:12px;border:1px solid var(--line);">
               <p class="mini-label" style="margin-bottom:6px;">AI suggested grade</p>
               <div style="font-size:1.2rem;font-weight:700;margin-bottom:6px;">${submission.teacherReview.suggestedGrade.totalScore}/${submission.teacherReview.suggestedGrade.maxScore}</div>
-              <p style="font-size:0.85rem;color:var(--muted);margin:0 0 10px;">${escapeHtml(submission.teacherReview.suggestedGrade.justification)}</p>
               ${safeArray(submission.teacherReview.suggestedGrade.criteria).length ? `
                 <div style="display:grid;gap:6px;margin:0 0 10px;">
                   ${submission.teacherReview.suggestedGrade.criteria.map((criterion) => `
@@ -7980,8 +7979,7 @@ Respond with ONLY this JSON shape:
   "criteria": [
     { "criterionId": "criterion-id", "bandId": "band-id", "reason": "short reason" }
   ],
-  "justification": "2-4 sentence teacher-facing summary",
-  "studentComment": "2-4 sentence student-facing summary"
+  "studentComment": "3-5 sentence comment to give the student about their work"
 }`,
   };
 }
@@ -8065,7 +8063,6 @@ function mapAiGradeSuggestionToReview(assignment, submission, parsed) {
     rowScores,
     totalScore: summary.totalScore,
     maxScore: summary.maxScore,
-    justification: String(parsed?.justification || "").trim() || buildGradeJustification(assignment, submission, computeProcessMetrics(assignment, submission), summary.totalScore, summary.maxScore),
     studentComment: String(parsed?.studentComment || "").trim() || buildSuggestedStudentComment(assignment, submission, computeProcessMetrics(assignment, submission), summary.totalScore, summary.maxScore),
   };
 }
@@ -8978,7 +8975,6 @@ function gradeSubmission(assignment, submission) {
     rowScores,
     totalScore,
     maxScore,
-    justification: buildGradeJustification(assignment, submission, metrics, totalScore, maxScore),
     studentComment: buildSuggestedStudentComment(assignment, submission, metrics, totalScore, maxScore),
   };
 }
