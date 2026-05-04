@@ -31,6 +31,7 @@
 - [ ] Consider `teacher-assignments.js` for create/edit/publish/delete assignment handlers.
 - [ ] Consider `teacher-review.js` for grading handlers, annotation controls, and playback controls.
 - [ ] Keep large render extraction for later; render functions are still tightly coupled to global state.
+- [ ] Enable Anthropic prompt caching on AI calls (chat, draft feedback, grade suggestion). Requires restructuring prompt builders in app.js so static content (assignment context, rubric, system prompts) comes BEFORE dynamic content (student draft, chat history) — currently interleaved as template literals. Also requires updating /api/generate in server.js to support cache_control field. Estimated savings: 50-70% on input tokens for calls that hit cache (mostly grade suggestion + feedback during concurrent pilot use). Note: 2048-token minimum on Sonnet 4.6 means short chat turns may not qualify. Best done during the kraken refactor when prompt builders are being touched anyway. Revisit when AI costs exceed ~$50/month or as part of broader refactor work.
 
 ## ✅ Done
 - [x] Delete test assignments + submission data so they don't skew real keystroke analytics
