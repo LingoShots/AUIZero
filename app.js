@@ -156,6 +156,8 @@ const ui = {
   adminTeachers: [],
   adminClassDetail: null,
   adminSelectedAssignmentId: null,
+  gradeSuggestionLoading: false,
+  gradeSubmitting: false,
   reopenSubmissionPrompt: null,
 };
 
