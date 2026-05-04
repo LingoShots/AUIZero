@@ -3798,7 +3798,12 @@ if (action === "select-assignment") {
          const notesInput = document.getElementById("teacher-review-notes");
          const summary = calculateTeacherReviewSummary(assignment, submission);
          submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
-         submission.teacherReview.finalScore = summary.totalScore;
+         const finalScoreInput = document.getElementById("teacher-review-final-score");
+       	 const overrideRaw = finalScoreInput ? finalScoreInput.value : "";
+      	 const overrideNum = overrideRaw === "" ? null : Number(overrideRaw);
+      	 submission.teacherReview.finalScore = (overrideNum !== null && !Number.isNaN(overrideNum))
+           ? overrideNum
+           : summary.totalScore;
          submission.teacherReview.finalNotes = notesInput ? notesInput.value.trim() : "";
          submission.teacherReview.status = submission.teacherReview.status || "graded";
          submission.teacherReview.savedAt = new Date().toISOString();
@@ -5762,14 +5767,22 @@ function renderTeacherGrading(assignment, submission) {
           </div>
 
           <div class="field" style="margin-bottom:12px;">
-            <label>Final score</label>
-            <div style="padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;font-weight:700;">
-              ${reviewSummary.totalScore}/${reviewSummary.maxScore}
-            </div>
-            ${reviewScore !== "" && Number(reviewScore) !== Number(reviewSummary.totalScore) ? `
-              <p style="font-size:0.78rem;color:var(--muted);margin-top:6px;">Previous saved total: ${escapeHtml(String(reviewScore))}</p>
-            ` : ""}
-          </div>
+               <label for="teacher-review-final-score">Final score (out of ${reviewSummary.maxScore})</label>
+               <div style="display:flex;align-items:center;gap:8px;">
+                 <input
+                   type="number"
+                   id="teacher-review-final-score"
+                   step="0.5"
+                   min="0"
+                   max="${reviewSummary.maxScore}"
+                   value="${escapeAttribute(String(reviewScore !== "" ? reviewScore : reviewSummary.totalScore))}"
+                   style="padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;font-weight:700;font-size:1rem;width:120px;text-align:center;"
+                 />
+                 <span style="color:var(--muted);">/ ${reviewSummary.maxScore}</span>
+                 <span style="font-size:0.78rem;color:var(--muted);">Auto total: ${reviewSummary.totalScore}/${reviewSummary.maxScore}</span>
+               </div>
+               <p style="font-size:0.78rem;color:var(--muted);margin-top:6px;">Edit this number to override the rubric total. Changing rubric scores will recalculate it.</p>
+             </div>
 
           <div class="field" style="margin-bottom:12px;">
             <label for="teacher-review-notes">Teacher notes</label>
