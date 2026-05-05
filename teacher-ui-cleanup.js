@@ -2,14 +2,12 @@
   const EXACT_TEXT_REPLACEMENTS = new Map([
     ["Suggest Grade", "Grade with AI"],
     ["Copy Grade", "Copy grade summary"],
-    ["Writing process & heatmap", "Writing process evidence"],
     ["Letter-by-letter playback", "Replay writing process"],
     ["Coaching chat", "Planning chat with coach"],
     ["Teacher Review", "Class work"],
   ]);
 
   const PARTIAL_TEXT_REPLACEMENTS = [
-    [/^▶\s*Writing process & heatmap$/i, "▶ Writing process evidence"],
     [/^▶\s*Letter-by-letter playback$/i, "▶ Replay writing process"],
     [/^▶\s*Coaching chat/i, (text) => text.replace(/Coaching chat/i, "Planning chat with coach")],
   ];

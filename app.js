@@ -3678,7 +3678,7 @@ if (action === "select-assignment") {
     } else {
       startPlayback(frames);
     }
-    render();
+    syncPlaybackUi();
     return;
   }
 
@@ -3686,7 +3686,6 @@ if (action === "select-assignment") {
     const direction = Number(target.dataset.direction);
     ui.playback.touched = true;
     stepPlayback(direction);
-    render();
     return;
   }
 
@@ -4570,53 +4569,6 @@ function renderPasteWarning() {
           <button class="button-ghost" data-action="dismiss-paste-warning">I'll rewrite it in my own words</button>
           <button class="button" data-action="dismiss-paste-warning">Leave it in — it's fair use</button>
         </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderWritingHeatmap(submission) {
-  const events = (submission?.writingEvents || []);
-  if (!events.length) return `<p class="subtle">No writing events recorded yet.</p>`;
-
-  // Group events by day and hour
-  const buckets = {};
-  for (const e of events) {
-    const d = new Date(e.timestamp);
-    const day = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    const hour = d.getHours();
-    const key = `${day}__${hour}`;
-    buckets[key] = (buckets[key] || 0) + 1;
-  }
-
-  const days = [...new Set(Object.keys(buckets).map(k => k.split("__")[0]))];
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  const maxCount = Math.max(...Object.values(buckets), 1);
-
-  const hourLabel = (h) => h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`;
-
-  return `
-    <div style="overflow-x:auto;">
-      <div style="display:grid;grid-template-columns:60px repeat(${days.length}, 1fr);gap:3px;min-width:${60 + days.length * 36}px;">
-        <div></div>
-        ${days.map(d => `<div style="font-size:0.7rem;color:var(--muted);text-align:center;padding-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${d}">${d.split(" ")[0]}<br>${d.split(" ").slice(1).join(" ")}</div>`).join("")}
-        ${hours.map(h => `
-          <div style="font-size:0.65rem;color:var(--muted);text-align:right;padding-right:6px;line-height:24px;">${h % 3 === 0 ? hourLabel(h) : ""}</div>
-          ${days.map(d => {
-            const count = buckets[`${d}__${h}`] || 0;
-            const intensity = count === 0 ? 0 : Math.max(0.12, count / maxCount);
-            const bg = count === 0
-              ? "#eef3fb"
-              : `rgba(95,143,255,${intensity})`;
-            return `<div title="${count} edit${count !== 1 ? "s" : ""} — ${hourLabel(h)} on ${d}" style="height:24px;border-radius:4px;background:${bg};"></div>`;
-          }).join("")}
-        `).join("")}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:0.75rem;color:var(--muted);">
-        <span>Less</span>
-        ${[0.12, 0.35, 0.6, 0.85, 1].map(v => `<div style="width:14px;height:14px;border-radius:3px;background:rgba(95,143,255,${v});"></div>`).join("")}
-        <span>More</span>
-        <span style="margin-left:12px;">${events.length} total edits across ${days.length} day${days.length !== 1 ? "s" : ""}</span>
       </div>
     </div>
   `;
@@ -5577,20 +5529,6 @@ function renderTeacherReview(assignment, submissions) {
 
 function renderTeacherGrading(assignment, submission) {
   if (!submission) return `<div class="empty-state"><p>No submission selected.</p></div>`;
-  const events = Array.isArray(submission.writingEvents) ? submission.writingEvents : [];
-  const finalText = submission.finalText || submission.draftText || "";
-  const startedAt = submission.startedAt || submission.updatedAt || submission.submittedAt;
-  const endedAt = submission.submittedAt || submission.updatedAt || startedAt;
-  const totalMinutes = startedAt && endedAt
-    ? Math.max(1, Math.round((new Date(endedAt) - new Date(startedAt)) / 60000))
-    : 0;
-  const metrics = {
-    largePasteCount: getPasteEvidenceItems(submission).length,
-    finalWordCount: finalText.trim() ? finalText.trim().split(/\s+/).length : 0,
-    revisionCount: events.length,
-    totalMinutes,
-  };
-
   const reviewSummary = calculateTeacherReviewSummary(assignment, submission);
   const suggestedRowScoreMap = getTeacherReviewRowScoreMap(submission.teacherReview?.suggestedRowScores);
   const reviewScore = submission.teacherReview?.finalScore ?? "";
@@ -5687,19 +5625,6 @@ function renderTeacherGrading(assignment, submission) {
             ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No annotations yet. Select text above then click a code.</p>`}
           </div>
 
-          <details style="margin-bottom:16px;">
-            <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Writing process & heatmap</summary>
-            <div style="margin-top:10px;">
-              <div class="pill-row" style="margin-bottom:10px;">
-                <span class="pill">${metrics.totalMinutes} min total</span>
-                <span class="pill">${metrics.revisionCount} edits</span>
-                <span class="pill">${metrics.finalWordCount} words</span>
-                ${metrics.largePasteCount ? `<span class="warning-pill">⚠ ${metrics.largePasteCount} paste flag${metrics.largePasteCount > 1 ? "s" : ""}</span>` : ""}
-              </div>
-              ${renderWritingHeatmap(submission)}
-            </div>
-          </details>
-
           <details style="margin-bottom:16px;" ${ui.playback.touched ? "open" : ""}>
             <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted);padding:6px 0;">▶ Letter-by-letter playback</summary>
             <div style="margin-top:10px;">
@@ -5761,6 +5686,7 @@ function renderTeacherGrading(assignment, submission) {
                   <button class="button-ghost" data-action="use-suggested-comment" style="font-size:0.8rem;">Copy to notes</button>
                 </div>
               ` : ""}
+              ${renderSuggestedGradeProcessNote(submission)}
               <div style="display:flex;gap:8px;">
                 <button class="button-secondary" data-action="accept-suggested-grade">Use this score</button>
                 <button class="button-ghost" data-action="ignore-suggested-grade">Ignore</button>
@@ -7043,7 +6969,7 @@ function startPlayback(frames) {
   const scheduleNextFrame = () => {
     if (ui.playback.index >= frames.length - 1) {
       stopPlayback();
-      render();
+      syncPlaybackUi();
       return;
     }
     const delay = getPlaybackFrameDelayMs(frames, ui.playback.index);
@@ -7052,7 +6978,7 @@ function startPlayback(frames) {
       if (!ui.playback.isPlaying) return;
       if (ui.playback.index >= frames.length - 1) {
         stopPlayback();
-        render();
+        syncPlaybackUi();
         return;
       }
       ui.playback.index += 1;
@@ -7167,6 +7093,11 @@ function syncPlaybackUi() {
   const playbackLabel = document.getElementById("playback-label");
   if (playbackLabel) {
     playbackLabel.textContent = playback.label;
+  }
+
+  const playbackToggle = document.querySelector('[data-action="playback-toggle"]');
+  if (playbackToggle) {
+    playbackToggle.textContent = ui.playback.isPlaying ? "Pause" : "Play";
   }
 }
 
@@ -8740,6 +8671,25 @@ function renderStudentAiFeedbackEvidence(submission) {
         }).join("")}
       </div>
     </section>
+  `;
+}
+
+function renderSuggestedGradeProcessNote(submission) {
+  const evidenceItems = getPasteEvidenceItems(submission);
+  if (!evidenceItems.length) return "";
+  const pasteCount = evidenceItems.filter((item) => item.kind === "paste").length;
+  const bulkInsertCount = evidenceItems.filter((item) => item.kind !== "paste").length;
+  const parts = [
+    pasteCount ? `${pasteCount} paste event${pasteCount === 1 ? "" : "s"}` : "",
+    bulkInsertCount ? `${bulkInsertCount} large single insert event${bulkInsertCount === 1 ? "" : "s"}` : "",
+  ].filter(Boolean);
+  return `
+    <div class="process-note-card" style="background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;padding:10px 12px;border-radius:10px;margin-bottom:10px;">
+      <p class="mini-label" style="margin-bottom:4px;color:#9a3412;">Writing process note</p>
+      <p style="font-size:0.85rem;margin:0;line-height:1.55;color:#7c2d12;">
+        The writing process shows ${escapeHtml(parts.join(" and "))}. This is not proof of misconduct, but it may indicate pasted text, an input tool, or another bulk-entry method. Ask the student to explain their process before finalizing the grade.
+      </p>
+    </div>
   `;
 }
 
