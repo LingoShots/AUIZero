@@ -1431,6 +1431,47 @@ button.rubric-level-cell:hover {
   cursor: help;
 }
 
+.paste-evidence-panel {
+  border-color: #c9a8ef;
+  background: linear-gradient(135deg, #fbf7ff, #ffffff);
+}
+
+.paste-evidence-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d8c4f2;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 12px 14px;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.paste-evidence-card:hover {
+  border-color: #9b4dca;
+  box-shadow: 0 10px 24px rgba(84, 47, 128, 0.08);
+}
+
+.teacher-feedback-comparison {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.comparison-grid p {
+  margin: 0;
+  line-height: 1.55;
+}
+
 .class-banner {
   display: flex;
   align-items: center;

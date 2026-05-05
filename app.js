@@ -2798,20 +2798,41 @@ if (action === "generate-teacher-assist") {
   }
 
   if (action === "save-draft") {
+    await saveCurrentDraftFromEditor();
+    render();
+    return;
+  }
+
+  if (action === "save-draft-and-next") {
     const submission = getStudentSubmission();
     if (!submission) return;
-    const draftEditor = document.getElementById("draft-editor");
-    if (draftEditor) {
-      submission.draftText = draftEditor.value;
+    if (isStudentSubmissionLocked(submission)) {
+      rememberStudentStep(4);
+      ui.notice = "This assignment has already been submitted. Ask your teacher if you need to submit again.";
+      render();
+      return;
     }
-    submission.updatedAt = new Date().toISOString();
-    persistState();
-    setDraftSaveMessage("Saving…");
-    const saved = await flushCurrentStudentWork();
-    showAutosaveIndicator(saved ? "Draft saved" : "Saved on this device");
-    setDraftSaveMessage(saved ? "Draft saved." : "Saved on this device.");
-    ui.notice = saved ? "Draft saved." : "We couldn't save to the server just now, but your draft is still on this device.";
+
+    const saved = await saveCurrentDraftFromEditor({ renderAfter: false });
+    if (!submission.draftText?.trim()) {
+      ui.notice = "Write your draft first, then save and continue.";
+      render();
+      return;
+    }
+    if (!submission.finalText?.trim()) {
+      submission.finalText = submission.draftText;
+      submission.updatedAt = new Date().toISOString();
+      persistState();
+      scheduleSubmissionSync();
+    }
+    rememberStudentStep(3);
+    ui.notice = saved
+      ? "Draft saved. Your draft has been copied into the final version box."
+      : "We couldn't save to the server just now. Your work is still on this device and you can keep going.";
     render();
+    window.requestAnimationFrame(() => {
+      document.querySelector(".wizard-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     return;
   }
 
@@ -3609,6 +3630,38 @@ if (action === "select-assignment") {
     ui.playback.touched = false;
     ui.notice = "";
     render();
+    return;
+  }
+
+  if (action === "previous-review-student") {
+    const previousStudentId = getPreviousReviewStudentId(ui.selectedReviewStudentId, ui.selectedAssignmentId);
+    if (!previousStudentId) return;
+    stopPlayback();
+    ui.selectedReviewStudentId = previousStudentId;
+    ui.selectedReviewSubmissionId = getReviewSubmissionForStudent(previousStudentId, ui.selectedAssignmentId)?.id || null;
+    ui.teacherView = "grading";
+    ui.playback.index = 0;
+    ui.playback.touched = false;
+    ui.notice = "";
+    render();
+    return;
+  }
+
+  if (action === "inspect-paste-flag") {
+    const pasteId = target.dataset.pasteId;
+    if (!pasteId) return;
+    const highlight = document.getElementById(`paste-highlight-${pasteId}`);
+    if (highlight) {
+      flashScrollTarget(highlight);
+      return;
+    }
+    const card = document.getElementById(`paste-evidence-${pasteId}`);
+    if (card) {
+      if (card.tagName === "DETAILS") {
+        card.open = true;
+      }
+      flashScrollTarget(card);
+    }
     return;
   }
   
@@ -5545,6 +5598,7 @@ function renderTeacherGrading(assignment, submission) {
   const studentName = submission._studentName || getUserById(submission.studentId)?.name || "Student";
   const roster = getReviewRoster(assignment.id);
   const rosterIndex = roster.findIndex((student) => student.id === submission.studentId);
+  const previousStudentId = getPreviousReviewStudentId(submission.studentId, assignment.id);
   const nextStudentId = getNextReviewStudentId(submission.studentId, assignment.id);
   const deadlinePassed = canMarkLateOrMissing(assignment);
   const currentStatus = submission.status || submission.teacherReview?.status || "not_started";
@@ -5564,6 +5618,7 @@ function renderTeacherGrading(assignment, submission) {
         <span class="status-pill">${escapeHtml(getSubmissionStatusDisplay(currentStatus))}</span>
         ${roster.length ? `<span style="font-size:0.82rem;color:var(--muted);">${rosterIndex + 1}/${roster.length}</span>` : ""}
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+          <button class="button-ghost" data-action="previous-review-student" ${!previousStudentId ? "disabled" : ""} style="font-size:0.85rem;">← Previous student</button>
           <button class="button-ghost" data-action="next-review-student" ${!nextStudentId ? "disabled" : ""} style="font-size:0.85rem;">Next student →</button>
           <button class="button-ghost" data-action="download-work" style="font-size:0.85rem;">⬇ Grade sheet</button>
         </div>
@@ -5591,6 +5646,8 @@ function renderTeacherGrading(assignment, submission) {
           </div>
           
           ${renderWritingBehaviour(submission, assignment)}
+          ${renderPasteEvidencePanel(submission)}
+          ${renderStudentAiFeedbackEvidence(submission)}
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
             <div class="editor-with-lines review-editor-with-lines">
@@ -6087,11 +6144,31 @@ function renderStudentDraftStep(assignment, submission) {
       `}
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="1">Back</button>
-        <button class="button" data-action="student-next-step" data-step="3" ${!submission.draftText?.trim() ? "disabled title='Write your draft first'" : ""}>Next</button>
+        <button class="button" data-action="save-draft-and-next">Save and next</button>
       </div>
       ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
     </div>
   `;
+}
+
+async function saveCurrentDraftFromEditor({ renderAfter = false } = {}) {
+  const submission = getStudentSubmission();
+  if (!submission) return false;
+  const draftEditor = document.getElementById("draft-editor");
+  if (draftEditor) {
+    submission.draftText = draftEditor.value;
+  }
+  submission.updatedAt = new Date().toISOString();
+  persistState();
+  setDraftSaveMessage("Saving...");
+  const saved = await flushCurrentStudentWork();
+  showAutosaveIndicator(saved ? "Draft saved" : "Saved on this device");
+  setDraftSaveMessage(saved ? "Draft saved." : "Saved on this device.");
+  ui.notice = saved ? "Draft saved." : "We couldn't save to the server just now, but your draft is still on this device.";
+  if (renderAfter) {
+    render();
+  }
+  return saved;
 }
 
 function renderStudentReviewStep(assignment, submission) {
@@ -6109,8 +6186,8 @@ function renderStudentReviewStep(assignment, submission) {
       <div class="step-head">
         <div>
           <div class="step-number">3</div>
-          <h3>Review feedback and write your final version</h3>
-          <p class="subtle">Use the AI feedback on your draft to help you improve. Write your final version in the box below.</p>
+          <h3>Write your final version and get AI feedback</h3>
+          <p class="subtle">Your draft has been copied below. Revise it here, use AI feedback if you want, then continue to self-assessment.</p>
         </div>
       </div>
       <div class="field-grid compact-grid">
@@ -6662,6 +6739,7 @@ async function handleFeedbackRequest() {
   render();
 
   let shouldScrollToFeedbackNotice = false;
+  const draftTextAtRequest = String(submission.draftText || "");
   try {
     let items;
     try {
@@ -6675,6 +6753,8 @@ async function handleFeedbackRequest() {
       id: uid("feedback"),
       timestamp: new Date().toISOString(),
       items,
+      draftTextAtRequest,
+      draftWordCountAtRequest: wordCount(draftTextAtRequest),
     });
     ui.latestDraftFeedbackByAssignmentId[assignment.id] = safeArray(items).slice();
     submission.updatedAt = new Date().toISOString();
@@ -6987,7 +7067,11 @@ function getEventTimeMs(event) {
 }
 
 function countPlaybackOperations(event) {
-  if (!event || event.type === "paste") return 1;
+  if (window.ReviewUtils?.getPlaybackOperationCount) {
+    return window.ReviewUtils.getPlaybackOperationCount(event);
+  }
+  if (!event || event.type === "paste" || event.type === "delete") return 1;
+  if (event.type === "replace") return Math.max(1, 1 + String(event.insertedText || "").length);
   return Math.max(1, String(event.removedText || "").length + String(event.insertedText || "").length);
 }
 
@@ -7376,24 +7460,26 @@ function getPlaybackFrames(submission) {
     }
 
     if (event.removedText) {
-      for (let i = 0; i < event.removedText.length; i += 1) {
-        const removeIndex = event.start;
-        text = text.slice(0, removeIndex) + text.slice(removeIndex + 1);
-        pushFrame(text, `Delete • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
-        operationIndex += 1;
-      }
+      const deleteStart = clamp(Number(event.start || 0), 0, text.length);
+      const recordedEnd = Number(event.end);
+      const fallbackEnd = deleteStart + String(event.removedText || "").length;
+      const deleteEnd = clamp(Number.isFinite(recordedEnd) && recordedEnd > deleteStart ? recordedEnd : fallbackEnd, deleteStart, text.length);
+      text = text.slice(0, deleteStart) + text.slice(deleteEnd);
+      pushFrame(text, `Deleted ${String(event.removedText || "").length} characters • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
+      operationIndex += 1;
     }
 
     if (event.insertedText) {
       if (event.type === "paste") {
-        text = text.slice(0, event.start) + event.insertedText + text.slice(event.start);
-        pushFrame(text, `Paste • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
+        const pasteStart = clamp(Number(event.start || 0), 0, text.length);
+        text = text.slice(0, pasteStart) + event.insertedText + text.slice(pasteStart);
+        pushFrame(text, `Pasted ${String(event.insertedText || "").length} characters • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
         continue;
       }
 
       for (let i = 0; i < event.insertedText.length; i += 1) {
         const char = event.insertedText[i];
-        const insertIndex = event.start + i;
+        const insertIndex = clamp(Number(event.start || 0) + i, 0, text.length);
         text = text.slice(0, insertIndex) + char + text.slice(insertIndex);
         pushFrame(text, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
         operationIndex += 1;
@@ -7435,6 +7521,13 @@ function getNextReviewStudentId(currentStudentId, assignmentId = ui.selectedAssi
   const index = roster.findIndex((student) => student.id === currentStudentId);
   if (index === -1 || index === roster.length - 1) return null;
   return roster[index + 1]?.id || null;
+}
+
+function getPreviousReviewStudentId(currentStudentId, assignmentId = ui.selectedAssignmentId) {
+  const roster = getReviewRoster(assignmentId);
+  const index = roster.findIndex((student) => student.id === currentStudentId);
+  if (index <= 0) return null;
+  return roster[index - 1]?.id || null;
 }
 
 function calculateMeanBurstLength(submission) {
@@ -8496,17 +8589,148 @@ function getAnnotationDisplayLabel(annotation, index = null) {
   return Number.isInteger(index) ? `${code} ${index + 1}` : code;
 }
 
+function getSubmissionReviewText(submission) {
+  return String(submission?.finalText || submission?.draftText || "");
+}
+
+function getFlaggedPasteEvents(submission) {
+  return safeArray(submission?.writingEvents)
+    .filter((event) => event?.type === "paste" && event?.flagged && String(event?.insertedText || ""));
+}
+
+function getPasteEvidenceItems(submission) {
+  const text = getSubmissionReviewText(submission);
+  const searchStarts = new Map();
+  return getFlaggedPasteEvents(submission).map((event, index) => {
+    const pastedText = String(event.insertedText || "");
+    const id = String(event.id || `paste-${index}`);
+    const startHint = Number.isFinite(Number(event.start)) ? Number(event.start) : -1;
+    let start = startHint >= 0 && text.slice(startHint, startHint + pastedText.length) === pastedText
+      ? startHint
+      : -1;
+    if (start === -1 && pastedText) {
+      const previousStart = Number(searchStarts.get(pastedText) || 0);
+      start = text.indexOf(pastedText, previousStart);
+      if (start === -1 && previousStart > 0) {
+        start = text.indexOf(pastedText);
+      }
+    }
+    if (start !== -1) {
+      searchStarts.set(pastedText, start + Math.max(pastedText.length, 1));
+    }
+    return {
+      id,
+      event,
+      text: pastedText,
+      timestamp: event.timestamp || submission?.updatedAt || new Date().toISOString(),
+      charCount: pastedText.length,
+      preview: trimTo(pastedText.replace(/\s+/g, " ").trim(), 180),
+      start,
+      end: start === -1 ? -1 : start + pastedText.length,
+      foundExact: start !== -1,
+    };
+  });
+}
+
+function renderPasteEvidencePanel(submission) {
+  const items = getPasteEvidenceItems(submission);
+  if (!items.length) return "";
+  return `
+    <section class="paste-evidence-panel teacher-ready-card" style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+        <div>
+          <p class="mini-label" style="margin-bottom:4px;">Paste evidence</p>
+          <h3 style="margin:0;">${items.length} flagged paste event${items.length === 1 ? "" : "s"}</h3>
+          <p class="subtle" style="margin:6px 0 0;">Click a paste flag to jump to the violet highlight when the pasted text is still present.</p>
+        </div>
+        <span class="warning-pill">Review paste flags</span>
+      </div>
+      <div style="display:grid;gap:10px;margin-top:12px;">
+        ${items.map((item) => {
+          const body = `
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <span class="pill">${escapeHtml(formatDateTime(item.timestamp))}</span>
+              <span class="pill">${item.charCount} characters</span>
+              <span class="${item.foundExact ? "pill" : "warning-pill"}">${item.foundExact ? "Still found in final text" : "Edited or removed"}</span>
+            </div>
+            <p style="margin:0;font-size:0.9rem;line-height:1.55;">${escapeHtml(item.preview || "(blank paste)")}</p>
+          `;
+          if (item.foundExact) {
+            return `
+              <button id="paste-evidence-${escapeAttribute(item.id)}" class="paste-evidence-card" data-action="inspect-paste-flag" data-paste-id="${escapeAttribute(item.id)}" type="button">
+                ${body}
+              </button>
+            `;
+          }
+          return `
+            <details id="paste-evidence-${escapeAttribute(item.id)}" class="paste-evidence-card">
+              <summary data-action="inspect-paste-flag" data-paste-id="${escapeAttribute(item.id)}">
+                ${body}
+              </summary>
+              <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px;">
+                <p class="subtle" style="margin:0 0 8px;">This pasted text is no longer found exactly in the final submission. It may have been edited or removed.</p>
+                <pre style="white-space:pre-wrap;word-break:break-word;margin:0;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;">${escapeHtml(item.text)}</pre>
+              </div>
+            </details>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderStudentAiFeedbackEvidence(submission) {
+  const entries = safeArray(submission?.feedbackHistory)
+    .filter((entry) => safeArray(entry?.items).length);
+  if (!entries.length) return "";
+  const finalText = getSubmissionReviewText(submission);
+  return `
+    <section class="teacher-ready-card" style="margin-bottom:16px;">
+      <p class="mini-label" style="margin-bottom:4px;">AI feedback used by student</p>
+      <h3 style="margin:0 0 8px;">${entries.length} draft feedback check${entries.length === 1 ? "" : "s"}</h3>
+      <div style="display:grid;gap:10px;">
+        ${entries.slice().reverse().map((entry) => {
+          const snapshot = String(entry.draftTextAtRequest || "");
+          const hasSnapshot = snapshot.trim().length > 0;
+          const changed = hasSnapshot && snapshot.trim() !== finalText.trim();
+          const wordDelta = hasSnapshot ? wordCount(finalText) - wordCount(snapshot) : 0;
+          return `
+            <div class="feedback-card">
+              <strong>${escapeHtml(formatDateTime(entry.timestamp || submission?.updatedAt || new Date().toISOString()))}</strong>
+              <ul>${safeArray(entry.items).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+              ${hasSnapshot ? `
+                <div class="teacher-feedback-comparison">
+                  <span class="${changed ? "pill" : "warning-pill"}">${changed ? "Changed after feedback" : "No clear change after feedback"}</span>
+                  <span class="pill">${wordDelta >= 0 ? "+" : ""}${wordDelta} words after feedback</span>
+                  <div class="comparison-grid">
+                    <div>
+                      <p class="mini-label">Draft at feedback time</p>
+                      <p>${escapeHtml(trimTo(snapshot.replace(/\s+/g, " ").trim(), 220))}</p>
+                    </div>
+                    <div>
+                      <p class="mini-label">Current final version</p>
+                      <p>${escapeHtml(trimTo(finalText.replace(/\s+/g, " ").trim(), 220))}</p>
+                    </div>
+                  </div>
+                </div>
+              ` : `<p class="subtle" style="margin:8px 0 0;">Change comparison unavailable for older feedback checks.</p>`}
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderAnnotatedText(submission, options = {}) {
   const {
     annotationClickTarget = "comment",
     includeClickHandlers = true,
     idPrefix = "",
   } = options;
-  const text = submission?.finalText || submission?.draftText || "No text submitted yet.";
+  const text = getSubmissionReviewText(submission) || "No text submitted yet.";
   const annotations = submission?.teacherReview?.annotations || [];
-  const flaggedPastes = (submission?.writingEvents || []).filter(
-    (e) => e.type === "paste" && e.flagged && e.insertedText
-  );
+  const pasteEvidenceItems = getPasteEvidenceItems(submission).filter((item) => item.foundExact);
 
   const highlights = [];
   const pasteHighlights = [];
@@ -8525,24 +8749,18 @@ function renderAnnotatedText(submission, options = {}) {
     return idx;
   };
 
-  for (const paste of flaggedPastes) {
-    const startHint = Number.isFinite(Number(paste.start)) ? Number(paste.start) : -1;
-    const idx = startHint >= 0 && text.slice(startHint, startHint + paste.insertedText.length) === paste.insertedText
-      ? startHint
-      : findNextSequentialIndex(paste.insertedText);
-    if (idx !== -1) {
-      const end = idx + paste.insertedText.length;
-      const pasteHighlight = {
-        start: idx,
-        end,
-        type: "paste",
-        annotationIds: [],
-        annotationCodes: [],
-        annotationLabels: [],
-      };
-      pasteHighlights.push(pasteHighlight);
-      highlights.push(pasteHighlight);
-    }
+  for (const paste of pasteEvidenceItems) {
+    const pasteHighlight = {
+      id: paste.id,
+      start: paste.start,
+      end: paste.end,
+      type: "paste",
+      annotationIds: [],
+      annotationCodes: [],
+      annotationLabels: [],
+    };
+    pasteHighlights.push(pasteHighlight);
+    highlights.push(pasteHighlight);
   }
 
   searchStarts.clear();
@@ -8602,7 +8820,7 @@ function renderAnnotatedText(submission, options = {}) {
       const pasteAnchors = safeArray(h.annotationIds)
         .map((id) => `<span id="${escapeAttribute(`${idPrefix}annotation-${id}`)}"></span>`)
         .join("");
-      result += `<mark class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${pasteAnchors}${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
+      result += `<mark id="${escapeAttribute(`${idPrefix}paste-highlight-${h.id}`)}" class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${pasteAnchors}${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
     } else {
       const markId = `${idPrefix}annotation-${h.id}`;
       const clickHandler = includeClickHandlers

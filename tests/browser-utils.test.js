@@ -193,6 +193,19 @@ test("self-assessment completion requires every parsed criterion without checkin
   assert.equal(parsedRubric.totalPoints, 15);
 });
 
+test("annotation short labels preserve custom wording", () => {
+  assert.equal(reviewUtils.formatAnnotationShortLabel("Missing word"), "Missing word");
+  assert.equal(reviewUtils.formatAnnotationShortLabel("Wrong word form"), "Wrong word form");
+  assert.equal(reviewUtils.formatAnnotationShortLabel("Missing word: add an article"), "Missing word");
+});
+
+test("playback operation counts keep paste and delete atomic", () => {
+  assert.equal(reviewUtils.getPlaybackOperationCount({ type: "paste", insertedText: "x".repeat(300) }), 1);
+  assert.equal(reviewUtils.getPlaybackOperationCount({ type: "delete", removedText: "x".repeat(120) }), 1);
+  assert.equal(reviewUtils.getPlaybackOperationCount({ type: "insert", insertedText: "abc" }), 3);
+  assert.equal(reviewUtils.getPlaybackOperationCount({ type: "replace", removedText: "old", insertedText: "new" }), 4);
+});
+
 test("reopened submissions must clear active graded-review lock fields", () => {
   const reopenedReview = reviewUtils.resetTeacherReviewForReopen({
     status: "graded",

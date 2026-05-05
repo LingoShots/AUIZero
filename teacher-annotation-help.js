@@ -38,11 +38,10 @@
   }
 
   function shortLabel(label) {
-    return String(label || "Custom code")
-      .split(":")[0]
-      .replace(/^Wrong\s+/i, "")
-      .replace(/^Missing\s+/i, "")
-      .trim();
+    if (window.ReviewUtils?.formatAnnotationShortLabel) {
+      return window.ReviewUtils.formatAnnotationShortLabel(label);
+    }
+    return String(label || "Custom code").split(":")[0].trim();
   }
 
   function isVisible(element) {

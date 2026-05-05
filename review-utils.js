@@ -92,6 +92,19 @@
     };
   }
 
+  function formatAnnotationShortLabel(label) {
+    const cleaned = String(label || "Custom code").split(":")[0].trim();
+    return cleaned || "Custom code";
+  }
+
+  function getPlaybackOperationCount(event) {
+    if (!event || event.type === "paste" || event.type === "delete") return 1;
+    if (event.type === "replace") {
+      return Math.max(1, 1 + String(event.insertedText || "").length);
+    }
+    return Math.max(1, String(event.removedText || "").length + String(event.insertedText || "").length);
+  }
+
   function findClosestBand(criterion, desiredPoints) {
     const bands = getCriterionBands(criterion);
     if (!bands.length) return null;
@@ -189,6 +202,8 @@
     getStudentSelfAssessmentRowScoreMap,
     getStudentSelfAssessmentCompletion,
     resetTeacherReviewForReopen,
+    formatAnnotationShortLabel,
+    getPlaybackOperationCount,
     findClosestBand,
     calculateTeacherReviewSummary,
     buildCriterionAnalytics,

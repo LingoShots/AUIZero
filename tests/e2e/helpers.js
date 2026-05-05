@@ -181,16 +181,8 @@ async function completeStudentDraftFlow(page) {
   await page.getByPlaceholder(/start your draft here/i).fill(draftText);
   console.log("[STUDENT FLOW CHECKPOINT] draft filled");
 
-  // Scope this by step because the draft and feedback "Next" buttons can both
-  // exist in the DOM, even when only one is visible. Saving follows the real user
-  // path and triggers the re-render that clears the disabled attribute.
-  await page.locator('button[data-action="save-draft"]').click();
-  console.log("[STUDENT FLOW CHECKPOINT] draft saved");
-
-  const draftNext = page.locator('button[data-action="student-next-step"][data-step="3"]');
-  await expect(draftNext).toBeEnabled({ timeout: 30_000 });
-  await draftNext.click();
-  console.log("[STUDENT FLOW CHECKPOINT] draft next clicked");
+  await page.locator('button[data-action="save-draft-and-next"]').click();
+  console.log("[STUDENT FLOW CHECKPOINT] draft saved and next clicked");
   const feedbackModalButton = page.getByRole("button", { name: /yes, get ai feedback/i });
   const feedbackModalAppeared = await feedbackModalButton.waitFor({ state: "visible", timeout: 10_000 })
     .then(() => true)
@@ -202,7 +194,7 @@ async function completeStudentDraftFlow(page) {
   } else {
     console.log("[STUDENT FLOW CHECKPOINT] draft feedback modal not shown");
   }
-  await expect(page.getByRole("heading", { name: /review feedback and write your final version/i })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: /write your final version and get ai feedback/i })).toBeVisible({ timeout: 30_000 });
   console.log("[STUDENT FLOW CHECKPOINT] feedback/final step opened");
 
   const feedbackCard = page.locator(".feedback-card");
