@@ -11,6 +11,10 @@ const {
   submissionPayloadWithGradedStatus,
   teacherReviewWasNewlySaved,
 } = require('./notification-utils');
+const {
+  sanitizeStudentSubmissionPayload,
+  sanitizeTeacherSubmissionPayload,
+} = require('./submission-sanitizer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app = express();
@@ -1187,30 +1191,6 @@ const ASSIGNMENT_ALLOWED_FIELDS = new Set([
   'class_id',
 ]);
 
-const SUBMISSION_ALLOWED_FIELDS = new Set([
-  'idea_responses',
-  'draft_text',
-  'final_text',
-  'reflections',
-  'outline',
-  'chat_history',
-  'writing_events',
-  'feedback_history',
-  'focus_annotations',
-  'teacher_review',
-  'self_assessment',
-  'status',
-  'chat_started_at',
-  'chat_skipped_at',
-  'chat_expired_at',
-  'chat_elapsed_ms',
-  'started_at',
-  'submitted_at',
-  'keystroke_log',
-  'fluency_summary',
-  'final_unlocked',
-]);
-
 function sanitizePayload(payload = {}, allowedFields = new Set()) {
   return Object.fromEntries(
     Object.entries(payload || {}).filter(([key, value]) => allowedFields.has(key) && value !== undefined)
@@ -1219,10 +1199,6 @@ function sanitizePayload(payload = {}, allowedFields = new Set()) {
 
 function sanitizeAssignmentPayload(payload = {}) {
   return sanitizePayload(payload, ASSIGNMENT_ALLOWED_FIELDS);
-}
-
-function sanitizeSubmissionPayload(payload = {}) {
-  return sanitizePayload(payload, SUBMISSION_ALLOWED_FIELDS);
 }
 
 async function assignmentWriteWithFallback(req, writeFn) {
@@ -1557,8 +1533,8 @@ app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
       return res.status(403).json({ error: 'You do not have access to this assignment.' });
     }
 
-    const payload = sanitizeSubmissionPayload(req.body);
-    const submittedAt = payload.submitted_at || new Date().toISOString();
+    const payload = sanitizeStudentSubmissionPayload(req.body);
+    const submittedAt = new Date().toISOString();
     const nextPayload = {
       ...payload,
       status: 'submitted',
@@ -1631,7 +1607,7 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
     const enrolledStudent = await ensureStudentBelongsToClass(ownedAssignment.class_id, studentId, readClient);
     if (!enrolledStudent) return res.status(400).json({ error: 'That student is not enrolled in this class.' });
     const payload = submissionPayloadWithGradedStatus({
-      ...sanitizeSubmissionPayload(req.body),
+      ...sanitizeTeacherSubmissionPayload(req.body),
       updated_at: new Date().toISOString(),
     });
 
@@ -1717,12 +1693,20 @@ app.patch('/api/submissions/:id', async (req, res) => {
         return res.status(403).json({ error: 'You do not have permission to update this submission.' });
       }
     }
+    const isStudentOwner = submission.student_id === user.id;
+    const payload = isStudentOwner
+      ? {
+          ...sanitizeStudentSubmissionPayload(req.body),
+          updated_at: new Date().toISOString(),
+        }
+      : submissionPayloadWithGradedStatus({
+          ...sanitizeTeacherSubmissionPayload(req.body),
+          updated_at: new Date().toISOString(),
+        });
+
     const { data, error } = await submissionWriteWithFallback(req, (client) => client
       .from('submissions')
-      .update(submissionPayloadWithGradedStatus({
-        ...sanitizeSubmissionPayload(req.body),
-        updated_at: new Date().toISOString(),
-      }))
+      .update(payload)
       .eq('id', req.params.id)
       .select('*, profiles(id, name)')
       .single());
