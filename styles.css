@@ -1426,9 +1426,11 @@ button.rubric-level-cell:hover {
 .paste-highlight {
   background: #e9d0f7;
   border-bottom: 2px solid #9b4dca;
+  box-shadow: inset 0 0 0 1px rgba(155, 77, 202, 0.38);
   color: inherit;
   border-radius: 2px;
   cursor: help;
+  scroll-margin-top: 120px;
 }
 
 .paste-evidence-panel {

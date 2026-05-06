@@ -3386,9 +3386,9 @@ if (action === "select-assignment") {
     render();
 
     requestAnimationFrame(() => {
-      const reviewSection = document.getElementById("teacher-review-section");
-      if (reviewSection) {
-        reviewSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      const reviewList = document.getElementById("student-review-list");
+      if (reviewList) {
+        reviewList.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
 
@@ -5404,6 +5404,7 @@ function renderTeacherReview(assignment, submissions) {
     s => Array.isArray(s.writingEvents) && s.writingEvents.some((entry) => isPasteLikeWritingEvent(entry))
   ).length;
   const criterionAnalytics = buildCriterionAnalytics(assignment, submissions.filter((submission) => SubmissionUtils.isSubmissionGraded(submission)));
+  const hasCriterionAnalytics = criterionAnalytics.some((criterion) => criterion.gradedCount > 0);
 
   return `
         <section id="teacher-review-section" class="panel review-shell">
@@ -5432,43 +5433,43 @@ function renderTeacherReview(assignment, submissions) {
         </div>
       </div>
 
-      <div id="teacher-review-panel" class="teacher-ready-card" style="margin-bottom:18px;">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px;">
-          <div>
-            <p class="mini-label" style="margin-bottom:4px;">Grade analytics</p>
-            <p class="subtle">After you grade a class set, this shows where students collectively struggled on each criterion.</p>
-          </div>
+      <details id="teacher-review-panel" class="teacher-ready-card" style="margin-bottom:18px;">
+        <summary style="cursor:pointer;list-style-position:inside;">
+          <span class="mini-label" style="margin-right:8px;">Grade analytics</span>
           <span class="pill">${gradedCount} graded so far</span>
-        </div>
-        ${criterionAnalytics.some((criterion) => criterion.gradedCount > 0) ? `
-          <div style="display:grid;gap:10px;">
-            ${criterionAnalytics.map((criterion) => `
-              <div style="border:1px solid var(--line);border-radius:14px;padding:14px;background:#fbfdff;">
-                <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
-                  <div>
-                    <strong style="display:block;margin-bottom:4px;">${escapeHtml(criterion.criterionName)}</strong>
-                    <span class="subtle">Average ${criterion.averageScore.toFixed(1)}/${criterion.maxPoints}</span>
-                  </div>
-                  <span class="pill">${criterion.gradedCount} graded</span>
-                </div>
-                <div style="display:grid;gap:8px;">
-                  ${criterion.distribution.map((band) => `
-                    <div style="display:grid;grid-template-columns:minmax(160px,220px) minmax(0,1fr) auto;gap:10px;align-items:center;">
-                      <span class="rubric-level-legend-chip" style="width:100%;background:${levelTheme(band.label).badge};color:${levelTheme(band.label).text};">${escapeHtml(band.label)} · ${band.points}</span>
-                      <div style="height:12px;border-radius:999px;background:#e9eff9;overflow:hidden;">
-                        <div style="height:100%;width:${band.count ? Math.max(6, Math.round(band.share * 100)) : 0}%;background:linear-gradient(90deg,var(--accent),#9fc0ff);border-radius:inherit;"></div>
-                      </div>
-                      <span class="subtle">${band.count}</span>
+        </summary>
+        <div style="margin-top:12px;">
+          <p class="subtle" style="margin:0 0 12px;">After you grade a class set, this shows where students collectively struggled on each criterion.</p>
+          ${hasCriterionAnalytics ? `
+            <div style="display:grid;gap:10px;">
+              ${criterionAnalytics.map((criterion) => `
+                <div style="border:1px solid var(--line);border-radius:14px;padding:14px;background:#fbfdff;">
+                  <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+                    <div>
+                      <strong style="display:block;margin-bottom:4px;">${escapeHtml(criterion.criterionName)}</strong>
+                      <span class="subtle">Average ${criterion.averageScore.toFixed(1)}/${criterion.maxPoints}</span>
                     </div>
-                  `).join("")}
+                    <span class="pill">${criterion.gradedCount} graded</span>
+                  </div>
+                  <div style="display:grid;gap:8px;">
+                    ${criterion.distribution.map((band) => `
+                      <div style="display:grid;grid-template-columns:minmax(160px,220px) minmax(0,1fr) auto;gap:10px;align-items:center;">
+                        <span class="rubric-level-legend-chip" style="width:100%;background:${levelTheme(band.label).badge};color:${levelTheme(band.label).text};">${escapeHtml(band.label)} · ${band.points}</span>
+                        <div style="height:12px;border-radius:999px;background:#e9eff9;overflow:hidden;">
+                          <div style="height:100%;width:${band.count ? Math.max(6, Math.round(band.share * 100)) : 0}%;background:linear-gradient(90deg,var(--accent),#9fc0ff);border-radius:inherit;"></div>
+                        </div>
+                        <span class="subtle">${band.count}</span>
+                      </div>
+                    `).join("")}
+                  </div>
                 </div>
-              </div>
-            `).join("")}
-          </div>
-        ` : `<div class="empty-state compact-empty"><h3>No analytics yet</h3><p>Once you save some grades, the criterion distributions will appear here automatically.</p></div>`}
-      </div>
+              `).join("")}
+            </div>
+          ` : `<div class="empty-state compact-empty"><h3>No analytics yet</h3><p>Once you save some grades, the criterion distributions will appear here automatically.</p></div>`}
+        </div>
+      </details>
 
-      <div class="student-list">
+      <div id="student-review-list" class="student-list">
         ${roster.length === 0 && submissions.length === 0
           ? `<div class="empty-state compact-empty"><h3>No students yet</h3><p>Invite students to this class using the ✉ Invite students button.</p></div>`
           : roster.map(member => {
@@ -8568,6 +8569,18 @@ function getPasteEvidenceItems(submission) {
     if (start !== -1) {
       searchStarts.set(pastedText, start + Math.max(pastedText.length, 1));
     }
+    let highlightStart = start;
+    let highlightEnd = start === -1 ? -1 : start + pastedText.length;
+    let foundApproximate = false;
+    if (start === -1 && startHint >= 0 && text.length && pastedText) {
+      const candidate = text.slice(startHint);
+      const sample = candidate.slice(0, Math.min(120, candidate.length));
+      if (sample && pastedText.startsWith(sample)) {
+        highlightStart = startHint;
+        highlightEnd = text.length;
+        foundApproximate = true;
+      }
+    }
     return {
       id,
       event,
@@ -8576,16 +8589,19 @@ function getPasteEvidenceItems(submission) {
       timestamp: event.timestamp || submission?.updatedAt || new Date().toISOString(),
       charCount: pastedText.length,
       preview: trimTo(pastedText.replace(/\s+/g, " ").trim(), 180),
-      excerpt: window.PasteEvidenceUtils?.buildBoundaryExcerpt
-        ? window.PasteEvidenceUtils.buildBoundaryExcerpt(pastedText)
+      excerpt: window.PasteEvidenceUtils?.buildStartExcerpt
+        ? window.PasteEvidenceUtils.buildStartExcerpt(pastedText)
         : {
-            start: trimTo(pastedText.replace(/\s+/g, " ").trim(), 180),
-            end: "",
+            preview: trimTo(pastedText.replace(/\s+/g, " ").trim(), 180),
             truncated: pastedText.length > 180,
           },
       start,
       end: start === -1 ? -1 : start + pastedText.length,
       foundExact: start !== -1,
+      foundApproximate,
+      canHighlight: start !== -1 || foundApproximate,
+      highlightStart,
+      highlightEnd,
     };
   });
 }
@@ -8620,15 +8636,9 @@ function renderPasteEvidencePanel(submission) {
             </div>
             <div class="paste-evidence-excerpts">
               <div>
-                <p class="mini-label">Starts</p>
-                <p>${escapeHtml(item.excerpt?.start || "(blank insert)")}</p>
+                <p class="mini-label">Preview</p>
+                <p>${escapeHtml(item.excerpt?.preview || "(blank insert)")}</p>
               </div>
-              ${item.excerpt?.truncated ? `
-                <div>
-                  <p class="mini-label">Ends</p>
-                  <p>${escapeHtml(item.excerpt?.end || "")}</p>
-                </div>
-              ` : ""}
             </div>
           `;
           return `
@@ -8640,11 +8650,15 @@ function renderPasteEvidencePanel(submission) {
                 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
                   ${item.foundExact
                     ? `<button class="button-ghost" data-action="inspect-paste-flag" data-paste-id="${escapeAttribute(item.id)}" type="button" style="font-size:0.82rem;">Show in student text</button>`
-                    : `<button class="button-ghost" type="button" disabled style="font-size:0.82rem;">Exact text not found</button>`
+                    : item.canHighlight
+                      ? `<button class="button-ghost" data-action="inspect-paste-flag" data-paste-id="${escapeAttribute(item.id)}" type="button" style="font-size:0.82rem;">Show likely matched text</button>`
+                      : `<button class="button-ghost" type="button" disabled style="font-size:0.82rem;">Exact text not found</button>`
                   }
                   <p class="subtle" style="margin:0;">${item.foundExact
                     ? "This exact text is still present in the final submission."
-                    : "This exact text is no longer found in the final submission. It may have been edited, shortened, or removed."
+                    : item.canHighlight
+                      ? "The exact original insert changed, but the final text appears to come from this inserted block."
+                      : "This exact text is no longer found in the final submission. It may have been edited, shortened, or removed."
                   }</p>
                 </div>
                 <p class="mini-label" style="margin-bottom:6px;">Inserted text</p>
@@ -8728,7 +8742,7 @@ function renderAnnotatedText(submission, options = {}) {
   } = options;
   const text = getSubmissionReviewText(submission) || "No text submitted yet.";
   const annotations = submission?.teacherReview?.annotations || [];
-  const pasteEvidenceItems = getPasteEvidenceItems(submission).filter((item) => item.foundExact);
+  const pasteEvidenceItems = getPasteEvidenceItems(submission).filter((item) => item.canHighlight);
 
   const highlights = [];
   const pasteHighlights = [];
@@ -8750,8 +8764,8 @@ function renderAnnotatedText(submission, options = {}) {
   for (const paste of pasteEvidenceItems) {
     const pasteHighlight = {
       id: paste.id,
-      start: paste.start,
-      end: paste.end,
+      start: paste.highlightStart,
+      end: paste.highlightEnd,
       type: "paste",
       annotationIds: [],
       annotationCodes: [],
