@@ -7,6 +7,7 @@ const aiAssistUtils = require("../ai-assist-utils.js");
 const lineNumberUtils = require("../line-number-utils.js");
 const notificationUtils = require("../notification-utils.js");
 const submissionUtils = require("../submission-utils.js");
+const submissionSanitizer = require("../submission-sanitizer.js");
 const submissionRegressionFixture = require("./fixtures/submission-regression-fixture.js");
 
 global.window = global.window || {};
@@ -136,6 +137,42 @@ test("notification utils detect grade saves and reopened submissions", () => {
     }).status,
     "graded"
   );
+});
+
+test("student submission writes cannot overwrite teacher-owned review state", () => {
+  const sanitized = submissionSanitizer.sanitizeStudentSubmissionPayload({
+    draft_text: "Student draft",
+    final_text: "Student final",
+    status: "graded",
+    submitted_at: "2026-05-01T10:00:00.000Z",
+    teacher_review: {
+      status: "graded",
+      savedAt: "2026-05-01T10:00:00.000Z",
+      finalScore: 20,
+    },
+  });
+
+  assert.equal(sanitized.draft_text, "Student draft");
+  assert.equal(sanitized.final_text, "Student final");
+  assert.equal(Object.hasOwn(sanitized, "status"), false);
+  assert.equal(Object.hasOwn(sanitized, "submitted_at"), false);
+  assert.equal(Object.hasOwn(sanitized, "teacher_review"), false);
+});
+
+test("teacher submission writes can update review status and teacher review", () => {
+  const sanitized = submissionSanitizer.sanitizeTeacherSubmissionPayload({
+    status: "graded",
+    submitted_at: "2026-05-01T10:00:00.000Z",
+    teacher_review: {
+      status: "graded",
+      savedAt: "2026-05-01T10:00:00.000Z",
+      finalScore: 20,
+    },
+  });
+
+  assert.equal(sanitized.status, "graded");
+  assert.equal(sanitized.submitted_at, "2026-05-01T10:00:00.000Z");
+  assert.equal(sanitized.teacher_review.finalScore, 20);
 });
 
 test("rubric mismatch regression uses parsed criteria total instead of stale declared total", () => {
