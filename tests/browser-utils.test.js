@@ -5,6 +5,7 @@ const deadlineUtils = require("../deadline-utils.js");
 const storageUtils = require("../storage-utils.js");
 const aiAssistUtils = require("../ai-assist-utils.js");
 const lineNumberUtils = require("../line-number-utils.js");
+const notificationUtils = require("../notification-utils.js");
 const submissionUtils = require("../submission-utils.js");
 const submissionRegressionFixture = require("./fixtures/submission-regression-fixture.js");
 
@@ -85,6 +86,42 @@ test("AI action buttons are disabled while requests are pending", () => {
     disabled: false,
     label: "Get AI feedback (1/2)",
   });
+});
+
+test("notification utils normalize password reset redirects", () => {
+  assert.equal(
+    notificationUtils.appendResetQuery("https://auizero-production.up.railway.app/?reset=1"),
+    "https://auizero-production.up.railway.app/?reset=1"
+  );
+  assert.equal(
+    notificationUtils.appendResetQuery("https://auizero-production.up.railway.app"),
+    "https://auizero-production.up.railway.app/?reset=1"
+  );
+});
+
+test("notification utils detect grade saves and reopened submissions", () => {
+  assert.equal(
+    notificationUtils.teacherReviewWasNewlySaved(
+      { savedAt: "2026-05-01T09:00:00.000Z" },
+      { savedAt: "2026-05-01T10:00:00.000Z" }
+    ),
+    true
+  );
+  assert.equal(
+    notificationUtils.teacherReviewWasNewlySaved(
+      { savedAt: "2026-05-01T09:00:00.000Z" },
+      { savedAt: "2026-05-01T09:00:00.000Z" }
+    ),
+    false
+  );
+  assert.equal(
+    notificationUtils.submissionWasReopened({ status: "submitted" }, { status: "draft" }),
+    true
+  );
+  assert.equal(
+    notificationUtils.submissionWasReopened({ status: "draft" }, { status: "draft" }),
+    false
+  );
 });
 
 test("rubric mismatch regression uses parsed criteria total instead of stale declared total", () => {
