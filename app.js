@@ -64,6 +64,14 @@ function isSubmissionDebugEnabled() {
   }
 }
 
+function isEmailDebugEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).get("debug") === "email";
+  } catch (_) {
+    return false;
+  }
+}
+
 const BASE_ERROR_CODES = [
   { code: "CS",  label: "Comma splice: two complete sentences joined with only a comma" },
   { code: "RO",  label: "Run-on: two or more sentences run together without correct punctuation" },
@@ -169,6 +177,7 @@ const ui = {
   pendingFinalScoreOverride: null,
   reopenSubmissionPrompt: null,
   latestSubmissionDebug: null,
+  latestEmailDebug: null,
 };
 
 let state = { assignments: [], submissions: [], users: [] };
@@ -1606,6 +1615,7 @@ function resetAppShellState() {
   ui.adminClassDetail = null;
   ui.adminSelectedAssignmentId = null;
   ui.latestSubmissionDebug = null;
+  ui.latestEmailDebug = null;
   ui.notice = "";
 }
 async function bootApp(profile) {
@@ -2059,6 +2069,21 @@ async function loadSubmissionDebugState(assignmentId = ui.selectedStudentAssignm
   } catch (error) {
     ui.latestSubmissionDebug = { error: error.message, checkedAt: new Date().toISOString() };
     return ui.latestSubmissionDebug;
+  }
+}
+
+async function loadEmailDebugState(assignmentId = ui.selectedAssignmentId, studentId = ui.selectedReviewStudentId) {
+  if (!assignmentId || !studentId || !(currentProfile?.role === "teacher" || isAdminTeacherView())) return null;
+  try {
+    const params = new URLSearchParams({ assignmentId, studentId });
+    const result = await Auth.apiFetch(`/api/notifications/diagnose-submission?${params.toString()}`);
+    ui.latestEmailDebug = result?.error
+      ? { error: result.error, checkedAt: new Date().toISOString() }
+      : result;
+    return ui.latestEmailDebug;
+  } catch (error) {
+    ui.latestEmailDebug = { error: error.message, checkedAt: new Date().toISOString() };
+    return ui.latestEmailDebug;
   }
 }
 
@@ -2926,6 +2951,12 @@ if (action === "switch-class") {
     return;
   }
 
+  if (action === "refresh-email-debug") {
+    await loadEmailDebugState(ui.selectedAssignmentId, ui.selectedReviewStudentId);
+    render();
+    return;
+  }
+
   if (action === "create-class") {
     ui.showClassModal = true;
     ui.classModalName = "";
@@ -3689,6 +3720,9 @@ if (action === "select-assignment") {
     ui.playback.index = 0;
     ui.playback.touched = false;
     ui.notice = "";
+    if (isEmailDebugEnabled()) {
+      await loadEmailDebugState(ui.selectedAssignmentId, ui.selectedReviewStudentId);
+    }
     render();
     return;
   }
@@ -3703,6 +3737,9 @@ if (action === "select-assignment") {
     ui.playback.index = 0;
     ui.playback.touched = false;
     ui.notice = "";
+    if (isEmailDebugEnabled()) {
+      await loadEmailDebugState(ui.selectedAssignmentId, ui.selectedReviewStudentId);
+    }
     render();
     return;
   }
@@ -3717,6 +3754,9 @@ if (action === "select-assignment") {
     ui.playback.index = 0;
     ui.playback.touched = false;
     ui.notice = "";
+    if (isEmailDebugEnabled()) {
+      await loadEmailDebugState(ui.selectedAssignmentId, ui.selectedReviewStudentId);
+    }
     render();
     return;
   }
@@ -5685,6 +5725,7 @@ function renderTeacherGrading(assignment, submission) {
             ` : ""}
           </div>
           
+          ${renderEmailDebugPanel(assignment, submission)}
           ${renderWritingBehaviour(submission, assignment)}
           ${renderPasteEvidencePanel(submission)}
           ${renderWritingTimeNote(submission)}
@@ -6046,6 +6087,23 @@ function renderSubmissionDebugPanel(assignment, submission) {
         </div>
       </div>
       <button class="button-ghost" data-action="refresh-submission-debug" style="margin-top:10px;">Refresh debug</button>
+    </details>
+  `;
+}
+
+function renderEmailDebugPanel(assignment, submission) {
+  if (!isEmailDebugEnabled()) return "";
+  const latest = ui.latestEmailDebug || { note: "Email diagnostic has not loaded yet." };
+  return `
+    <details class="teacher-ready-card" open style="border-color:#0ea5e9;background:#f0f9ff;margin:14px 0;">
+      <summary style="cursor:pointer;font-weight:800;color:#075985;">Email diagnostics</summary>
+      <p class="subtle" style="margin:8px 0;">Temporary diagnostic. This checks config, recipient lookup, current submission state, notification guards, and idempotency keys.</p>
+      <div class="pill-row" style="margin-bottom:8px;">
+        <span class="pill">Assignment: ${escapeHtml(assignment?.id || "")}</span>
+        <span class="pill">Student: ${escapeHtml(submission?.studentId || "")}</span>
+      </div>
+      <pre style="white-space:pre-wrap;word-break:break-word;font-size:0.75rem;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;">${escapeHtml(JSON.stringify(latest, null, 2))}</pre>
+      <button class="button-ghost" data-action="refresh-email-debug" style="margin-top:10px;">Refresh email diagnostics</button>
     </details>
   `;
 }

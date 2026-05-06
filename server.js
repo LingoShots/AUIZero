@@ -196,6 +196,14 @@ function canSendNotificationEmails() {
   return Boolean(RESEND_API_KEY && NOTIFY_FROM_EMAIL);
 }
 
+function maskEmail(email = '') {
+  const value = String(email || '').trim();
+  const [name, domain] = value.split('@');
+  if (!name || !domain) return value ? 'configured' : '';
+  const visibleName = name.length <= 2 ? `${name[0] || ''}*` : `${name.slice(0, 2)}***${name.slice(-1)}`;
+  return `${visibleName}@${domain}`;
+}
+
 function validatePasswordStrength(password) {
   const value = String(password || '');
   if (value.length < 8) {
@@ -251,6 +259,16 @@ async function sendEmail({ to, subject, html, text, idempotencyKey }) {
     console.warn(`Email skipped for "${subject || 'untitled email'}": ${to ? 'email configuration missing' : 'recipient missing'}`);
     return { skipped: true };
   }
+  const recipients = Array.isArray(to) ? to : [to];
+  console.info('[EMAIL DIAG] Sending email', {
+    subject,
+    recipients: recipients.map(maskEmail),
+    recipientCount: recipients.length,
+    idempotencyKey: idempotencyKey || null,
+    hasResendApiKey: Boolean(RESEND_API_KEY),
+    hasFromEmail: Boolean(NOTIFY_FROM_EMAIL),
+    from: maskEmail(NOTIFY_FROM_EMAIL),
+  });
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -260,7 +278,7 @@ async function sendEmail({ to, subject, html, text, idempotencyKey }) {
     },
     body: JSON.stringify({
       from: NOTIFY_FROM_EMAIL,
-      to: Array.isArray(to) ? to : [to],
+      to: recipients,
       subject,
       html,
       text,
@@ -268,10 +286,19 @@ async function sendEmail({ to, subject, html, text, idempotencyKey }) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    console.error('[EMAIL DIAG] Resend rejected email', {
+      subject,
+      status: response.status,
+      payload,
+      recipients: recipients.map(maskEmail),
+    });
     throw new Error(payload?.message || payload?.error || `Email send failed with status ${response.status}`);
   }
-  const recipientCount = Array.isArray(to) ? to.length : 1;
-  console.info(`Email sent for "${subject}" to ${recipientCount} recipient${recipientCount === 1 ? "" : "s"}.`);
+  const recipientCount = recipients.length;
+  console.info(`Email sent for "${subject}" to ${recipientCount} recipient${recipientCount === 1 ? "" : "s"}.`, {
+    resendId: payload?.id || null,
+    recipients: recipients.map(maskEmail),
+  });
   return payload;
 }
 
@@ -303,6 +330,16 @@ async function getAuthUserEmailMap(userIds = []) {
   }));
 
   return emailMap;
+}
+
+function buildEmailConfigDiagnostic() {
+  return {
+    emailEnabled: canSendNotificationEmails(),
+    hasResendApiKey: Boolean(RESEND_API_KEY),
+    hasFromEmail: Boolean(NOTIFY_FROM_EMAIL),
+    from: maskEmail(NOTIFY_FROM_EMAIL),
+    publicBaseUrl: getConfiguredPublicBaseUrl(),
+  };
 }
 
 async function getClassStudentRecipients(classId) {
@@ -390,12 +427,17 @@ async function notifyStudentAboutGradedSubmission({
   previousTeacherReview,
   baseUrl,
 }) {
-  if (
-    !canSendNotificationEmails() ||
-    !assignment?.id ||
-    !submission?.student_id ||
-    !teacherReviewWasNewlySaved(previousTeacherReview, submission.teacher_review)
-  ) {
+  const shouldSend = teacherReviewWasNewlySaved(previousTeacherReview, submission?.teacher_review);
+  if (!canSendNotificationEmails() || !assignment?.id || !submission?.student_id || !shouldSend) {
+    console.info('[EMAIL DIAG] Grade notification skipped', {
+      emailEnabled: canSendNotificationEmails(),
+      assignmentId: assignment?.id || null,
+      studentId: submission?.student_id || null,
+      shouldSend,
+      previousSavedAt: getTeacherReviewSavedAt(previousTeacherReview),
+      nextSavedAt: getTeacherReviewSavedAt(submission?.teacher_review),
+      nextReviewStatus: submission?.teacher_review?.status || null,
+    });
     return;
   }
 
@@ -452,12 +494,16 @@ async function notifyStudentAboutReopenedSubmission({
   submission,
   baseUrl,
 }) {
-  if (
-    !canSendNotificationEmails() ||
-    !assignment?.id ||
-    !submission?.student_id ||
-    !submissionWasReopened(previousSubmission, submission)
-  ) {
+  const shouldSend = submissionWasReopened(previousSubmission, submission);
+  if (!canSendNotificationEmails() || !assignment?.id || !submission?.student_id || !shouldSend) {
+    console.info('[EMAIL DIAG] Reopen notification skipped', {
+      emailEnabled: canSendNotificationEmails(),
+      assignmentId: assignment?.id || null,
+      studentId: submission?.student_id || null,
+      shouldSend,
+      previousStatus: previousSubmission?.status || null,
+      nextStatus: submission?.status || null,
+    });
     return;
   }
 
@@ -507,6 +553,12 @@ async function notifyTeacherAboutStudentSubmission({
   baseUrl,
 }) {
   if (!canSendNotificationEmails() || !assignment?.class_id || !submission?.student_id) {
+    console.info('[EMAIL DIAG] Teacher submission notification skipped', {
+      emailEnabled: canSendNotificationEmails(),
+      assignmentId: assignment?.id || null,
+      classId: assignment?.class_id || null,
+      studentId: submission?.student_id || null,
+    });
     return;
   }
 
@@ -934,6 +986,126 @@ app.post('/api/notifications/test', async (req, res) => {
     });
     res.json({ ok: true, result });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/notifications/diagnose-submission', async (req, res) => {
+  try {
+    const { user, error, status } = await requireTeacherProfile(req);
+    if (error) return res.status(status).json({ error });
+
+    const assignmentId = String(req.query.assignmentId || '').trim();
+    const studentId = String(req.query.studentId || '').trim();
+    if (!assignmentId || !studentId) {
+      return res.status(400).json({ error: 'assignmentId and studentId are required.' });
+    }
+
+    const readClient = getRequestScopedSupabase(req);
+    const assignment = await ensureTeacherOwnsAssignment(assignmentId, user.id, readClient);
+    if (!assignment) return res.status(403).json({ error: 'You can only diagnose your own assignments.' });
+
+    const { data: classRow, error: classError } = await supabase
+      .from('classes')
+      .select('id, name, teacher_id')
+      .eq('id', assignment.class_id)
+      .maybeSingle();
+    if (classError) return res.status(400).json({ error: classError.message });
+
+    const { data: submission, error: submissionError } = await supabase
+      .from('submissions')
+      .select('*, profiles(id, name)')
+      .eq('assignment_id', assignmentId)
+      .eq('student_id', studentId)
+      .maybeSingle();
+    if (submissionError) return res.status(400).json({ error: submissionError.message });
+
+    const emailMap = await getAuthUserEmailMap([studentId, classRow?.teacher_id].filter(Boolean));
+    const studentEmail = emailMap.get(studentId) || '';
+    const teacherEmail = classRow?.teacher_id ? emailMap.get(classRow.teacher_id) || '' : '';
+    const review = submission?.teacher_review || {};
+    const submittedAt = submission?.submitted_at || submission?.submittedAt || '';
+    const gradeSavedAt = getTeacherReviewSavedAt(review);
+
+    const teacherSubmissionKey = makeIdempotencyKey([
+      'student-submitted',
+      assignment.id,
+      studentId,
+      submittedAt || submission?.updated_at || new Date().toISOString(),
+    ]);
+    const gradeKey = makeIdempotencyKey([
+      'grade-published',
+      assignment.id,
+      studentId,
+      gradeSavedAt,
+    ]);
+    const reopenKey = makeIdempotencyKey([
+      'submission-reopened',
+      assignment.id,
+      studentId,
+      submission?.updated_at || new Date().toISOString(),
+    ]);
+
+    res.json({
+      checkedAt: new Date().toISOString(),
+      config: buildEmailConfigDiagnostic(),
+      assignment: {
+        id: assignment.id,
+        title: assignment.title,
+        status: assignment.status,
+        classId: assignment.class_id,
+      },
+      class: classRow ? {
+        id: classRow.id,
+        name: classRow.name,
+        teacherId: classRow.teacher_id,
+      } : null,
+      submission: submission ? {
+        id: submission.id,
+        studentId: submission.student_id,
+        studentName: submission.profiles?.name || '',
+        status: submission.status,
+        submittedAt,
+        updatedAt: submission.updated_at,
+        teacherReview: {
+          status: review.status || null,
+          savedAt: gradeSavedAt || null,
+          finalScore: review.finalScore ?? review.final_score ?? null,
+          finalNotesLength: String(review.finalNotes || review.final_notes || '').length,
+        },
+      } : null,
+      recipients: {
+        teacher: {
+          id: classRow?.teacher_id || null,
+          hasEmail: Boolean(teacherEmail),
+          email: maskEmail(teacherEmail),
+        },
+        student: {
+          id: studentId,
+          hasEmail: Boolean(studentEmail),
+          email: maskEmail(studentEmail),
+        },
+      },
+      decisions: {
+        teacherSubmission: {
+          wouldAttempt: Boolean(canSendNotificationEmails() && assignment?.class_id && submission?.student_id && teacherEmail),
+          idempotencyKey: teacherSubmissionKey,
+        },
+        studentGrade: {
+          wouldAttemptIfPreviousEmpty: Boolean(canSendNotificationEmails() && assignment?.id && submission?.student_id && studentEmail && teacherReviewWasNewlySaved(null, review)),
+          wouldAttemptIfPreviousSame: Boolean(canSendNotificationEmails() && assignment?.id && submission?.student_id && studentEmail && teacherReviewWasNewlySaved(review, review)),
+          currentReviewWouldTriggerFromEmpty: teacherReviewWasNewlySaved(null, review),
+          idempotencyKey: gradeKey,
+        },
+        studentReopen: {
+          wouldAttemptIfPreviousGraded: Boolean(canSendNotificationEmails() && assignment?.id && submission?.student_id && studentEmail && submissionWasReopened({ status: 'graded' }, submission)),
+          currentStatusWouldTriggerFromGraded: submissionWasReopened({ status: 'graded' }, submission),
+          idempotencyKey: reopenKey,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Email notification diagnostic failed:', error);
     res.status(500).json({ error: error.message });
   }
 });
