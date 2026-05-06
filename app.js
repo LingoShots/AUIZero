@@ -1177,6 +1177,21 @@ function syncDraftFeedbackButtons() {
   });
 }
 
+function getRemainingStudentFeedbackChecks(assignment, submission) {
+  const limit = Number(assignment?.feedbackRequestLimit ?? 0);
+  const used = Number(submission?.feedbackHistory?.length || 0);
+  return {
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+  };
+}
+
+function shouldPromptForFinalDraftFeedback(assignment, submission) {
+  const { remaining } = getRemainingStudentFeedbackChecks(assignment, submission);
+  return remaining > 0 && !ui.draftFeedbackLoading;
+}
+
 function inferTeacherBriefSettings(text = "") {
   const brief = String(text || "");
   const inferred = {};
@@ -3183,8 +3198,10 @@ if (action === "sign-out") {
 
   if (action === "continue-without-feedback") {
     ui.showDraftFeedbackPrompt = false;
-    rememberStudentStep(3);
-    ui.notice = "";
+    if (canAdvanceToStep(4)) {
+      rememberStudentStep(4);
+      ui.notice = "";
+    }
     render();
     return;
   }
@@ -3423,6 +3440,23 @@ if (action === "select-assignment") {
         persistState();
       }
   
+    }
+    if (nextStep === 4) {
+      const assignment = getStudentAssignment();
+      const finalEditor = document.getElementById("final-editor");
+      if (submission && finalEditor) {
+        submission.finalText = finalEditor.value;
+        submission.updatedAt = new Date().toISOString();
+        persistState();
+        scheduleSubmissionSync();
+        scheduleAutoSave();
+      }
+      if (shouldPromptForFinalDraftFeedback(assignment, submission)) {
+        ui.showDraftFeedbackPrompt = true;
+        ui.notice = "";
+        render();
+        return;
+      }
     }
     if (canAdvanceToStep(nextStep)) {
       if (ui.studentStep === 1 && nextStep !== 1) {
@@ -4623,8 +4657,7 @@ function renderDraftFeedbackModal() {
   if (!ui.showDraftFeedbackPrompt) return "";
   const assignment = getStudentAssignment();
   const submission = getStudentSubmission();
-  const used = Number(submission?.feedbackHistory?.length || 0);
-  const limit = Number(assignment?.feedbackRequestLimit || 0);
+  const { used, limit, remaining } = getRemainingStudentFeedbackChecks(assignment, submission);
   const feedbackButton = getStudentFeedbackButtonState({
     loading: ui.draftFeedbackLoading,
     feedbackUsed: used,
@@ -4634,10 +4667,10 @@ function renderDraftFeedbackModal() {
     <div style="position:fixed;inset:0;background:rgba(10,18,33,0.38);z-index:1000;display:grid;place-items:center;padding:20px;">
       <div style="background:rgba(255,255,255,0.96);border:1px solid var(--line);border-radius:20px;padding:28px;max-width:520px;width:100%;box-shadow:0 20px 50px rgba(21,39,74,0.16);backdrop-filter:blur(16px);">
         <p class="mini-label" style="margin-bottom:6px;">Before you finish</p>
-        <h3 style="margin:0 0 8px;">Do you want AI draft feedback first?</h3>
-        <p class="subtle" style="margin:0 0 16px;">You still have ${Math.max(0, limit - used)} of ${limit} draft feedback check${limit === 1 ? "" : "s"} available. AI feedback can point out places to improve before you move to the final step.</p>
+        <h3 style="margin:0 0 8px;">Get AI feedback first?</h3>
+        <p class="subtle" style="margin:0 0 16px;">You still have ${remaining} of ${limit} AI feedback check${limit === 1 ? "" : "s"} available. Feedback can point out places to improve before self-assessment and submission.</p>
         <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
-          <button class="button-ghost" data-action="continue-without-feedback">No, continue</button>
+          <button class="button-ghost" data-action="continue-without-feedback">Continue without feedback</button>
           <button class="button-secondary" data-action="prompt-request-feedback" ${feedbackButton.disabled ? "disabled" : ""}>${ui.draftFeedbackLoading ? "Checking…" : "Yes, get AI feedback"}</button>
         </div>
       </div>
