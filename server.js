@@ -4,6 +4,12 @@ const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
 const { parseRubricBuffer, parseRubricText } = require('./rubricParser');
+const {
+  appendResetQuery,
+  getTeacherReviewSavedAt,
+  submissionWasReopened,
+  teacherReviewWasNewlySaved,
+} = require('./notification-utils');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app = express();
@@ -360,16 +366,6 @@ async function notifyStudentsAboutAssignment({
   }));
 }
 
-function getTeacherReviewSavedAt(review) {
-  return String(review?.savedAt || review?.saved_at || '').trim();
-}
-
-function teacherReviewWasNewlySaved(previousReview, nextReview) {
-  const nextSavedAt = getTeacherReviewSavedAt(nextReview);
-  if (!nextSavedAt) return false;
-  return nextSavedAt !== getTeacherReviewSavedAt(previousReview);
-}
-
 async function notifyStudentAboutGradedSubmission({
   assignment,
   submission,
@@ -425,6 +421,117 @@ async function notifyStudentAboutGradedSubmission({
       assignment.id,
       submission.student_id,
       getTeacherReviewSavedAt(submission.teacher_review),
+    ]),
+  });
+}
+
+async function notifyStudentAboutReopenedSubmission({
+  assignment,
+  previousSubmission,
+  submission,
+  baseUrl,
+}) {
+  if (
+    !canSendNotificationEmails() ||
+    !assignment?.id ||
+    !submission?.student_id ||
+    !submissionWasReopened(previousSubmission, submission)
+  ) {
+    return;
+  }
+
+  const emailMap = await getAuthUserEmailMap([submission.student_id]);
+  const studentEmail = emailMap.get(submission.student_id);
+  if (!studentEmail) return;
+
+  const studentName = submission.profiles?.name || 'Student';
+  const safeStudentName = escapeHtmlEmail(studentName);
+  const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
+  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
+  const buttonHtml = safeBaseUrl
+    ? `<p><a href="${escapeHtmlEmail(safeBaseUrl)}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#4c6fe7;color:#ffffff;text-decoration:none;font-weight:600;">Open assignment</a></p>`
+    : '';
+  const accessLine = safeBaseUrl
+    ? `Open praxis here: ${safeBaseUrl}`
+    : `Open praxis from your usual class link to edit and resubmit.`;
+
+  await sendEmail({
+    to: studentEmail,
+    subject: `Assignment reopened: ${assignment.title || 'Assignment'}`,
+    html: `
+      <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
+        <p>Hi ${safeStudentName},</p>
+        <p>Your teacher has reopened <strong>${safeTitle}</strong>.</p>
+        <p>You can edit your work and submit it again. Your existing work is still saved.</p>
+        ${buttonHtml}
+      </div>
+    `,
+    text: `Hi ${studentName},\n\nYour teacher has reopened "${assignment.title || 'Assignment'}". You can edit your work and submit it again. Your existing work is still saved.\n\n${accessLine}`,
+    idempotencyKey: makeIdempotencyKey([
+      'submission-reopened',
+      assignment.id,
+      submission.student_id,
+      submission.updated_at || submission.updatedAt || new Date().toISOString(),
+    ]),
+  });
+}
+
+async function notifyTeacherAboutStudentSubmission({
+  assignment,
+  submission,
+  baseUrl,
+}) {
+  if (!canSendNotificationEmails() || !assignment?.class_id || !submission?.student_id) {
+    return;
+  }
+
+  const { data: classRow, error: classError } = await supabase
+    .from('classes')
+    .select('id, name, teacher_id')
+    .eq('id', assignment.class_id)
+    .maybeSingle();
+  if (classError) throw classError;
+  if (!classRow?.teacher_id) return;
+
+  const emailMap = await getAuthUserEmailMap([classRow.teacher_id]);
+  const teacherEmail = emailMap.get(classRow.teacher_id);
+  if (!teacherEmail) return;
+
+  const studentName = submission.profiles?.name || 'A student';
+  const safeStudentName = escapeHtmlEmail(studentName);
+  const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
+  const safeClassName = escapeHtmlEmail(classRow.name || 'your class');
+  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
+  const submittedAt = formatDeadline(submission.submitted_at || submission.submittedAt || new Date().toISOString());
+  const submittedLine = submittedAt
+    ? `<p><strong>Submitted:</strong> ${escapeHtmlEmail(submittedAt)}</p>`
+    : '';
+  const textSubmittedLine = submittedAt ? `Submitted: ${submittedAt}\n` : '';
+  const buttonHtml = safeBaseUrl
+    ? `<p><a href="${escapeHtmlEmail(safeBaseUrl)}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#4c6fe7;color:#ffffff;text-decoration:none;font-weight:600;">Open teacher dashboard</a></p>`
+    : '';
+  const accessLine = safeBaseUrl
+    ? `Open praxis here: ${safeBaseUrl}`
+    : `Open praxis from your usual teacher link to review the submission.`;
+
+  await sendEmail({
+    to: teacherEmail,
+    subject: `Student submitted: ${assignment.title || 'Assignment'}`,
+    html: `
+      <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
+        <p>${safeStudentName} submitted <strong>${safeTitle}</strong> in <strong>${safeClassName}</strong>.</p>
+        ${submittedLine}
+        ${buttonHtml}
+      </div>
+    `,
+    text: `${studentName} submitted "${assignment.title || 'Assignment'}" in ${classRow.name || 'your class'}.\n${textSubmittedLine}\n${accessLine}`,
+    idempotencyKey: makeIdempotencyKey([
+      'student-submitted',
+      assignment.id,
+      submission.student_id,
+      submission.submitted_at || submission.submittedAt || submission.updated_at || submission.updatedAt || new Date().toISOString(),
     ]),
   });
 }
@@ -526,7 +633,7 @@ async function ensureUserCanAccessClass(classId, userId, client = supabase) {
 async function ensureStudentCanAccessAssignment(assignmentId, studentId, client = supabase) {
   const { data, error } = await client
     .from('assignments')
-    .select('id, class_id, status')
+    .select('id, class_id, title, status')
     .eq('id', assignmentId)
     .maybeSingle();
   if (error) throw error;
@@ -539,7 +646,7 @@ async function ensureStudentCanAccessAssignment(assignmentId, studentId, client 
 async function getSubmissionRecord(submissionId, client = supabase) {
   const { data, error } = await client
     .from('submissions')
-    .select('id, assignment_id, student_id, teacher_review')
+    .select('id, assignment_id, student_id, status, teacher_review')
     .eq('id', submissionId)
     .maybeSingle();
   if (error) throw error;
@@ -741,7 +848,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email, redirectTo: requestedRedirect } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
-    const redirectTo = `${getPasswordResetBaseUrl(req, requestedRedirect)}/?reset=1`;
+    const redirectTo = appendResetQuery(getPasswordResetBaseUrl(req, requestedRedirect));
     const { error } = await supabaseUserAuth.auth.resetPasswordForEmail(String(email).trim(), {
       redirectTo,
     });
@@ -776,7 +883,7 @@ app.get('/api/notifications/status', async (req, res) => {
       hasResendApiKey: Boolean(RESEND_API_KEY),
       hasFromEmail: Boolean(NOTIFY_FROM_EMAIL),
       publicBaseUrl: getConfiguredPublicBaseUrl(),
-      forgotPasswordRedirectBase: getPasswordResetBaseUrl(req, req.query?.redirectTo),
+      forgotPasswordRedirectTo: appendResetQuery(getPasswordResetBaseUrl(req, req.query?.redirectTo)),
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1455,6 +1562,11 @@ app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
         .select('*, profiles(id, name)')
         .single());
       if (error) return res.status(400).json({ error: error.message });
+      notifyTeacherAboutStudentSubmission({
+        assignment: accessibleAssignment,
+        submission: data,
+        baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+      }).catch((emailError) => console.error('Teacher submission notification email failed:', emailError));
       return res.json({ submission: data });
     }
 
@@ -1469,6 +1581,11 @@ app.post('/api/assignments/:assignmentId/submit', async (req, res) => {
       .select('*, profiles(id, name)')
       .single());
     if (error) return res.status(400).json({ error: error.message });
+    notifyTeacherAboutStudentSubmission({
+      assignment: accessibleAssignment,
+      submission: data,
+      baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+    }).catch((emailError) => console.error('Teacher submission notification email failed:', emailError));
     res.json({ submission: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1493,7 +1610,7 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
     const submissionClient = readClient;
     let { data, error } = await submissionClient
       .from('submissions')
-      .select('id, teacher_review')
+      .select('id, status, teacher_review')
       .eq('assignment_id', assignmentId)
       .eq('student_id', studentId)
       .maybeSingle();
@@ -1514,6 +1631,12 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
         previousTeacherReview: data.teacher_review,
         baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
       }).catch((emailError) => console.error('Grade notification email failed:', emailError));
+      notifyStudentAboutReopenedSubmission({
+        assignment: ownedAssignment,
+        previousSubmission: data,
+        submission: updated,
+        baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+      }).catch((emailError) => console.error('Reopen notification email failed:', emailError));
       return res.json({ submission: updated });
     }
 
@@ -1535,6 +1658,12 @@ app.put('/api/assignments/:assignmentId/students/:studentId/submission', async (
       previousTeacherReview: null,
       baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
     }).catch((emailError) => console.error('Grade notification email failed:', emailError));
+    notifyStudentAboutReopenedSubmission({
+      assignment: ownedAssignment,
+      previousSubmission: null,
+      submission: created,
+      baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+    }).catch((emailError) => console.error('Reopen notification email failed:', emailError));
     res.json({ submission: created });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1570,6 +1699,12 @@ app.patch('/api/submissions/:id', async (req, res) => {
         previousTeacherReview: submission.teacher_review,
         baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
       }).catch((emailError) => console.error('Grade notification email failed:', emailError));
+      notifyStudentAboutReopenedSubmission({
+        assignment: ownedAssignment,
+        previousSubmission: submission,
+        submission: data,
+        baseUrl: getConfiguredPublicBaseUrl() || getRequestBaseUrl(req),
+      }).catch((emailError) => console.error('Reopen notification email failed:', emailError));
     }
     res.json({ submission: data });
   } catch (error) {
