@@ -1877,13 +1877,16 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
     safeArray(localReview.annotations).length ||
     safeArray(localReview.rowScores).length
   );
-  // Detect a server-side reopen: status is back to draft AND server review is empty.
-  // In this case, the teacher explicitly cleared the review and we must not restore
-  // the locally-cached graded review.
-  const serverReopenDetected = server.status === "draft" && !serverHasReview;
+  const serverStatus = String(server.status || "").trim().toLowerCase();
+  const serverReviewStatus = String(serverReview.status || "").trim().toLowerCase();
+  const serverIsOpenForEditing = ["draft", "returned", "reopened"].includes(serverStatus);
+  const serverReviewIsOpen = ["draft", "returned", "reopened", "ungraded", ""].includes(serverReviewStatus);
+  // Detect a server-side reopen. Older reopened rows can still carry annotation
+  // metadata, so do not let old comments make the cached graded state win.
+  const serverReopenDetected = serverIsOpenForEditing && (serverReviewIsOpen || !serverHasReview);
 
   const mergedTeacherReview = serverReopenDetected
-    ? serverReview
+    ? resetTeacherReviewForReopen(serverReview)
     : (serverHasReview || !localHasReview
         ? createDefaultTeacherReview({
             ...localReview,
@@ -1924,7 +1927,7 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
     chatElapsedMs: prefer(server.chatElapsedMs, local.chatElapsedMs, { isEmpty: (value) => value === null || value === undefined || Number(value) === 0 }),
     startedAt: prefer(server.startedAt, local.startedAt),
     submittedAt: prefer(server.submittedAt, local.submittedAt),
-    status: serverReopenDetected ? "draft" : (reviewedStatus || prefer(server.status, local.status, { isEmpty: (value) => !value })),
+    status: serverReopenDetected ? (serverStatus || "draft") : (reviewedStatus || prefer(server.status, local.status, { isEmpty: (value) => !value })),
     teacherReview: mergedTeacherReview,
     updatedAt: serverReopenDetected ? server.updatedAt : (localIsNewer ? local.updatedAt : server.updatedAt),
   });
@@ -2022,6 +2025,7 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
     } else {
       state.submissions.push(mapped);
     }
+    reconcileStudentStepAfterSubmissionRefresh(index >= 0 ? state.submissions[index] : mapped);
     persistState();
     return index >= 0 ? state.submissions[index] : mapped;
   } catch (error) {
@@ -2049,8 +2053,10 @@ async function loadStudentSubmissionsForAssignments(assignmentIds) {
       );
       if (index >= 0) {
         state.submissions[index] = mergeStudentSubmission(state.submissions[index], mapped);
+        reconcileStudentStepAfterSubmissionRefresh(state.submissions[index]);
       } else {
         state.submissions.push(mapped);
+        reconcileStudentStepAfterSubmissionRefresh(mapped);
       }
     });
     persistState();
@@ -6210,7 +6216,7 @@ function renderStudentFinalStep(assignment, submission) {
   const selfAssessmentCompletion = getStudentSelfAssessmentCompletion(rubricSchema, submission);
   const teacherReviewRows = getTeacherReviewRowsForExport(assignment, submission);
 
-  if (submission.teacherReview?.savedAt) {
+  if (isStudentSubmissionLocked(submission) && submission.teacherReview?.savedAt) {
     return `
       <div class="step-card wizard-card">
         <div class="step-head">
@@ -7329,6 +7335,21 @@ function isStudentSubmissionLocked(submission) {
     return false;
   }
   return status === "submitted" || Boolean(submission?.teacherReview?.savedAt);
+}
+
+function reconcileStudentStepAfterSubmissionRefresh(submission) {
+  if (!submission?.assignmentId || submission.studentId !== ui.activeUserId) return;
+  if (isStudentSubmissionLocked(submission)) return;
+  const status = String(submission.status || "").trim().toLowerCase();
+  if (!["draft", "returned", "reopened"].includes(status)) return;
+  const rememberedStep = getRememberedStudentStep(submission.assignmentId);
+  if (rememberedStep === 4) {
+    ui.studentStepOverrides = ui.studentStepOverrides || {};
+    ui.studentStepOverrides[submission.assignmentId] = getStudentStepForSubmission(submission);
+  }
+  if (ui.selectedStudentAssignmentId === submission.assignmentId && ui.studentStep === 4) {
+    ui.studentStep = getStudentStepForSubmission(submission);
+  }
 }
 
 function ensureStudentSubmission() {

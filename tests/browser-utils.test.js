@@ -292,7 +292,7 @@ test("reopened submissions must clear active graded-review lock fields", () => {
   assert.deepEqual(reopenedReview.rowScores, []);
   assert.deepEqual(reopenedReview.suggestedRowScores, []);
   assert.equal(reopenedReview.suggestedGrade, null);
-  assert.equal(reopenedReview.annotations.length, 1);
+  assert.deepEqual(reopenedReview.annotations, []);
 });
 
 test("storage snapshot strips teacher assignments, submissions, and extra users", () => {

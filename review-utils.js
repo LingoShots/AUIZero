@@ -89,6 +89,7 @@
       suggestedGrade: null,
       finalScore: "",
       finalNotes: "",
+      annotations: [],
       savedAt: null,
       acceptedAt: null,
     };
