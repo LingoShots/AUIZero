@@ -269,21 +269,17 @@ async function getAuthUserEmailMap(userIds = []) {
   const emailMap = new Map();
   if (!wantedIds.length) return emailMap;
 
-  let page = 1;
-  const perPage = 1000;
-  while (emailMap.size < wantedIds.length) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
-    if (error) throw error;
-    const users = data?.users || [];
-    if (!users.length) break;
-    for (const authUser of users) {
-      if (wantedIds.includes(authUser.id) && authUser.email) {
-        emailMap.set(authUser.id, authUser.email);
+  await Promise.all(wantedIds.map(async (userId) => {
+    try {
+      const { data, error } = await supabase.auth.admin.getUserById(userId);
+      if (error) throw error;
+      if (data?.user?.email) {
+        emailMap.set(userId, data.user.email);
       }
+    } catch (error) {
+      console.error(`Could not load auth email for user ${userId}:`, error.message || error);
     }
-    if (users.length < perPage) break;
-    page += 1;
-  }
+  }));
 
   return emailMap;
 }
@@ -384,7 +380,10 @@ async function notifyStudentAboutGradedSubmission({
 
   const emailMap = await getAuthUserEmailMap([submission.student_id]);
   const studentEmail = emailMap.get(submission.student_id);
-  if (!studentEmail) return;
+  if (!studentEmail) {
+    console.error(`Grade notification skipped: no auth email found for student ${submission.student_id}`);
+    return;
+  }
 
   const studentName = submission.profiles?.name || 'Student';
   const safeStudentName = escapeHtmlEmail(studentName);
@@ -443,7 +442,10 @@ async function notifyStudentAboutReopenedSubmission({
 
   const emailMap = await getAuthUserEmailMap([submission.student_id]);
   const studentEmail = emailMap.get(submission.student_id);
-  if (!studentEmail) return;
+  if (!studentEmail) {
+    console.error(`Reopen notification skipped: no auth email found for student ${submission.student_id}`);
+    return;
+  }
 
   const studentName = submission.profiles?.name || 'Student';
   const safeStudentName = escapeHtmlEmail(studentName);
@@ -497,7 +499,10 @@ async function notifyTeacherAboutStudentSubmission({
 
   const emailMap = await getAuthUserEmailMap([classRow.teacher_id]);
   const teacherEmail = emailMap.get(classRow.teacher_id);
-  if (!teacherEmail) return;
+  if (!teacherEmail) {
+    console.error(`Submission notification skipped: no auth email found for teacher ${classRow.teacher_id}`);
+    return;
+  }
 
   const studentName = submission.profiles?.name || 'A student';
   const safeStudentName = escapeHtmlEmail(studentName);

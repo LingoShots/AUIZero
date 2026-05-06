@@ -1892,9 +1892,9 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
             annotations: safeArray(serverReview.annotations).length ? serverReview.annotations : localReview.annotations,
           })
         : localReview);
-  const reviewedStatus = ["graded", "late", "missing"].includes(server.status) || Boolean(mergedTeacherReview.savedAt)
+  const reviewedStatus = ["graded", "late", "missing"].includes(server.status)
     ? server.status
-    : "";
+    : (mergedTeacherReview.savedAt ? "graded" : "");
 
   return normalizeSubmission({
     ...server,
