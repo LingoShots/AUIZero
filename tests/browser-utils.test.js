@@ -115,6 +115,13 @@ test("notification utils detect grade saves and reopened submissions", () => {
     false
   );
   assert.equal(
+    notificationUtils.teacherReviewWasNewlySaved(
+      { status: "graded", savedAt: "2026-05-01T09:00:00.000Z", finalScore: 5 },
+      { status: "graded", savedAt: "2026-05-01T09:00:00.000Z", finalScore: 6 }
+    ),
+    true
+  );
+  assert.equal(
     notificationUtils.submissionWasReopened({ status: "submitted" }, { status: "draft" }),
     true
   );

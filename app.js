@@ -1923,9 +1923,9 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
     chatElapsedMs: prefer(server.chatElapsedMs, local.chatElapsedMs, { isEmpty: (value) => value === null || value === undefined || Number(value) === 0 }),
     startedAt: prefer(server.startedAt, local.startedAt),
     submittedAt: prefer(server.submittedAt, local.submittedAt),
-    status: reviewedStatus || prefer(server.status, local.status, { isEmpty: (value) => !value }),
+    status: serverReopenDetected ? "draft" : (reviewedStatus || prefer(server.status, local.status, { isEmpty: (value) => !value })),
     teacherReview: mergedTeacherReview,
-    updatedAt: localIsNewer ? local.updatedAt : server.updatedAt,
+    updatedAt: serverReopenDetected ? server.updatedAt : (localIsNewer ? local.updatedAt : server.updatedAt),
   });
 }
 
