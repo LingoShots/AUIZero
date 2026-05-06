@@ -5586,6 +5586,7 @@ function renderTeacherGrading(assignment, submission) {
           
           ${renderWritingBehaviour(submission, assignment)}
           ${renderPasteEvidencePanel(submission)}
+          ${renderWritingTimeNote(submission)}
           ${renderStudentAiFeedbackEvidence(submission)}
           <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:6px;">Student text</p>
@@ -5666,35 +5667,6 @@ function renderTeacherGrading(assignment, submission) {
 
         <div class="review-card">
 
-          ${submission.teacherReview?.suggestedGrade ? `
-            <div id="suggested-grade-panel" style="margin-bottom:16px;padding:14px;background:#f4efe6;border-radius:12px;border:1px solid var(--line);">
-              <p class="mini-label" style="margin-bottom:6px;">AI suggested grade</p>
-              <div style="font-size:1.2rem;font-weight:700;margin-bottom:6px;">${submission.teacherReview.suggestedGrade.totalScore}/${submission.teacherReview.suggestedGrade.maxScore}</div>
-              ${safeArray(submission.teacherReview.suggestedGrade.criteria).length ? `
-                <div style="display:grid;gap:6px;margin:0 0 10px;">
-                  ${submission.teacherReview.suggestedGrade.criteria.map((criterion) => `
-                    <div style="display:flex;justify-content:space-between;gap:10px;font-size:0.82rem;padding:8px 10px;background:#fff;border:1px solid var(--line);border-radius:10px;">
-                      <span>${escapeHtml(criterion.name)}</span>
-                      <strong>${escapeHtml(criterion.bandLabel || "Band")} (${criterion.score}/${criterion.points})</strong>
-                    </div>
-                  `).join("")}
-                </div>
-              ` : ""}
-              ${submission.teacherReview.suggestedGrade.studentComment ? `
-                <div style="background:#f0f7ee;border-left:3px solid var(--accent);padding:10px 12px;border-radius:8px;margin-bottom:10px;">
-                  <p class="mini-label" style="margin-bottom:4px;">Suggested student comment</p>
-                  <p style="font-size:0.85rem;margin:0 0 8px;">${escapeHtml(submission.teacherReview.suggestedGrade.studentComment)}</p>
-                  <button class="button-ghost" data-action="use-suggested-comment" style="font-size:0.8rem;">Copy to notes</button>
-                </div>
-              ` : ""}
-              ${renderSuggestedGradeProcessNote(submission)}
-              <div style="display:flex;gap:8px;">
-                <button class="button-secondary" data-action="accept-suggested-grade">Use this score</button>
-                <button class="button-ghost" data-action="ignore-suggested-grade">Ignore</button>
-              </div>
-            </div>
-          ` : ""}
-
             <div style="margin-bottom:16px;">
             <p class="mini-label" style="margin-bottom:8px;">Rubric</p>
             ${rubricSchema
@@ -5756,6 +5728,8 @@ function renderTeacherGrading(assignment, submission) {
                    `}
                  </div>
           </div>
+
+          ${renderSuggestedGradePanel(submission)}
 
           <div class="field" style="margin-bottom:12px;">
                 <label for="teacher-review-final-score">Final score (out of ${reviewSummary.maxScore})</label>
@@ -7481,6 +7455,37 @@ function getPreviousReviewStudentId(currentStudentId, assignmentId = ui.selected
   return roster[index - 1]?.id || null;
 }
 
+function formatCompactDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} sec`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds ? `${minutes} min ${seconds} sec` : `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours} hr ${remainingMinutes} min` : `${hours} hr`;
+}
+
+function getWritingTimeSummary(submission) {
+  const eventTimes = safeArray(submission?.writingEvents)
+    .map((event) => Date.parse(event?.timestamp || ""))
+    .filter((time) => Number.isFinite(time))
+    .sort((a, b) => a - b);
+  const fallbackStart = Date.parse(submission?.startedAt || submission?.updatedAt || submission?.submittedAt || "");
+  const fallbackEnd = Date.parse(submission?.submittedAt || submission?.updatedAt || submission?.startedAt || "");
+  const start = eventTimes[0] ?? (Number.isFinite(fallbackStart) ? fallbackStart : null);
+  const end = eventTimes[eventTimes.length - 1] ?? (Number.isFinite(fallbackEnd) ? fallbackEnd : start);
+  const durationMs = Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0;
+  const editCount = safeArray(submission?.writingEvents).length;
+  const finalWords = wordCount(submission?.finalText || submission?.draftText || "");
+  return {
+    durationMs,
+    durationLabel: durationMs === 0 && editCount ? "under 1 sec" : formatCompactDuration(durationMs),
+    editCount,
+    finalWords,
+  };
+}
+
 function calculateMeanBurstLength(submission) {
   const events = safeArray(submission?.writingEvents);
   if (!events.length) return 0;
@@ -8669,6 +8674,54 @@ function renderPasteEvidencePanel(submission) {
         }).join("")}
       </div>
     </section>
+  `;
+}
+
+function renderWritingTimeNote(submission) {
+  const summary = getWritingTimeSummary(submission);
+  return `
+    <div class="teacher-ready-card" style="margin-bottom:16px;padding:12px 14px;">
+      <p class="mini-label" style="margin-bottom:6px;">Writing time</p>
+      <div class="pill-row">
+        <span class="pill">${escapeHtml(summary.durationLabel)} active writing window</span>
+        <span class="pill">${summary.editCount} tracked edit${summary.editCount === 1 ? "" : "s"}</span>
+        <span class="pill">${summary.finalWords} final word${summary.finalWords === 1 ? "" : "s"}</span>
+      </div>
+      <p class="subtle" style="margin:8px 0 0;">Use this with the paste evidence and replay, especially when a long submission appears in a very short writing window.</p>
+    </div>
+  `;
+}
+
+function renderSuggestedGradePanel(submission) {
+  if (!submission?.teacherReview?.suggestedGrade) return "";
+  const suggestedGrade = submission.teacherReview.suggestedGrade;
+  return `
+    <div id="suggested-grade-panel" style="margin-bottom:16px;padding:14px;background:#f4efe6;border-radius:12px;border:1px solid var(--line);">
+      <p class="mini-label" style="margin-bottom:6px;">AI suggested grade</p>
+      <div style="font-size:1.2rem;font-weight:700;margin-bottom:6px;">${suggestedGrade.totalScore}/${suggestedGrade.maxScore}</div>
+      ${safeArray(suggestedGrade.criteria).length ? `
+        <div style="display:grid;gap:6px;margin:0 0 10px;">
+          ${suggestedGrade.criteria.map((criterion) => `
+            <div style="display:flex;justify-content:space-between;gap:10px;font-size:0.82rem;padding:8px 10px;background:#fff;border:1px solid var(--line);border-radius:10px;">
+              <span>${escapeHtml(criterion.name)}</span>
+              <strong>${escapeHtml(criterion.bandLabel || "Band")} (${criterion.score}/${criterion.points})</strong>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+      ${suggestedGrade.studentComment ? `
+        <div style="background:#f0f7ee;border-left:3px solid var(--accent);padding:10px 12px;border-radius:8px;margin-bottom:10px;">
+          <p class="mini-label" style="margin-bottom:4px;">Suggested student comment</p>
+          <p style="font-size:0.85rem;margin:0 0 8px;">${escapeHtml(suggestedGrade.studentComment)}</p>
+          <button class="button-ghost" data-action="use-suggested-comment" style="font-size:0.8rem;">Copy to notes</button>
+        </div>
+      ` : ""}
+      ${renderSuggestedGradeProcessNote(submission)}
+      <div style="display:flex;gap:8px;">
+        <button class="button-secondary" data-action="accept-suggested-grade">Use this score</button>
+        <button class="button-ghost" data-action="ignore-suggested-grade">Ignore</button>
+      </div>
+    </div>
   `;
 }
 
