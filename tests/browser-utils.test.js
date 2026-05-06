@@ -209,17 +209,16 @@ test("playback operation counts keep paste and delete atomic", () => {
   assert.equal(reviewUtils.getPlaybackOperationCount({ type: "replace", removedText: "old", insertedText: "new" }), 4);
 });
 
-test("paste evidence excerpts show starts and ends for long inserts", () => {
+test("paste evidence excerpts show a concise start preview", () => {
   const text = `Start ${"middle ".repeat(80)} End`;
-  const excerpt = pasteEvidenceUtils.buildBoundaryExcerpt(text, { excerptLength: 40 });
+  const excerpt = pasteEvidenceUtils.buildStartExcerpt(text, { excerptLength: 40 });
   assert.equal(excerpt.truncated, true);
-  assert.match(excerpt.start, /^Start middle/);
-  assert.match(excerpt.end, /End$/);
+  assert.match(excerpt.preview, /^Start middle/);
+  assert.match(excerpt.preview, /\.\.\.$/);
 
-  const shortExcerpt = pasteEvidenceUtils.buildBoundaryExcerpt("Short pasted text", { excerptLength: 40 });
+  const shortExcerpt = pasteEvidenceUtils.buildStartExcerpt("Short pasted text", { excerptLength: 40 });
   assert.equal(shortExcerpt.truncated, false);
-  assert.equal(shortExcerpt.start, "Short pasted text");
-  assert.equal(shortExcerpt.end, "");
+  assert.equal(shortExcerpt.preview, "Short pasted text");
 });
 
 test("reopened submissions must clear active graded-review lock fields", () => {

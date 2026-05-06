@@ -3,28 +3,25 @@
     return String(text || "").replace(/\s+/g, " ").trim();
   }
 
-  function buildBoundaryExcerpt(text = "", options = {}) {
+  function buildStartExcerpt(text = "", options = {}) {
     const compact = compactWhitespace(text);
     const excerptLength = Math.max(80, Number(options.excerptLength || 180));
     if (!compact) {
       return {
-        start: "",
-        end: "",
+        preview: "",
         truncated: false,
       };
     }
 
-    if (compact.length <= (excerptLength * 2) + 40) {
+    if (compact.length <= excerptLength) {
       return {
-        start: compact,
-        end: "",
+        preview: compact,
         truncated: false,
       };
     }
 
     return {
-      start: compact.slice(0, excerptLength).trim(),
-      end: compact.slice(-excerptLength).trim(),
+      preview: `${compact.slice(0, excerptLength).trim()}...`,
       truncated: true,
     };
   }
@@ -38,7 +35,7 @@
   }
 
   window.PasteEvidenceUtils = {
-    buildBoundaryExcerpt,
+    buildStartExcerpt,
     compactWhitespace,
     getEvidenceKindLabel,
     getEvidenceStatusLabel,
