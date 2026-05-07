@@ -172,8 +172,13 @@ const ui = {
   adminTeachers: [],
   adminClassDetail: null,
   adminSelectedAssignmentId: null,
+  adminStudentFlagSavingId: null,
   gradeSuggestionLoading: false,
   gradeSubmitting: false,
+  studentSubmitting: false,
+  assignmentSaving: false,
+  savedAssignmentFocusId: null,
+  publishingAssignmentId: null,
   pendingFinalScoreOverride: null,
   reopenSubmissionPrompt: null,
   latestSubmissionDebug: null,
@@ -1170,10 +1175,18 @@ function isTeacherAssignmentSaveReady() {
   );
 }
 
+function getTeacherAssignmentSaveLabel() {
+  if (ui.assignmentSaving) return "Saving...";
+  return ui.editingAssignmentId ? "Update assignment" : "Save assignment";
+}
+
 function syncTeacherAssignmentSaveButtons() {
   const saveReady = isTeacherAssignmentSaveReady();
   document.querySelectorAll('[data-action="save-assignment"]').forEach((button) => {
-    button.disabled = Boolean(ui.aiAssistLoading) || !saveReady;
+    button.disabled = Boolean(ui.aiAssistLoading || ui.assignmentSaving) || !saveReady;
+    if (ui.assignmentSaving) {
+      button.textContent = "Saving...";
+    }
   });
 }
 
@@ -3215,6 +3228,53 @@ if (action === "admin-select-assignment") {
     return;
   }
 
+  if (action === "admin-toggle-test-student" || action === "admin-toggle-writing-exclusion") {
+    const studentId = target.dataset.studentId;
+    if (!studentId || !ui.adminClassDetail) return;
+    const member = safeArray(ui.adminClassDetail.members).find((item) => item?.id === studentId);
+    if (!member) return;
+    const currentlyTest = Boolean(member.is_test_account);
+    const currentlyExcluded = Boolean(member.exclude_from_writing_behavior);
+    let nextTest = currentlyTest;
+    let nextExcluded = currentlyExcluded;
+    if (action === "admin-toggle-test-student") {
+      nextTest = !currentlyTest;
+      nextExcluded = nextTest ? true : false;
+    } else {
+      nextExcluded = !currentlyExcluded;
+      if (!nextExcluded) {
+        nextTest = false;
+      }
+    }
+    ui.adminStudentFlagSavingId = studentId;
+    render();
+    const data = await Auth.apiFetch(`/api/admin/students/${studentId}/flags`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        isTestAccount: nextTest,
+        excludeFromWritingBehavior: nextExcluded,
+      }),
+    });
+    if (data.error) {
+      ui.notice = `Could not update student flags: ${data.error}`;
+      ui.adminStudentFlagSavingId = null;
+      render();
+      return;
+    }
+    const refreshed = await Auth.apiFetch(`/api/admin/classes/${ui.adminSelectedClassId}/detail`);
+    if (!refreshed.error) {
+      ui.adminClassDetail = refreshed;
+    }
+    ui.notice = nextTest
+      ? "Student marked as a test student and excluded from writing behaviour data."
+      : nextExcluded
+        ? "Student excluded from writing behaviour data."
+        : "Student included in writing behaviour data.";
+    ui.adminStudentFlagSavingId = null;
+    render();
+    return;
+  }
+
   if (action === "admin-view-as-teacher") {
     ui.adminViewingAsTeacher = true;
     await bootApp(currentProfile);
@@ -3433,24 +3493,31 @@ if (action === "sign-out") {
       return;
     }
     const newStatus = assignment.status === "published" ? "draft" : "published";
+    ui.publishingAssignmentId = assignmentId;
+    ui.savedAssignmentFocusId = null;
     ui.notice = newStatus === "published" ? "Publishing assignment..." : "Moving assignment back to draft...";
     render();
-    const data = await Auth.apiFetch(`/api/assignments/${assignmentId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: newStatus })
-    });
-    if (data.error) {
-      ui.notice = "Could not update assignment: " + data.error;
+    try {
+      const data = await Auth.apiFetch(`/api/assignments/${assignmentId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (data.error) {
+        ui.notice = "Could not update assignment: " + data.error;
+        return;
+      }
+      await loadTeacherClassContext(currentClassId);
+      ui.selectedAssignmentId = assignmentId;
+      ui.notice = newStatus === "published"
+        ? "Assignment published — students in this class can now see it."
+        : "Assignment moved back to draft.";
+      persistState();
+    } catch (error) {
+      ui.notice = "Could not update assignment: " + error.message;
+    } finally {
+      ui.publishingAssignmentId = null;
       render();
-      return;
     }
-    await loadTeacherClassContext(currentClassId);
-    ui.selectedAssignmentId = assignmentId;
-    ui.notice = newStatus === "published"
-      ? "Assignment published — students in this class can now see it."
-      : "Assignment moved back to draft.";
-    persistState();
-    render();
     return;
   }
 
@@ -4978,6 +5045,42 @@ function renderAdminTeacherDetail() {
   `;
 }
 
+function renderAdminStudentDataFlags(member) {
+  const flags = [];
+  if (member?.is_test_account) {
+    flags.push(`<span class="warning-pill">Test student</span>`);
+  }
+  if (member?.exclude_from_writing_behavior) {
+    flags.push(`<span class="pill">Excluded from writing behaviour data</span>`);
+  }
+  return flags.length ? `<div class="pill-row" style="margin-top:8px;">${flags.join("")}</div>` : "";
+}
+
+function renderAdminStudentFlagControls(member) {
+  const saving = ui.adminStudentFlagSavingId === member?.id;
+  return `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <button class="button-ghost" data-action="admin-toggle-test-student" data-student-id="${escapeAttribute(member?.id || "")}" ${saving ? "disabled" : ""} style="font-size:0.78rem;">
+        ${saving ? "Saving…" : member?.is_test_account ? "Unmark test student" : "Mark as test student"}
+      </button>
+      <button class="button-ghost" data-action="admin-toggle-writing-exclusion" data-student-id="${escapeAttribute(member?.id || "")}" ${saving ? "disabled" : ""} style="font-size:0.78rem;">
+        ${saving ? "Saving…" : member?.exclude_from_writing_behavior ? "Include in writing data" : "Exclude from writing data"}
+      </button>
+    </div>
+  `;
+}
+
+function renderAdminWritingBehaviourCard(submission, member, assignmentTitle = "") {
+  if (member?.exclude_from_writing_behavior) {
+    return `
+      <div style="padding:12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;color:var(--muted);font-size:0.85rem;">
+        Writing behaviour data excluded for this student${member?.is_test_account ? " because they are marked as a test student" : ""}.
+      </div>
+    `;
+  }
+  return renderFluencyCard(submission, assignmentTitle);
+}
+
 function renderAdminClassDetail() {
   const detail = ui.adminClassDetail;
   if (!detail) return `<div class="empty-state"><p>Loading...</p></div>`;
@@ -5034,6 +5137,8 @@ function renderAdminClassDetail() {
                       <div>
                         <strong style="display:block;margin-bottom:4px;">${escapeHtml(member.name)}</strong>
                         <span style="font-size:0.82rem;color:${statusColour};">${escapeHtml(status)}</span>
+                        ${renderAdminStudentDataFlags(member)}
+                        ${renderAdminStudentFlagControls(member)}
                       </div>
                       <div style="text-align:right;flex-shrink:0;">
                         ${finalScore !== "" ? `<div style="font-size:1.4rem;font-weight:800;color:var(--accent-deep);">${escapeHtml(String(finalScore))}</div><div style="font-size:0.75rem;color:var(--muted);">score</div>` : `<div style="font-size:0.85rem;color:var(--muted);">Not graded</div>`}
@@ -5067,7 +5172,7 @@ function renderAdminClassDetail() {
                       ` : ""}
                     <div style="margin-top:12px;">
                         <span class="mini-label">Writing fluency</span>
-                        ${renderFluencyCard(sub)}
+                        ${renderAdminWritingBehaviourCard(sub, member)}
                       </div>
                     ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No work started yet.</p>`}
                   </div>
@@ -5130,7 +5235,11 @@ function renderAdminClassDetail() {
               return `
                 <div class="submission-card simple-card" style="margin-bottom:6px;">
                   <div class="card-top" style="flex-wrap:wrap;gap:10px;">
-                    <h3 style="margin:0;flex:1;">${escapeHtml(m.name)}</h3>
+                    <div style="flex:1;min-width:220px;">
+                      <h3 style="margin:0;">${escapeHtml(m.name)}</h3>
+                      ${renderAdminStudentDataFlags(m)}
+                      ${renderAdminStudentFlagControls(m)}
+                    </div>
                     <div class="pill-row">
                       <span class="pill">${submitted} submitted</span>
                       ${graded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${graded} graded · ${totalScore} pts total</span>` : ""}
@@ -5140,7 +5249,7 @@ function renderAdminClassDetail() {
                     <div style="margin-top:10px;display:grid;gap:8px;">
                       ${studentSubs.map(sub => {
                         const a = (detail.assignments || []).find(a => a.id === sub.assignment_id);
-                        return renderFluencyCard(sub, a?.title || "Assignment");
+                        return renderAdminWritingBehaviourCard(sub, m, a?.title || "Assignment");
                       }).join("")}
                     </div>
                   ` : ""}
@@ -5431,8 +5540,8 @@ function renderTeacherWorkspace() {
                 </div>
 
                                 <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                  <button class="button" data-action="save-assignment" ${ui.aiAssistLoading ? "disabled" : ""}>
-                    ${ui.editingAssignmentId ? "Update assignment" : "Save assignment"}
+                  <button class="button" data-action="save-assignment" ${ui.aiAssistLoading || ui.assignmentSaving ? "disabled" : ""}>
+                    ${getTeacherAssignmentSaveLabel()}
                   </button>
                 </div>              </div>
             `
@@ -5458,7 +5567,7 @@ function renderTeacherWorkspace() {
                     </div>
                     <p class="subtle" style="font-size:0.84rem;margin:6px 0 0;">Use the shared settings above for assignment type, word limits, deadline, chatbot, language level, and feedback limits.</p>
                     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                      <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>${ui.editingAssignmentId ? "Update assignment" : "Save assignment"}</button>
+                      <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading || ui.assignmentSaving ? "disabled" : ""}>${getTeacherAssignmentSaveLabel()}</button>
                     </div>
                   </div>
                 </details>
@@ -5523,9 +5632,11 @@ function renderTeacherWorkspace() {
                   const pasteCount = assignmentSubs.filter(s => (s.writingEvents || []).some((entry) => isPasteLikeWritingEvent(entry))).length;
                   const totalStudents = statusCounts.total;
                   const isBriefExpanded = ui.expandedAssignmentBriefId === assignment.id;
+                  const isSavedFocus = ui.savedAssignmentFocusId === assignment.id;
+                  const isPublishing = ui.publishingAssignmentId === assignment.id;
                   const promptPreview = truncateText(stripPromptFormatting(assignment.prompt), 140);
                   return `
-                  <div class="assignment-card simple-card">
+                  <div class="assignment-card simple-card" id="assignment-card-${escapeAttribute(assignment.id)}" style="${isSavedFocus ? "box-shadow:0 0 0 3px rgba(76,111,231,0.22);border-color:var(--accent);" : ""}">
                     <div class="card-top" style="align-items:flex-start;">
                       <div style="flex:1;min-width:0;">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
@@ -5554,11 +5665,12 @@ function renderTeacherWorkspace() {
                         <button class="button" data-action="select-assignment" data-assignment-id="${assignment.id}" style="white-space:nowrap;">Review students →</button>
                         <div style="display:flex;gap:6px;">
                           <button class="button-ghost" data-action="edit-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;">Edit</button>
-                          <button class="${assignment.status === "published" ? "button-ghost" : "button-secondary"}" data-action="publish-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;${assignment.status === "published" ? "color:var(--sage);border-color:var(--sage);" : ""}">
-                            ${assignment.status === "published" ? "✓ Published" : "Publish"}
+                          <button class="${assignment.status === "published" ? "button-ghost" : "button-secondary"}" data-action="publish-assignment" data-assignment-id="${assignment.id}" ${isPublishing ? "disabled" : ""} style="font-size:0.8rem;${assignment.status === "published" ? "color:var(--sage);border-color:var(--sage);" : ""}${isSavedFocus && assignment.status !== "published" ? "box-shadow:0 0 0 4px rgba(76,111,231,0.20);" : ""}">
+                            ${isPublishing ? (assignment.status === "published" ? "Unpublishing..." : "Publishing...") : assignment.status === "published" ? "✓ Published" : "Publish"}
                           </button>
                           <button class="button-ghost" data-action="delete-assignment" data-assignment-id="${assignment.id}" style="font-size:0.8rem;color:var(--danger);border-color:var(--danger);">Delete</button>
                         </div>
+                        ${isSavedFocus && assignment.status !== "published" ? `<span class="warning-pill" style="font-size:0.74rem;">Ready to publish when you are happy with it</span>` : ""}
                       </div>
                     </div>
                   </div>
@@ -5572,8 +5684,8 @@ function renderTeacherWorkspace() {
          ${renderUploadedRubricPreview("Uploaded rubric preview", ui.teacherDraft.uploadedRubricText, ui.teacherDraft.uploadedRubricName, ui.teacherDraft.uploadedRubricData, ui.teacherDraft.uploadedRubricSchema)}
 
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-          <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading ? "disabled" : ""}>
-            ${ui.editingAssignmentId ? "Update assignment" : "Save assignment"}
+          <button class="button" data-action="save-assignment" ${!manualSaveReady || ui.aiAssistLoading || ui.assignmentSaving ? "disabled" : ""}>
+            ${getTeacherAssignmentSaveLabel()}
           </button>
         </div>
         </div>
@@ -5955,7 +6067,7 @@ function renderTeacherGrading(assignment, submission) {
             <p style="font-size:0.8rem;color:var(--sage);margin-bottom:8px;">✓ Grade saved ${escapeHtml(formatDateTime(submission.teacherReview.savedAt))}</p>
           ` : ""}
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="button-secondary" data-action="generate-grade" ${ui.gradeSuggestionLoading ? "disabled" : ""}>${ui.gradeSuggestionLoading ? "Thinking…" : "Suggest Grade"}</button>
+            <button class="button-secondary" data-action="generate-grade" ${ui.gradeSuggestionLoading ? "disabled" : ""}>${ui.gradeSuggestionLoading ? "Suggesting…" : "Suggest rubric scores"}</button>
             ${ui.gradeSuggestionLoading ? `<span style="font-size:0.82rem;color:var(--muted);align-self:center;">AI is reviewing the submission…</span>` : ""}
             <button class="button-ghost" data-action="copy-lms-grade">Copy Grade</button>
             <button class="button" data-action="save-teacher-review" ${ui.gradeSubmitting ? "disabled" : ""}>${ui.gradeSubmitting ? "Submitting…" : "Submit grade"}</button>
@@ -6550,7 +6662,7 @@ function renderStudentFinalStep(assignment, submission) {
       <div class="wizard-nav">
         <button class="button-ghost" data-action="student-prev-step" data-step="3">Back</button>
         <span></span>
-        <button class="button" data-action="submit-final" ${!selfAssessmentCompletion.isComplete ? "disabled title='Rate yourself on all rubric items before submitting'" : ""}>Submit assignment</button>
+        <button class="button" data-action="submit-final" ${ui.studentSubmitting || !selfAssessmentCompletion.isComplete ? "disabled" : ""} ${!selfAssessmentCompletion.isComplete ? "title='Rate yourself on all rubric items before submitting'" : ""}>${ui.studentSubmitting ? "Submitting…" : "Submit assignment"}</button>
       </div>
       ${ui.notice ? `<div class="notice" style="margin-top:12px;">${escapeHtml(ui.notice)}</div>` : ""}
       ${submission.status === "submitted" ? `
@@ -6659,15 +6771,20 @@ function applyTeacherAssistToDraft() {
 }
 
 async function saveTeacherAssignment() {
+  if (ui.assignmentSaving) {
+    return;
+  }
   console.log("[saveTeacherAssignment started]", {
     teacherAssist: ui.teacherAssist,
     teacherDraft: ui.teacherDraft,
     currentClassId,
   });
 
+  ui.assignmentSaving = true;
   ui.notice = "Saving assignment...";
   render();
 
+  try {
   // Use the editable AI draft if present, otherwise fall back to teacherDraft
   const source = ui.teacherAssist || ui.teacherDraft;
   const editingAssignment = ui.editingAssignmentId
@@ -6823,11 +6940,26 @@ async function saveTeacherAssignment() {
   ui.teacherDraft = createBlankTeacherDraft();
   ui.teacherAssist = null;
   ui.editingAssignmentId = null;
+  ui.savedAssignmentFocusId = savedAssignmentId;
   ui.notice = editingAssignment
     ? "Assignment updated."
-    : "Assignment created and ready to publish.";
+    : "Assignment created. Review it in the assignment tray, then publish when ready.";
   persistState();
+  ui.assignmentSaving = false;
   render();
+  if (savedAssignmentId && !editingAssignment) {
+    window.requestAnimationFrame(() => {
+      document.getElementById(`assignment-card-${savedAssignmentId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+  } catch (error) {
+    ui.notice = "Could not save assignment: " + error.message;
+  } finally {
+    if (ui.assignmentSaving) {
+      ui.assignmentSaving = false;
+      render();
+    }
+  }
 }
 
 // Expose for proxy buttons in teacher-assignment-choice.js
@@ -6961,6 +7093,9 @@ function getRenderableDraftFeedbackEntries(assignment, submission) {
 }
 
 async function handleSubmission() {
+  if (ui.studentSubmitting) {
+    return;
+  }
   const submission = getStudentSubmission();
   const assignment = getStudentAssignment();
   if (!submission || !assignment) {
@@ -6998,6 +7133,7 @@ async function handleSubmission() {
   autoSaveTimer = null;
   clearTimeout(submissionSyncTimer);
   submissionSyncTimer = null;
+  ui.studentSubmitting = true;
   ui.notice = "Submitting...";
   setDraftSaveMessage("Submitting…");
   persistState();
@@ -7017,6 +7153,7 @@ async function handleSubmission() {
         persistState();
         await queueSubmissionSync(submission);
         setDraftSaveMessage("Saved on this device.");
+        ui.studentSubmitting = false;
         ui.notice = "Submission failed. Your writing was saved, but it was not sent to your teacher. Please try Submit again.";
         render();
         window.requestAnimationFrame(() => {
@@ -7031,6 +7168,7 @@ async function handleSubmission() {
         refreshed.updatedAt = refreshed.submittedAt;
       }
       rememberStudentStep(4);
+      ui.studentSubmitting = false;
       ui.notice = "";
       setDraftSaveMessage("Submitted successfully.");
       persistState();
@@ -7047,6 +7185,7 @@ async function handleSubmission() {
       persistState();
       await queueSubmissionSync(submission);
       setDraftSaveMessage("Saved on this device.");
+      ui.studentSubmitting = false;
       ui.notice = "Submission failed. Your writing was saved, but it was not sent to your teacher. Please try Submit again.";
       render();
       window.requestAnimationFrame(() => {
