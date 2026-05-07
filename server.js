@@ -2185,6 +2185,8 @@ app.patch('/api/admin/students/:studentId/flags', async (req, res) => {
       if (isMissingProfileFlagColumn(error)) {
         return res.status(400).json({
           error: 'Admin test-account flags are not active yet. Apply the latest profile admin flags migration, then try again.',
+          needsMigration: true,
+          migration: '20260507_profile_admin_flags.sql',
         });
       }
       return res.status(400).json({ error: error.message });
