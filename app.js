@@ -5079,15 +5079,10 @@ function renderAdminStudentDataFlags(member) {
 function renderAdminStudentFlagControls(member) {
   const saving = ui.adminStudentFlagSavingId === member?.id;
   return `
-    <div style="display:grid;gap:6px;margin-top:10px;max-width:520px;">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="button-ghost" data-action="admin-toggle-test-student" data-student-id="${escapeAttribute(member?.id || "")}" ${saving ? "disabled" : ""} title="Admin-only marker for fake/demo/test accounts. This is not for suspected cheating on one assignment." style="font-size:0.78rem;">
-          ${saving ? "Saving…" : member?.is_test_account ? "Unmark test account" : "Mark as test account"}
-        </button>
-      </div>
-      <p style="margin:0;color:var(--muted);font-size:0.76rem;line-height:1.45;">
-        Test accounts are fake/demo users and will be ignored by future behaviour analytics. To flag one suspicious assignment, use <strong>Flag submission</strong> in the teacher grading screen.
-      </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <button class="button-ghost" data-action="admin-toggle-test-student" data-student-id="${escapeAttribute(member?.id || "")}" ${saving ? "disabled" : ""} title="Admin-only marker for fake/demo/test accounts. This is not for suspected cheating on one assignment. To flag one suspicious assignment, use Flag submission in the teacher grading screen." style="font-size:0.78rem;">
+        ${saving ? "Saving…" : member?.is_test_account ? "Unmark test account" : "Mark as test account"}
+      </button>
     </div>
   `;
 }
