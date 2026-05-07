@@ -376,13 +376,13 @@ async function notifyStudentsAboutAssignment({
   const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const subject = mode === 'deadline-reminder'
-    ? `Reminder: ${assignment.title || 'Assignment'} is due soon`
-    : `New assignment in ${className || 'praxis'}`;
+    ? 'Assignment due soon'
+    : 'New assignment posted';
 
   await Promise.allSettled(recipients.map((recipient) => {
     const intro = mode === 'deadline-reminder'
-      ? `<p>Hi ${escapeHtmlEmail(recipient.name)},</p><p>This is a reminder that <strong>${safeTitle}</strong> is due in about 24 hours.</p>`
-      : `<p>Hi ${escapeHtmlEmail(recipient.name)},</p><p>Your teacher has published a new assignment in <strong>${safeClassName}</strong>.</p>`;
+      ? `<p>Hi ${escapeHtmlEmail(recipient.name)},</p><p>This is a reminder that an assignment is due in about 24 hours.</p>`
+      : `<p>Hi ${escapeHtmlEmail(recipient.name)},</p><p>Your teacher has posted a new assignment.</p>`;
     const deadlineLine = safeDeadline
       ? `<p><strong>Deadline:</strong> ${escapeHtmlEmail(safeDeadline)}</p>`
       : '';
@@ -394,8 +394,8 @@ async function notifyStudentsAboutAssignment({
       ? `Open praxis here: ${safeBaseUrl}`
       : `Open praxis from your usual class link to view the assignment.`;
     const text = mode === 'deadline-reminder'
-      ? `Hi ${recipient.name},\n\nThis is a reminder that "${assignment.title || 'Assignment'}" is due in about 24 hours.\n${textDeadlineLine}\n${accessLine}`
-      : `Hi ${recipient.name},\n\nYour teacher has published a new assignment in ${className || 'praxis'}: "${assignment.title || 'Assignment'}".\n${textDeadlineLine}\n${accessLine}`;
+      ? `Hi ${recipient.name},\n\nThis is a reminder that an assignment is due in about 24 hours.\nClass: ${className || 'praxis'}\nAssignment: ${assignment.title || 'Assignment'}\n${textDeadlineLine}\n${accessLine}`
+      : `Hi ${recipient.name},\n\nYour teacher has posted a new assignment.\nClass: ${className || 'praxis'}\nAssignment: ${assignment.title || 'Assignment'}\n${textDeadlineLine}\n${accessLine}`;
 
     return sendEmail({
       to: recipient.email,
@@ -403,6 +403,7 @@ async function notifyStudentsAboutAssignment({
       html: `
         <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
           ${intro}
+          <p><strong>Class:</strong> ${safeClassName}</p>
           <p><strong>Assignment:</strong> ${safeTitle}</p>
           ${deadlineLine}
           ${buttonHtml}
@@ -451,6 +452,7 @@ async function notifyStudentAboutGradedSubmission({
   const studentName = submission.profiles?.name || 'Student';
   const safeStudentName = escapeHtmlEmail(studentName);
   const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
+  const safeClassName = escapeHtmlEmail(assignment.classes?.name || assignment.className || 'your class');
   const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const score = submission.teacher_review?.finalScore;
@@ -469,16 +471,18 @@ async function notifyStudentAboutGradedSubmission({
 
   await sendEmail({
     to: studentEmail,
-    subject: `Feedback ready: ${assignment.title || 'Assignment'}`,
+    subject: 'Feedback ready',
     html: `
       <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
         <p>Hi ${safeStudentName},</p>
-        <p>Your teacher has reviewed <strong>${safeTitle}</strong>.</p>
+        <p>Your teacher has reviewed your work.</p>
+        <p><strong>Class:</strong> ${safeClassName}</p>
+        <p><strong>Assignment:</strong> ${safeTitle}</p>
         ${scoreLine}
         ${buttonHtml}
       </div>
     `,
-    text: `Hi ${studentName},\n\nYour teacher has reviewed "${assignment.title || 'Assignment'}".\n${textScoreLine}\n${accessLine}`,
+    text: `Hi ${studentName},\n\nYour teacher has reviewed your work.\nClass: ${assignment.classes?.name || assignment.className || 'your class'}\nAssignment: ${assignment.title || 'Assignment'}\n${textScoreLine}\n${accessLine}`,
     idempotencyKey: makeIdempotencyKey([
       'grade-published',
       assignment.id,
@@ -517,6 +521,7 @@ async function notifyStudentAboutReopenedSubmission({
   const studentName = submission.profiles?.name || 'Student';
   const safeStudentName = escapeHtmlEmail(studentName);
   const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
+  const safeClassName = escapeHtmlEmail(assignment.classes?.name || assignment.className || 'your class');
   const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const buttonHtml = safeBaseUrl
@@ -528,16 +533,18 @@ async function notifyStudentAboutReopenedSubmission({
 
   await sendEmail({
     to: studentEmail,
-    subject: `Assignment reopened: ${assignment.title || 'Assignment'}`,
+    subject: 'Assignment reopened',
     html: `
       <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
         <p>Hi ${safeStudentName},</p>
-        <p>Your teacher has reopened <strong>${safeTitle}</strong>.</p>
+        <p>Your teacher has reopened an assignment.</p>
+        <p><strong>Class:</strong> ${safeClassName}</p>
+        <p><strong>Assignment:</strong> ${safeTitle}</p>
         <p>You can edit your work and submit it again. Your existing work is still saved.</p>
         ${buttonHtml}
       </div>
     `,
-    text: `Hi ${studentName},\n\nYour teacher has reopened "${assignment.title || 'Assignment'}". You can edit your work and submit it again. Your existing work is still saved.\n\n${accessLine}`,
+    text: `Hi ${studentName},\n\nYour teacher has reopened an assignment.\nClass: ${assignment.classes?.name || assignment.className || 'your class'}\nAssignment: ${assignment.title || 'Assignment'}\nYou can edit your work and submit it again. Your existing work is still saved.\n\n${accessLine}`,
     idempotencyKey: makeIdempotencyKey([
       'submission-reopened',
       assignment.id,
@@ -597,15 +604,18 @@ async function notifyTeacherAboutStudentSubmission({
 
   await sendEmail({
     to: teacherEmail,
-    subject: `Student submitted: ${assignment.title || 'Assignment'}`,
+    subject: 'New assignment submission',
     html: `
       <div style="font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.6;color:#1d2a44;">
-        <p>${safeStudentName} submitted <strong>${safeTitle}</strong> in <strong>${safeClassName}</strong>.</p>
+        <p>A student has submitted work for review.</p>
+        <p><strong>Student:</strong> ${safeStudentName}</p>
+        <p><strong>Class:</strong> ${safeClassName}</p>
+        <p><strong>Assignment:</strong> ${safeTitle}</p>
         ${submittedLine}
         ${buttonHtml}
       </div>
     `,
-    text: `${studentName} submitted "${assignment.title || 'Assignment'}" in ${classRow.name || 'your class'}.\n${textSubmittedLine}\n${accessLine}`,
+    text: `A student has submitted work for review.\nStudent: ${studentName}\nClass: ${classRow.name || 'your class'}\nAssignment: ${assignment.title || 'Assignment'}\n${textSubmittedLine}\n${accessLine}`,
     idempotencyKey: makeIdempotencyKey([
       'student-submitted',
       assignment.id,
@@ -687,7 +697,7 @@ async function ensureTeacherOwnsAssignment(assignmentId, teacherId, client = sup
   if (error) throw error;
   if (!data) return null;
   const ownedClass = await ensureTeacherOwnsClass(data.class_id, teacherId, client);
-  return ownedClass ? data : null;
+  return ownedClass ? { ...data, className: ownedClass.name || '' } : null;
 }
 
 async function ensureStudentBelongsToClass(classId, studentId, client = supabase) {
