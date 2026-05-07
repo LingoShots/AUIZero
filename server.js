@@ -2047,6 +2047,10 @@ function addDefaultProfileFlags(profile) {
   };
 }
 
+function isStudentProfile(profile) {
+  return String(profile?.role || '').trim().toLowerCase() === 'student';
+}
+
 app.get('/api/admin/teachers', async (req, res) => {
   try {
     const user = await requireAdmin(req, res);
@@ -2104,13 +2108,13 @@ app.get('/api/admin/teachers/:teacherId/classes', async (req, res) => {
     const readClient = getRequestScopedSupabase(req);
     let { data: classes, error } = await readClient
       .from('classes')
-      .select('*, class_members(student_id, profiles(id, name, is_test_account))')
+      .select('*, class_members(student_id, profiles(id, name, role, is_test_account))')
       .eq('teacher_id', req.params.teacherId)
       .order('created_at', { ascending: false });
     if (error && isMissingProfileFlagColumn(error)) {
       const retry = await readClient
         .from('classes')
-        .select('*, class_members(student_id, profiles(id, name))')
+        .select('*, class_members(student_id, profiles(id, name, role))')
         .eq('teacher_id', req.params.teacherId)
         .order('created_at', { ascending: false });
       classes = (Array.isArray(retry.data) ? retry.data : []).map((cls) => ({
@@ -2123,6 +2127,11 @@ app.get('/api/admin/teachers/:teacherId/classes', async (req, res) => {
       error = retry.error;
     }
     if (error) return res.status(400).json({ error: error.message });
+    classes = (Array.isArray(classes) ? classes : []).map((cls) => ({
+      ...cls,
+      class_members: (Array.isArray(cls.class_members) ? cls.class_members : [])
+        .filter((member) => isStudentProfile(member.profiles)),
+    }));
     res.json({ classes });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2135,13 +2144,13 @@ app.get('/api/admin/classes/:classId/detail', async (req, res) => {
     if (!user) return;
     const readClient = getRequestScopedSupabase(req);
     const assignPromise = readClient.from('assignments').select('*').eq('class_id', req.params.classId).order('created_at', { ascending: false });
-    let memberPromise = readClient.from('class_members').select('student_id, profiles(id, name, is_test_account)').eq('class_id', req.params.classId);
+    let memberPromise = readClient.from('class_members').select('student_id, profiles(id, name, role, is_test_account)').eq('class_id', req.params.classId);
     let [assignData, memberData] = await Promise.all([
       assignPromise,
       memberPromise
     ]);
     if (memberData.error && isMissingProfileFlagColumn(memberData.error)) {
-      memberData = await readClient.from('class_members').select('student_id, profiles(id, name)').eq('class_id', req.params.classId);
+      memberData = await readClient.from('class_members').select('student_id, profiles(id, name, role)').eq('class_id', req.params.classId);
       memberData.data = (Array.isArray(memberData.data) ? memberData.data : []).map((member) => ({
         ...member,
         profiles: addDefaultProfileFlags(member.profiles),
@@ -2150,7 +2159,7 @@ app.get('/api/admin/classes/:classId/detail', async (req, res) => {
     if (assignData.error) return res.status(400).json({ error: assignData.error.message });
     if (memberData.error) return res.status(400).json({ error: memberData.error.message });
     const assignments = assignData.data || [];
-    const members = (memberData.data || []).map(m => m.profiles).filter(Boolean);
+    const members = (memberData.data || []).map(m => m.profiles).filter(isStudentProfile);
     // Get submissions for all assignments in this class
     const assignmentIds = assignments.map(a => a.id);
     let submissions = [];
