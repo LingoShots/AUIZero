@@ -1779,6 +1779,22 @@ async function loadAdminData() {
   ui.adminTeachers = data.teachers || [];
 }
 
+async function refreshAdminClassDetail({ keepNotice = false } = {}) {
+  if (!ui.adminSelectedClassId) return;
+  const data = await Auth.apiFetch(`/api/admin/classes/${ui.adminSelectedClassId}/detail`);
+  if (data.error) {
+    ui.notice = `Could not refresh admin class data: ${data.error}`;
+    return;
+  }
+  ui.adminClassDetail = data;
+  if (ui.adminSelectedAssignmentId && !safeArray(data.assignments).some((assignment) => assignment.id === ui.adminSelectedAssignmentId)) {
+    ui.adminSelectedAssignmentId = null;
+    ui.notice = "This assignment no longer exists. Admin data refreshed.";
+  } else if (!keepNotice) {
+    ui.notice = "Admin data refreshed.";
+  }
+}
+
 async function loadTeacherClassContext(classId) {
   currentClassId = classId || null;
   saveActiveClassId(currentProfile, currentClassId);
@@ -3219,6 +3235,14 @@ if (action === "admin-select-assignment") {
     render();
     return;
   }
+
+  if (action === "admin-refresh-class-detail") {
+    ui.notice = "Refreshing admin data...";
+    render();
+    await refreshAdminClassDetail();
+    render();
+    return;
+  }
   
   if (action === "admin-select-class") {
     ui.adminSelectedClassId = target.dataset.classId;
@@ -3226,11 +3250,10 @@ if (action === "admin-select-assignment") {
     ui.adminSelectedClassName = target.closest(".assignment-card")?.querySelector("h3")?.textContent || "";
     ui.adminView = "class";
     ui.adminClassDetail = null;
+    ui.notice = "";
     render();
-    Auth.apiFetch(`/api/admin/classes/${ui.adminSelectedClassId}/detail`).then(data => {
-      ui.adminClassDetail = data;
-      render();
-    });
+    await refreshAdminClassDetail({ keepNotice: true });
+    render();
     return;
   }
 
@@ -3257,13 +3280,10 @@ if (action === "admin-select-assignment") {
       render();
       return;
     }
-    const refreshed = await Auth.apiFetch(`/api/admin/classes/${ui.adminSelectedClassId}/detail`);
-    if (!refreshed.error) {
-      ui.adminClassDetail = refreshed;
-    }
     ui.notice = nextTest
       ? "Student marked as a test account. Their submissions will be ignored by future writing behaviour analytics."
       : "Student unmarked as a test account.";
+    await refreshAdminClassDetail({ keepNotice: true });
     ui.adminStudentFlagSavingId = null;
     render();
     return;
@@ -5148,6 +5168,7 @@ function renderAdminClassDetail() {
           <button class="button-ghost" data-action="admin-back-to-class" style="font-size:0.85rem;">${escapeHtml(ui.adminSelectedClassName || "Class")}</button>
           <span style="color:var(--muted);">/</span>
           <span style="font-weight:600;">${escapeHtml(assignment?.title || "Assignment")}</span>
+          <button class="button-ghost" data-action="admin-refresh-class-detail" style="font-size:0.85rem;margin-left:auto;">Refresh admin data</button>
         </div>
 
         <div style="margin-bottom:16px;">
@@ -5239,6 +5260,7 @@ function renderAdminClassDetail() {
         <button class="button-ghost" data-action="admin-back-to-teacher" style="font-size:0.85rem;">${escapeHtml(teacher?.name || "Teacher")}</button>
         <span style="color:var(--muted);">/</span>
         <span style="font-weight:600;">${escapeHtml(ui.adminSelectedClassName || "Class")}</span>
+        <button class="button-ghost" data-action="admin-refresh-class-detail" style="font-size:0.85rem;margin-left:auto;">Refresh admin data</button>
       </div>
 
       <div style="margin-bottom:24px;">
@@ -5291,7 +5313,11 @@ function renderAdminClassDetail() {
                       ${graded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${graded} graded · ${totalScore} pts total</span>` : ""}
                     </div>
                   </div>
-                  ${studentSubs.length ? `
+                  ${m.is_test_account ? `
+                    <div style="margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;color:var(--muted);font-size:0.85rem;">
+                      Writing behaviour data excluded for this test account across ${studentSubs.length} assignment${studentSubs.length === 1 ? "" : "s"}.
+                    </div>
+                  ` : studentSubs.length ? `
                     <div style="margin-top:10px;display:grid;gap:8px;">
                       ${studentSubs.map(sub => {
                         const a = (detail.assignments || []).find(a => a.id === sub.assignment_id);
