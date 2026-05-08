@@ -10,6 +10,10 @@ const submissionUtils = require("../submission-utils.js");
 const submissionSanitizer = require("../submission-sanitizer.js");
 const canonicalUrlUtils = require("../canonical-url-utils.js");
 const adminUtils = require("../admin-utils.js");
+const writingProcessTypes = require("../writing-process/types.js");
+const writingProcessEvents = require("../writing-process/events.js");
+const writingProcessAnalyze = require("../writing-process/analyze.js");
+const writingProcessAdmin = require("../writing-process/admin.js");
 const submissionRegressionFixture = require("./fixtures/submission-regression-fixture.js");
 
 global.window = global.window || {};
@@ -20,6 +24,10 @@ require("../paste-evidence-utils.js");
 const rubricUtils = global.window.RubricUtils;
 const reviewUtils = global.window.ReviewUtils;
 const pasteEvidenceUtils = global.window.PasteEvidenceUtils;
+
+function repeatedWords(seed, count) {
+  return Array.from({ length: count }, (_, index) => `${seed}${index}`).join(" ");
+}
 
 function createMemoryStorage({ failFirstWrite = false } = {}) {
   const store = new Map();
@@ -104,6 +112,122 @@ test("admin class detail signatures change when roster or assignments change", (
   });
 
   assert.notEqual(original, changed);
+});
+
+test("writing process events tag draft, final, and coach outline phases", () => {
+  const draftEvent = writingProcessEvents.createWritingEvent({
+    previousText: "",
+    nextText: "First draft sentence.",
+    phase: writingProcessTypes.PHASES.DRAFT,
+    field: "draftText",
+    idFactory: () => "draft-event",
+  });
+  const finalEvent = writingProcessEvents.createWritingEvent({
+    previousText: "First draft sentence.",
+    nextText: "First final sentence.",
+    phase: writingProcessTypes.PHASES.FINAL,
+    field: "finalText",
+    idFactory: () => "final-event",
+  });
+  const outlineEvent = writingProcessEvents.createWritingEvent({
+    previousText: "",
+    nextText: "My first idea is about practice.",
+    phase: writingProcessTypes.PHASES.COACH_OUTLINE,
+    field: "partOne",
+    idFactory: () => "outline-event",
+  });
+
+  assert.equal(draftEvent.phase, "draft");
+  assert.equal(finalEvent.phase, "final");
+  assert.equal(outlineEvent.phase, "coach_outline");
+  assert.equal(outlineEvent.field, "partOne");
+});
+
+test("writing process analysis uses review language and gates short submissions", () => {
+  const analysis = writingProcessAnalyze.analyzeSubmission({
+    finalText: "Too short.",
+    writingEvents: [],
+  }, {
+    languageLevel: "B1",
+  });
+
+  assert.equal(analysis.status, writingProcessTypes.STATUS.INSUFFICIENT);
+  assert.equal(analysis.statusLabel, "Not enough writing data");
+  const teacherFacingText = [
+    ...Object.values(writingProcessTypes.STATUS_LABELS),
+    ...Object.values(writingProcessTypes.STATUS_REASONS),
+  ].join(" ").toLowerCase();
+  assert.doesNotMatch(teacherFacingText, /cheating|plagiarism|suspicious|inauthentic|detected/);
+});
+
+test("large external paste contributes evidence while own-outline paste is separated", () => {
+  const outlineText = "My plan is to explain healthy eating, daily exercise, and enough sleep with simple examples.";
+  const pastedEssayText = repeatedWords("health", 120);
+  const outlinePasteAnalysis = writingProcessAnalyze.analyzeSubmission({
+    outline: { partOne: outlineText, partTwo: "", partThree: "" },
+    finalText: `${outlineText} ${repeatedWords("draft", 90)}`,
+    writingEvents: [{
+      id: "own-outline-paste",
+      timestamp: "2026-05-08T10:00:00.000Z",
+      type: "paste",
+      phase: "draft",
+      field: "draftText",
+      start: 0,
+      end: 0,
+      insertedText: outlineText,
+      removedText: "",
+      delta: outlineText.length,
+      flagged: true,
+    }],
+  }, { languageLevel: "B1" });
+
+  assert.equal(outlinePasteAnalysis.pasteEvidence[0].source, "own_outline");
+  assert.equal(outlinePasteAnalysis.evidence.some((item) => item.code === "large_paste_or_bulk_insert"), false);
+
+  const externalPasteAnalysis = writingProcessAnalyze.analyzeSubmission({
+    finalText: pastedEssayText,
+    writingEvents: [{
+      id: "external-paste",
+      timestamp: "2026-05-08T10:00:00.000Z",
+      type: "paste",
+      phase: "draft",
+      field: "draftText",
+      start: 0,
+      end: 0,
+      insertedText: pastedEssayText,
+      removedText: "",
+      delta: pastedEssayText.length,
+      flagged: true,
+    }],
+  }, { languageLevel: "B1" });
+
+  assert.equal(externalPasteAnalysis.pasteEvidence[0].source, "external_or_unknown");
+  assert.equal(externalPasteAnalysis.evidence.some((item) => item.code === "large_paste_or_bulk_insert"), true);
+  assert.equal(externalPasteAnalysis.status, writingProcessTypes.STATUS.CLOSE);
+});
+
+test("writing process admin summary excludes test accounts and flagged submissions", () => {
+  const summary = writingProcessAdmin.summarizeProcessDataPool({
+    members: [
+      { id: "student-1", name: "Test Student", is_test_account: true },
+      { id: "student-2", name: "Live Student", is_test_account: false },
+    ],
+    submissions: [
+      { id: "submission-1", studentId: "student-1", writingEvents: [{ id: "event-1" }] },
+      {
+        id: "submission-2",
+        studentId: "student-2",
+        writingEvents: [{ id: "event-2" }],
+        teacherReview: { writingBehaviourExcluded: true },
+      },
+      { id: "submission-3", studentId: "student-2", writingEvents: [{ id: "event-3" }] },
+    ],
+  });
+
+  assert.equal(summary.includedSubmissions, 1);
+  assert.equal(summary.excludedSubmissions, 2);
+  assert.equal(summary.excludedByTestAccount, 1);
+  assert.equal(summary.excludedBySubmissionFlag, 1);
 });
 
 test("notification utils normalize password reset redirects", () => {

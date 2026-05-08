@@ -1,9 +1,11 @@
 require('dotenv').config();
 const express = require('express');
+const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
 const { parseRubricBuffer, parseRubricText } = require('./rubricParser');
+const { analyzeSubmission } = require('./writing-process/analyze');
 const {
   appendResetQuery,
   getTeacherReviewSavedAt,
@@ -756,6 +758,145 @@ async function getSubmissionRecord(submissionId, client = supabase) {
     .maybeSingle();
   if (error) throw error;
   return data || null;
+}
+
+function getSubmissionTeacherReview(submission = {}) {
+  return submission.teacher_review || submission.teacherReview || {};
+}
+
+function getSubmissionProcessInputHash(submission = {}, assignment = {}, profile = {}) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      submissionId: submission.id,
+      assignmentId: submission.assignment_id || submission.assignmentId,
+      studentId: submission.student_id || submission.studentId,
+      finalText: submission.final_text || submission.finalText || '',
+      draftText: submission.draft_text || submission.draftText || '',
+      writingEvents: submission.writing_events || submission.writingEvents || [],
+      keystrokeLog: submission.keystroke_log || submission.keystrokeLog || [],
+      teacherReview: getSubmissionTeacherReview(submission),
+      assignmentStatus: assignment.status || '',
+      assignmentLevel: assignment.language_level || assignment.languageLevel || '',
+      profileFlags: {
+        isTestAccount: Boolean(profile.is_test_account || profile.isTestAccount),
+      },
+      updatedAt: submission.updated_at || submission.updatedAt || '',
+    }))
+    .digest('hex');
+}
+
+function getProcessAnalysisExclusionSources(submission = {}, profile = {}) {
+  const sources = [];
+  const review = getSubmissionTeacherReview(submission);
+  if (profile?.is_test_account || profile?.isTestAccount) sources.push('test_account');
+  if (review?.writingBehaviourExcluded || review?.writing_behaviour_excluded) sources.push('submission_flag');
+  return sources;
+}
+
+function buildProcessAnalysisPayload({ submission, assignment, profile, analysis, inputHash }) {
+  return {
+    submission_id: submission.id,
+    assignment_id: submission.assignment_id || submission.assignmentId,
+    class_id: assignment.class_id || assignment.classId || null,
+    student_id: submission.student_id || submission.studentId,
+    analysis_version: analysis.analysisVersion,
+    input_hash: inputHash,
+    process_status: analysis.status,
+    process_status_label: analysis.statusLabel,
+    reason: analysis.reason || '',
+    metrics: analysis.metrics || {},
+    timeline: analysis.timeline || [],
+    evidence: analysis.evidence || [],
+    paste_evidence: analysis.pasteEvidence || [],
+    cohort_comparison: analysis.cohortComparison || {},
+    coach_baseline: analysis.coachBaseline || {},
+    excluded_from_analytics: Boolean(analysis.excludedFromAnalytics),
+    exclusion_sources: analysis.exclusionSources || getProcessAnalysisExclusionSources(submission, profile),
+    calculated_at: analysis.calculatedAt,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function getProcessAnalysisContext(req, submissionId) {
+  const user = await getUser(req);
+  if (!user) return { status: 401, error: 'Not authenticated' };
+  const viewerProfile = await getProfile(user.id);
+  if (!viewerProfile) return { status: 409, error: ACCOUNT_SETUP_INCOMPLETE_MESSAGE };
+
+  const readClient = getRequestScopedSupabase(req);
+  const { data: submission, error: submissionError } = await readClient
+    .from('submissions')
+    .select('*')
+    .eq('id', submissionId)
+    .maybeSingle();
+  if (submissionError) return { status: 400, error: submissionError.message };
+  if (!submission) return { status: 404, error: 'Submission not found' };
+
+  const { data: assignment, error: assignmentError } = await readClient
+    .from('assignments')
+    .select('*')
+    .eq('id', submission.assignment_id)
+    .maybeSingle();
+  if (assignmentError) return { status: 400, error: assignmentError.message };
+  if (!assignment) return { status: 404, error: 'Assignment not found' };
+
+  let allowed = false;
+  if (viewerProfile.role === 'admin') {
+    allowed = true;
+  } else if (viewerProfile.role === 'student') {
+    allowed = submission.student_id === user.id;
+  } else if (viewerProfile.role === 'teacher') {
+    const ownedAssignment = await ensureTeacherOwnsAssignment(assignment.id, user.id, readClient);
+    allowed = Boolean(ownedAssignment);
+  }
+  if (!allowed) return { status: 403, error: 'You do not have access to this writing process analysis.' };
+
+  const { data: studentProfile } = await supabase
+    .from('profiles')
+    .select('id, name, role, is_test_account')
+    .eq('id', submission.student_id)
+    .maybeSingle();
+
+  return {
+    status: 200,
+    user,
+    viewerProfile,
+    submission,
+    assignment,
+    studentProfile: studentProfile || {},
+  };
+}
+
+async function computeAndStoreProcessAnalysis(context, { store = true } = {}) {
+  const exclusionSources = getProcessAnalysisExclusionSources(context.submission, context.studentProfile);
+  const analysis = analyzeSubmission(context.submission, context.assignment, {
+    excludedFromAnalytics: exclusionSources.length > 0,
+    exclusionSources,
+  });
+  const inputHash = getSubmissionProcessInputHash(context.submission, context.assignment, context.studentProfile);
+  const payload = buildProcessAnalysisPayload({
+    submission: context.submission,
+    assignment: context.assignment,
+    profile: context.studentProfile,
+    analysis,
+    inputHash,
+  });
+
+  if (!store) return { analysis, inputHash, stored: null, storageError: null };
+
+  const { data, error } = await supabase
+    .from('submission_process_analyses')
+    .upsert(payload, { onConflict: 'submission_id' })
+    .select()
+    .single();
+
+  return {
+    analysis,
+    inputHash,
+    stored: data || null,
+    storageError: error ? error.message : null,
+  };
 }
 
 // ── Rubric parsing endpoints ────────────────────────────────
@@ -2025,6 +2166,81 @@ app.patch('/api/submissions/:id', async (req, res) => {
   }
 });
 
+app.get('/api/submissions/:id/process-analysis', async (req, res) => {
+  try {
+    const context = await getProcessAnalysisContext(req, req.params.id);
+    if (context.error) return res.status(context.status).json({ error: context.error });
+    const result = await computeAndStoreProcessAnalysis(context, { store: true });
+    res.json({
+      analysis: result.analysis,
+      stored: result.stored,
+      inputHash: result.inputHash,
+      storageWarning: result.storageError || '',
+    });
+  } catch (error) {
+    console.error('Process analysis endpoint failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/submissions/:id/process-analysis/recompute', async (req, res) => {
+  try {
+    const context = await getProcessAnalysisContext(req, req.params.id);
+    if (context.error) return res.status(context.status).json({ error: context.error });
+    if (context.viewerProfile.role !== 'teacher' && context.viewerProfile.role !== 'admin') {
+      return res.status(403).json({ error: 'Teacher access required' });
+    }
+    const result = await computeAndStoreProcessAnalysis(context, { store: true });
+    res.json({
+      analysis: result.analysis,
+      stored: result.stored,
+      inputHash: result.inputHash,
+      storageWarning: result.storageError || '',
+    });
+  } catch (error) {
+    console.error('Process analysis recompute failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/submissions/:id/process-label', async (req, res) => {
+  try {
+    const context = await getProcessAnalysisContext(req, req.params.id);
+    if (context.error) return res.status(context.status).json({ error: context.error });
+    if (context.viewerProfile.role !== 'teacher' && context.viewerProfile.role !== 'admin') {
+      return res.status(403).json({ error: 'Teacher access required' });
+    }
+
+    const label = String(req.body?.label || '').trim().slice(0, 80);
+    const notes = String(req.body?.notes || '').trim().slice(0, 2000);
+    if (!label) return res.status(400).json({ error: 'label is required' });
+
+    const analysisResult = await computeAndStoreProcessAnalysis(context, { store: true });
+    const { data, error } = await supabase
+      .from('submission_process_labels')
+      .insert({
+        submission_id: context.submission.id,
+        analysis_id: analysisResult.stored?.id || null,
+        reviewer_id: context.user.id,
+        label,
+        notes,
+        excluded_from_training: Boolean(req.body?.excludedFromTraining),
+      })
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({
+      label: data,
+      analysis: analysisResult.analysis,
+      storageWarning: analysisResult.storageError || '',
+    });
+  } catch (error) {
+    console.error('Process label save failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── Admin endpoints ──────────────────────────────────────────
 
 async function requireAdmin(req, res) {
@@ -2202,6 +2418,47 @@ app.patch('/api/admin/students/:studentId/flags', async (req, res) => {
     }
     if (!data) return res.status(404).json({ error: 'Student profile not found.' });
     res.json({ profile: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/process-analytics', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const { data: analyses, error } = await supabase
+      .from('submission_process_analyses')
+      .select('id, submission_id, assignment_id, class_id, student_id, analysis_version, process_status, excluded_from_analytics, exclusion_sources, calculated_at');
+    if (error) {
+      return res.status(400).json({
+        error: error.message,
+        needsMigration: /submission_process_analyses/i.test(error.message || ''),
+      });
+    }
+
+    const rows = analyses || [];
+    const summary = {
+      totalAnalyses: rows.length,
+      includedAnalyses: rows.filter((row) => !row.excluded_from_analytics).length,
+      excludedAnalyses: rows.filter((row) => row.excluded_from_analytics).length,
+      versions: {},
+      statuses: {},
+      exclusionSources: {},
+      cohortSampleSize: rows.filter((row) => !row.excluded_from_analytics).length,
+    };
+
+    rows.forEach((row) => {
+      const version = row.analysis_version || 'unknown';
+      const status = row.process_status || 'unknown';
+      summary.versions[version] = (summary.versions[version] || 0) + 1;
+      summary.statuses[status] = (summary.statuses[status] || 0) + 1;
+      (Array.isArray(row.exclusion_sources) ? row.exclusion_sources : []).forEach((source) => {
+        summary.exclusionSources[source] = (summary.exclusionSources[source] || 0) + 1;
+      });
+    });
+
+    res.json({ summary, analyses: rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

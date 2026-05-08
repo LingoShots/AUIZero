@@ -692,6 +692,15 @@ function fluencyBadgeStyle(value, low, high) {
 }
 
 function renderWritingBehaviour(submission, assignment) {
+  if (window.PraxisWritingProcess?.renderTeacherPanel) {
+    const excludedSources = [];
+    if (submission?.teacherReview?.writingBehaviourExcluded) excludedSources.push("submission_flag");
+    return window.PraxisWritingProcess.renderTeacherPanel(submission, assignment, {
+      excludedFromAnalytics: Boolean(submission?.teacherReview?.writingBehaviourExcluded),
+      exclusionSources: excludedSources,
+    });
+  }
+
   const f = submission?.fluencySummary || submission?.fluency_summary || {};
   if (!Object.keys(f).length) return "";
 
@@ -757,16 +766,15 @@ function renderWritingBehaviour(submission, assignment) {
   const maxPoints     = weightedScores.reduce((s, x) => s + 2 * x.weight, 0);
   const avg           = totalPoints / maxPoints * 2; // normalise to 0–2 scale
 
-  const band = avg >= 1.7 ? "Natural"
-    : avg >= 1.2 ? "Likely natural"
-    : avg >= 0.6 ? "Uncertain"
-    : "Needs review";
+  const band = avg >= 1.2 ? "Typical process"
+    : avg >= 0.6 ? "Review suggested"
+    : "Close review needed";
 
   const bandColour = avg >= 1.7 ? "#1f5c38" : avg >= 1.2 ? "#5a7a2e" : avg >= 0.6 ? "#9a6512" : "#962f2f";
   const bandBg     = avg >= 1.7 ? "#eef9f1" : avg >= 1.2 ? "#f4f9e8" : avg >= 0.6 ? "#fff8e8" : "#fff1f1";
   const bandBorder = avg >= 1.7 ? "#cdece2" : avg >= 1.2 ? "#cde0a0" : avg >= 0.6 ? "#f0d080" : "#f4c7c7";
 
-  const bandScale = ["Natural", "Likely natural", "Uncertain", "Needs review"].map(label => {
+  const bandScale = ["Typical process", "Review suggested", "Close review needed"].map(label => {
     const active = label === band;
     return `<span style="
       font-size:0.70rem;
@@ -781,9 +789,9 @@ function renderWritingBehaviour(submission, assignment) {
   }).join(`<span style="color:var(--muted);font-size:0.70rem;">→</span>`);
 
   const explanation = avg >= 1.7
-    ? `Typing rhythm, pause patterns, and revision behaviour are consistent with independent composition at ${level}.`
+    ? `Typing rhythm, pause patterns, and revision behaviour are consistent with normal drafting and revision at ${level}.`
     : avg >= 1.2
-    ? `Mostly natural writing behaviour with some variation — consistent with ${level}.`
+    ? `The writing process is broadly consistent with normal drafting and revision for ${level}.`
     : avg >= 0.6
     ? `Some indicators fall outside the expected range for ${level} — worth reviewing alongside the playback.`
     : `Several indicators are outside the expected range for ${level}. Playback recommended.`;
@@ -842,7 +850,7 @@ function renderWritingBehaviour(submission, assignment) {
     `;
   }
   
-  const microNote = micro < 1 ? "None detected — flag" : "Present — normal";
+  const microNote = micro < 1 ? "None recorded — review" : "Present — normal";
   const substantiveNote = substantive >= 1 ? `${substantive} found — positive` : "None — neutral";
 
   return `
@@ -855,8 +863,8 @@ function renderWritingBehaviour(submission, assignment) {
           <p style="margin:0 0 8px;">Scores are based on keystroke-interval analysis grounded in L2 writing research. Ranges are provisional estimates calibrated to ${level} — they will be refined as real submission data accumulates from this platform.</p>
           <p style="margin:0 0 6px;font-weight:600;">Key references:</p>
           <p style="margin:0 0 4px;">Révész, A., Michel, M., Lu, X., et al. (2022). Proficiency, speed fluency, pausing and eye-gaze in L2 writing. <em>Journal of Second Language Writing, 58.</em> — Proficiency strongest predictor of burst length (p&lt;0.01, 13% variance).</p>
-          <p style="margin:0 0 4px;">Crossley, S., Tian, Y., Choi, J.S., Holmes, L., &amp; Morris, W. (2024). Plagiarism Detection Using Keystroke Logs. <em>EDM 2024, 476–483.</em> — Authentic writers delete more, revise more, and produce more variable deletion patterns than transcribers.</p>
-          <p style="margin:0 0 4px;">Barkaoui, K. (2019). L2 writers' pausing behaviour. <em>Studies in Second Language Acquisition, 41(3).</em> — 2-second threshold; lower proficiency = more pauses.</p>
+          <p style="margin:0 0 4px;">Crossley, S., Tian, Y., Choi, J.S., Holmes, L., &amp; Morris, W. (2024). Keystroke process evidence in copied and composed writing. <em>EDM 2024, 476–483.</em> — Authentic writers delete more, revise more, and show more varied production patterns than transcribers.</p>
+          <p style="margin:0 0 4px;">Barkaoui, K. (2019). L2 writers' pausing behaviour. <em>Studies in Second Language Acquisition, 41(3).</em> — 2-second threshold; pause location matters because within-word, between-word, and sentence-boundary pauses reflect different writing processes.</p>
           <p style="margin:0;color:var(--muted);font-style:italic;">This panel is one signal — always interpret alongside the letter-by-letter playback. No single indicator is conclusive.</p>
         </div>
       </div>
@@ -890,7 +898,7 @@ function renderFluencyCard(submission, assignmentTitle = "") {
       value: f.pauseFrequency,
       unit: "per 100w",
       low: 8, high: 35,
-      note: "Pauses over 2s per 100 words. Very low = suspicious, very high = struggling"
+      note: "Pauses over 2s per 100 words. Very low or very high values are review cues."
     },
     {
       label: "Deletion ratio",
@@ -4548,11 +4556,7 @@ function handleInput(event) {
       return;
     }
 
-    if (!submission.finalUnlocked) submission.finalUnlocked = true;
-    
-    submission.finalText = target.value;
-    submission.updatedAt = new Date().toISOString();
-    persistState();
+    updateFinalSubmission(target.value);
     scheduleSubmissionSync();
     setTimeout(() => refreshLineNumberGutterForElement(target), 0);
     scheduleAutoSave();
@@ -4588,21 +4592,14 @@ function handleInput(event) {
   }
 
   if (target.dataset.outlineField) {
-    const submission = getStudentSubmission();
-    if (!submission) {
-      return;
-    }
-
-    submission.outline[target.dataset.outlineField] = target.value;
-    submission.updatedAt = new Date().toISOString();
-    persistState();
+    updateOutlineProcessEvent(target.dataset.outlineField, target.value);
     scheduleAutoSave();
     return;
   }
 }
 
 function handlePaste(event) {
-  if (event.target.id !== "draft-editor" && event.target.id !== "final-editor") {
+  if (event.target.id !== "draft-editor" && event.target.id !== "final-editor" && !event.target.dataset?.outlineField) {
     return;
   }
 
@@ -4665,8 +4662,7 @@ function render() {
   });
 
   window.requestAnimationFrame(() => {
-    ["draft-editor", "final-editor"].forEach(id => {
-      const el = document.getElementById(id);
+    document.querySelectorAll("#draft-editor, #final-editor, [data-outline-field]").forEach(el => {
       if (!el || el.dataset.keystrokeListenerAttached) return;
       el.addEventListener("keydown", () => {
         recordKeystrokeInterval();
@@ -4911,7 +4907,7 @@ function renderPasteWarning() {
     <div style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:999;display:grid;place-items:center;padding:20px;">
       <div style="background:#fffdf9;border-radius:18px;padding:28px;max-width:440px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
         <div style="font-size:2rem;margin-bottom:10px;">⚠️</div>
-        <h3 style="margin:0 0 10px;color:var(--danger);">Paste detected</h3>
+        <h3 style="margin:0 0 10px;color:var(--danger);">Paste recorded</h3>
         <p style="margin:0 0 12px;line-height:1.6;">Your pasted text has been added to your draft. Your teacher will be able to see it highlighted in violet.</p>
         <p style="margin:0 0 20px;line-height:1.6;">You can leave it in if it was fair use — for example, a quote you are responding to — or remove it and write the section in your own words.</p>
         <div style="display:grid;gap:10px;">
@@ -5150,7 +5146,7 @@ function renderAdminStudentFlagControls(member) {
   const saving = ui.adminStudentFlagSavingId === member?.id;
   return `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-      <button class="button-ghost" data-action="admin-toggle-test-student" data-student-id="${escapeAttribute(member?.id || "")}" ${saving ? "disabled" : ""} title="Admin-only marker for fake/demo/test accounts. This is not for suspected cheating on one assignment. To flag one suspicious assignment, use Flag submission in the teacher grading screen." style="font-size:0.78rem;">
+      <button class="button-ghost" data-action="admin-toggle-test-student" data-student-id="${escapeAttribute(member?.id || "")}" ${saving ? "disabled" : ""} title="Admin-only marker for fake/demo/test accounts. This is not for one assignment concern. To exclude one assignment from the future data pool, use Flag submission in the teacher grading screen." style="font-size:0.78rem;">
         ${saving ? "Saving…" : member?.is_test_account ? "Unmark test account" : "Mark as test account"}
       </button>
     </div>
@@ -5222,6 +5218,13 @@ function renderAdminClassDetail() {
           <span style="color:var(--muted);">/</span>
           <span style="font-weight:600;">${escapeHtml(assignment?.title || "Assignment")}</span>
         </div>
+
+        ${window.PraxisWritingProcess?.renderAdminDataQualityPanel
+          ? window.PraxisWritingProcess.renderAdminDataQualityPanel({
+              ...detail,
+              submissions: subs,
+            }, escapeHtml)
+          : ""}
 
         <div style="margin-bottom:16px;">
           <p class="subtle">${escapeHtml(assignment?.prompt || "")}</p>
@@ -5315,6 +5318,9 @@ function renderAdminClassDetail() {
       </div>
 
       <div style="margin-bottom:24px;">
+        ${window.PraxisWritingProcess?.renderAdminDataQualityPanel
+          ? window.PraxisWritingProcess.renderAdminDataQualityPanel(detail, escapeHtml)
+          : ""}
         <p class="mini-label" style="margin-bottom:10px;">Assignments</p>
         ${(detail.assignments || []).length === 0
           ? `<p class="subtle">No assignments yet.</p>`
@@ -6422,6 +6428,8 @@ function renderStudentIdeasStep(assignment, submission) {
   const minsRemaining = totalSecsRemaining !== null ? Math.floor(totalSecsRemaining / 60) : null;
   const secsRemaining = totalSecsRemaining !== null ? totalSecsRemaining % 60 : null;
   const hasEnoughChat = chatDisabled || submission.chatSkippedAt || chatHistory.length >= 2;
+  const outlineFields = getOutlineFields(assignment, submission);
+  const outlineComplete = isOutlineComplete(submission, assignment);
   const chatCount = chatHistory.filter((msg) => msg.role === "user").length;
   if (timeExpired && !submission.chatExpiredAt) {
     submission.chatExpiredAt = new Date().toISOString();
@@ -6482,6 +6490,18 @@ function renderStudentIdeasStep(assignment, submission) {
           </div>
         ` : `<div class="notice" style="margin-top:12px;">Your chat session has ended. Click Next to continue to your draft.</div>`}
       `}
+      <div class="teacher-ready-card" style="margin-top:14px;${locked ? "opacity:0.55;pointer-events:none;" : ""}">
+        <p class="mini-label">Build your outline</p>
+        <p class="subtle" style="margin:4px 0 12px;">Type the bones of your plan in your own words. This helps you start the draft and gives your teacher better evidence of your planning process.</p>
+        <div class="field-grid compact-grid">
+          ${outlineFields.fields.map((field) => `
+            <label class="field">
+              <span>${escapeHtml(field.label)}</span>
+              <textarea data-outline-field="${escapeAttribute(field.key)}" rows="2" placeholder="${escapeAttribute(field.placeholder)}" ${locked ? "disabled" : ""}>${escapeHtml(submission.outline?.[field.key] || "")}</textarea>
+            </label>
+          `).join("")}
+        </div>
+      </div>
       <div class="wizard-nav">
         ${locked || chatDisabled ? `<span></span>` : `
           <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;flex-wrap:wrap;">
@@ -6492,7 +6512,7 @@ function renderStudentIdeasStep(assignment, submission) {
             ` : ""}
           </div>
         `}
-        <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat ? "disabled title='Have a conversation with the coach first'" : ""}>Next: Write Draft</button>
+        <button class="button" data-action="student-next-step" data-step="2" ${!hasEnoughChat || !outlineComplete ? "disabled title='Have a short coach conversation and complete the outline first'" : ""}>Next: Write Draft</button>
       </div>
     </div>
   `;
@@ -6864,6 +6884,10 @@ function canAdvanceToStep(nextStep) {
     const hasChat = isChatDisabled(assignment) || Boolean(submission.chatSkippedAt) || (submission.chatHistory || []).length >= 2;
     if (!hasChat) {
       ui.notice = "Have a short conversation with your writing coach first, or use Skip chat if you're ready to draft.";
+      return false;
+    }
+    if (!isOutlineComplete(submission, assignment)) {
+      ui.notice = "Complete the outline first. It gives you a plan to draft from and helps your teacher see your planning process.";
       return false;
     }
   }
@@ -7345,6 +7369,43 @@ function scheduleKeystrokeFlush() {
   keystrokeFlushTimer = setTimeout(flushKeystrokeBuffer, 5000);
 }
 
+function buildProcessWritingEvent(previousText, nextText, { phase = "draft", field = "" } = {}) {
+  const creator = window.PraxisWritingProcess?.createWritingEvent;
+  if (creator) {
+    return creator({
+      previousText,
+      nextText,
+      pendingPaste: ui.pendingPaste,
+      phase,
+      field,
+      idFactory: () => uid("event"),
+      largePasteLimit: LARGE_PASTE_LIMIT,
+    });
+  }
+
+  const operation = getTextOperation(previousText, nextText);
+  if (!operation) return null;
+  const type = determineEventType(operation);
+  const pasteContent = ui.pendingPaste?.content || "";
+  const insertedText = type === "paste" ? pasteContent : operation.insertedText;
+  const isLargeSingleInsert = !pasteContent && insertedText.length >= LARGE_PASTE_LIMIT && !operation.removedText;
+  return {
+    id: uid("event"),
+    timestamp: new Date().toISOString(),
+    type,
+    phase,
+    field,
+    start: operation.start,
+    end: operation.end,
+    removedText: operation.removedText,
+    insertedText,
+    delta: operation.insertedText.length - operation.removedText.length,
+    flagged: (type === "paste" && insertedText.length >= LARGE_PASTE_LIMIT) || isLargeSingleInsert,
+    detectionReason: isLargeSingleInsert ? "large_single_insert_without_paste_event" : "",
+    preview: trimTo(insertedText || operation.removedText || nextText.slice(-40), 80),
+  };
+}
+
 function updateDraftSubmission(nextText) {
   const submission = getStudentSubmission();
   if (!submission) {
@@ -7353,36 +7414,54 @@ function updateDraftSubmission(nextText) {
 
   const previousText = submission.draftText || "";
   const now = new Date().toISOString();
-  const operation = getTextOperation(previousText, nextText);
-  if (!operation) {
+  const event = buildProcessWritingEvent(previousText, nextText, { phase: "draft", field: "draftText" });
+  if (!event) {
     return;
   }
-
-  const type = determineEventType(operation);
-  const pasteContent = ui.pendingPaste?.content || "";
-
-  const isLargeSingleInsert = !pasteContent && operation.insertedText.length >= LARGE_PASTE_LIMIT && !operation.removedText;
-  const isFlaggedPaste = (type === "paste" && pasteContent.length >= LARGE_PASTE_LIMIT) || isLargeSingleInsert;
 
   submission.draftText = nextText;
   submission.updatedAt = now;
   submission.startedAt = submission.startedAt || now;
   submission.lastEditedAt = now;
+  event.timestamp = now;
+  submission.writingEvents.push(event);
 
-  submission.writingEvents.push({
-    id: uid("event"),
-    timestamp: now,
-    type,
-    start: operation.start,
-    end: operation.end,
-    removedText: operation.removedText,
-    insertedText: type === "paste" ? pasteContent : operation.insertedText,
-    delta: operation.insertedText.length - operation.removedText.length,
-    flagged: isFlaggedPaste,
-    detectionReason: isLargeSingleInsert ? "large_single_insert_without_paste_event" : "",
-    preview: trimTo(operation.insertedText || operation.removedText || nextText.slice(-40), 80),
-  });
+  ui.pendingPaste = null;
+  persistState();
+}
 
+function updateFinalSubmission(nextText) {
+  const submission = getStudentSubmission();
+  if (!submission) return;
+  const previousText = submission.finalText || submission.draftText || "";
+  const now = new Date().toISOString();
+  const event = buildProcessWritingEvent(previousText, nextText, { phase: "final", field: "finalText" });
+  if (event) {
+    event.timestamp = now;
+    submission.writingEvents.push(event);
+  }
+  if (!submission.finalUnlocked) submission.finalUnlocked = true;
+  submission.finalText = nextText;
+  submission.updatedAt = now;
+  submission.startedAt = submission.startedAt || now;
+  submission.lastEditedAt = now;
+  ui.pendingPaste = null;
+  persistState();
+}
+
+function updateOutlineProcessEvent(field, nextText) {
+  const submission = getStudentSubmission();
+  if (!submission || !field) return;
+  submission.outline = submission.outline || {};
+  const previousText = submission.outline[field] || "";
+  const event = buildProcessWritingEvent(previousText, nextText, { phase: "coach_outline", field });
+  submission.outline[field] = nextText;
+  submission.updatedAt = new Date().toISOString();
+  if (event) {
+    event.timestamp = submission.updatedAt;
+    submission.writingEvents = submission.writingEvents || [];
+    submission.writingEvents.push(event);
+  }
   ui.pendingPaste = null;
   persistState();
 }
@@ -7879,7 +7958,8 @@ function getPlaybackState(submission) {
 }
 
 function getPlaybackFrames(submission) {
-  const events = safeArray(submission.writingEvents);
+  const events = safeArray(submission.writingEvents)
+    .filter((event) => event?.phase !== "coach_outline");
   const eventSignature = events
     .map((event) => `${event?.timestamp || ""}:${event?.type || ""}:${event?.start ?? ""}:${event?.end ?? ""}:${String(event?.insertedText || "").length}:${String(event?.removedText || "").length}`)
     .join("|");
@@ -7949,8 +8029,9 @@ function getPlaybackFrames(submission) {
     }
   }
 
-  if ((submission.draftText || "") !== text) {
-    pushFrame(submission.draftText || "", "Current draft", frames[frames.length - 1]?.timeMs || firstEventTime);
+  const currentWriting = submission.finalText || submission.draftText || "";
+  if (currentWriting !== text) {
+    pushFrame(currentWriting, submission.finalText ? "Current final version" : "Current draft", frames[frames.length - 1]?.timeMs || firstEventTime);
   }
 
   finalizePlaybackFrameDelays(frames);
@@ -9913,7 +9994,7 @@ function buildSuggestedStudentComment(assignment, submission, metrics, totalScor
     : "You did not complete the reflection on what you improved — this is an important part of the writing process.";
 
   const pasteComment = pasteFlags
-    ? ` Note: the system detected ${pasteFlags} large paste event${pasteFlags > 1 ? "s" : ""} in your writing log — all work should be your own.`
+    ? ` Note: the writing log recorded ${pasteFlags} large paste event${pasteFlags > 1 ? "s" : ""} — all work should be your own.`
     : "";
 
   return `${opening} ${chatComment} ${outlineComment} ${writingComment} ${revisionComment} ${reflectionComment}${pasteComment}`;
@@ -10178,12 +10259,15 @@ function normalizeSubmission(submission) {
       id: entry?.id || uid("event"),
       timestamp: entry?.timestamp || new Date().toISOString(),
       type: entry?.type || "insert",
+      phase: entry?.phase || "draft",
+      field: entry?.field || "",
       start: typeof entry?.start === "number" ? entry.start : null,
       end: typeof entry?.end === "number" ? entry.end : null,
       removedText: entry?.removedText || "",
       insertedText: entry?.insertedText || "",
       delta: Number(entry?.delta || 0),
       flagged: Boolean(entry?.flagged),
+      detectionReason: entry?.detectionReason || "",
       preview: entry?.preview || "",
     })),
     focusAnnotations: safeArray(submission?.focusAnnotations).map((entry) => ({
