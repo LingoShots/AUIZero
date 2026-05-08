@@ -5159,7 +5159,24 @@ function renderAdminCefrBenchmarkPanel() {
     if (measured > hi) return '<span title="Above benchmark range" style="color:#e67e22;">▲</span>';
     return '<span title="Within benchmark range" style="color:#27ae60;">✓</span>';
   }
-
+	
+function metricNameWithHelp(label, help) {
+  return `
+    <span style="position:relative;display:inline-block;">
+      <span 
+        style="cursor:help;text-decoration:underline dotted;text-underline-offset:3px;"
+        onmouseenter="this.nextElementSibling.style.display='block'"
+        onmouseleave="this.nextElementSibling.style.display='none'"
+      >
+        ${escapeHtml(label)} ?
+      </span>
+      <span style="display:none;position:absolute;left:0;top:22px;z-index:9999;width:260px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.14);font-size:0.78rem;line-height:1.45;color:var(--ink);font-weight:400;white-space:normal;">
+        ${escapeHtml(help)}
+      </span>
+    </span>
+  `;
+}
+	
   function fmt(v, unit) {
     if (v === null || v === undefined) return '<span style="color:var(--muted);">no data</span>';
     if (unit === '') return String(v);
@@ -5212,11 +5229,8 @@ function renderAdminCefrBenchmarkPanel() {
               const bg = rowIndex % 2 === 0 ? '#fafaf8' : '#fff';
               return `
                 <tr style="border-bottom:1px solid var(--line);background:${bg};">
-                  <td 
- 				    title="${escapeAttribute(help)}"
-				    style="padding:8px 10px;font-weight:600;white-space:nowrap;cursor:help;text-decoration:underline dotted;text-underline-offset:3px;"
-				  >
-				    ${escapeHtml(label)}
+                  <td style="padding:8px 10px;font-weight:600;white-space:nowrap;">
+ 				 	${metricNameWithHelp(label, help)}
 				  </td>
                   ${levelsWithData.map(l => {
                     const measured = byLevel[l]?.measured?.[key];
