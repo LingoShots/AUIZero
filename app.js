@@ -52,6 +52,7 @@ let reviewRefreshTimer = null;
 let adminClassRefreshTimer = null;
 let storageWarningShown = false;
 const processAnalysisSnapshotRequests = new Set();
+let adminProcessRecomputePromise = null;
 
 function getProfileScopedStorageKey(baseKey, profile = currentProfile) {
   if (!profile?.id || !profile?.role) return baseKey;
@@ -182,6 +183,9 @@ const ui = {
   adminCefrBenchmarks: null,
   adminCefrBenchmarksLoading: false,
   adminCefrBenchmarksError: null,
+  adminProcessRecomputeLoading: false,
+  adminProcessRecomputeResult: null,
+  adminProcessRecomputeError: null,
   gradeSuggestionLoading: false,
   gradeSubmitting: false,
   studentSubmitting: false,
@@ -1705,6 +1709,9 @@ function resetAppShellState() {
   ui.adminTeachers = [];
   ui.adminClassDetail = null;
   ui.adminSelectedAssignmentId = null;
+  ui.adminProcessRecomputeLoading = false;
+  ui.adminProcessRecomputeResult = null;
+  ui.adminProcessRecomputeError = null;
   ui.latestSubmissionDebug = null;
   ui.latestEmailDebug = null;
   ui.notice = "";
@@ -1824,10 +1831,43 @@ async function loadAdminCefrBenchmarks() {
   render();
 }
 
+async function refreshStaleAdminProcessAnalyses() {
+  if (adminProcessRecomputePromise) {
+    return adminProcessRecomputePromise;
+  }
+  ui.adminProcessRecomputeLoading = true;
+  ui.adminProcessRecomputeError = null;
+  render();
+
+  adminProcessRecomputePromise = Auth.apiFetch('/api/admin/process-analytics/recompute-stale', {
+    method: 'POST',
+    body: JSON.stringify({ limit: 50 }),
+  })
+    .then(async (data) => {
+      if (data?.error) {
+        ui.adminProcessRecomputeError = data.error;
+      } else {
+        ui.adminProcessRecomputeResult = data.result || null;
+        await loadAdminCefrBenchmarks();
+      }
+    })
+    .catch((error) => {
+      ui.adminProcessRecomputeError = error.message || 'Failed to update writing process analytics';
+    })
+    .finally(() => {
+      ui.adminProcessRecomputeLoading = false;
+      adminProcessRecomputePromise = null;
+      render();
+    });
+
+  return adminProcessRecomputePromise;
+}
+
 async function loadAdminData() {
   const data = await Auth.apiFetch('/api/admin/teachers');
   ui.adminTeachers = data.teachers || [];
   loadAdminCefrBenchmarks();
+  refreshStaleAdminProcessAnalyses();
 }
 
 async function refreshAdminClassDetail({ keepNotice = false, silent = false } = {}) {
@@ -5112,6 +5152,23 @@ function renderAdminWorkspace() {
   return renderAdminTeacherList();
 }
 
+function renderAdminProcessRefreshStatus() {
+  if (ui.adminProcessRecomputeLoading) {
+    return `<div style="padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#fafaf8;margin-bottom:16px;color:var(--muted);font-size:0.84rem;">Updating writing process analytics in the background…</div>`;
+  }
+  if (ui.adminProcessRecomputeError) {
+    return `<div style="padding:12px 14px;border:1px solid #e8b4b8;border-radius:12px;background:#fff8fa;margin-bottom:16px;color:#9b3651;font-size:0.84rem;">Could not update writing process analytics: ${escapeHtml(ui.adminProcessRecomputeError)}</div>`;
+  }
+  const result = ui.adminProcessRecomputeResult;
+  if (!result) return "";
+  if (!Number(result.recomputed || 0) && !Number(result.remainingEstimate || 0)) return "";
+  return `
+    <div style="padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#f8fbff;margin-bottom:16px;color:var(--muted);font-size:0.84rem;">
+      Writing process analytics updated: ${escapeHtml(String(result.recomputed || 0))} refreshed for ${escapeHtml(result.analysisVersion || "current version")}${Number(result.remainingEstimate || 0) > 0 ? `, about ${escapeHtml(String(result.remainingEstimate))} still queued for the next admin load` : ""}.
+    </div>
+  `;
+}
+
 function renderAdminCefrBenchmarkPanel() {
   const CEFR_LEVELS = ['A0', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
   const BENCHMARKS = window.PraxisWritingProcess?.PRELIMINARY_COHORTS || {
@@ -5261,6 +5318,7 @@ function renderAdminTeacherList() {
         <button class="button-secondary" data-action="admin-view-as-teacher">Switch to my teacher view</button>
       </div>
      ${renderAdminCefrBenchmarkPanel()}
+      ${renderAdminProcessRefreshStatus()}
       ${teachers.length === 0
         ? `<div class="empty-state"><p>No teachers found.</p></div>`
         : `<div class="assignment-list">
@@ -5332,12 +5390,40 @@ function renderAdminStudentFlagControls(member) {
   `;
 }
 
-function renderAdminWritingBehaviourCard(submission, member, assignmentTitle = "") {
+function renderAdminWritingBehaviourCard(submission, member, assignment = {}) {
   const review = submission?.teacher_review || submission?.teacherReview || {};
   if (member?.is_test_account || review?.writingBehaviourExcluded) {
     return `
       <div style="padding:12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;color:var(--muted);font-size:0.85rem;">
         Writing behaviour data excluded ${member?.is_test_account ? "because this is marked as a test account" : "because this submission was flagged by the teacher"}.
+      </div>
+    `;
+  }
+  const assignmentRecord = typeof assignment === "string" ? { title: assignment } : (assignment || {});
+  const assignmentTitle = assignmentRecord.title || "Assignment";
+  if (window.PraxisWritingProcess?.analyzeSubmission) {
+    const analysis = window.PraxisWritingProcess.analyzeSubmission(submission, assignmentRecord);
+    const metrics = analysis.metrics || {};
+    const idleNote = Number(metrics.ignoredIdlePauseCount || 0) > 0
+      ? `<span class="pill" title="Longer gaps over 2 minutes are treated as idle or away time.">${escapeHtml(String(metrics.ignoredIdlePauseCount))} idle gap${Number(metrics.ignoredIdlePauseCount) === 1 ? "" : "s"} ignored</span>`
+      : "";
+    return `
+      <div style="padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff;">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:8px;">
+          <div>
+            <span class="mini-label" style="display:block;margin-bottom:3px;">${escapeHtml(assignmentTitle)}</span>
+            <strong style="font-size:0.95rem;color:var(--ink);">${escapeHtml(analysis.statusLabel || "Writing process")}</strong>
+          </div>
+          <span class="pill">${escapeHtml(analysis.analysisVersion || "")}</span>
+        </div>
+        <div class="pill-row">
+          <span class="pill">${escapeHtml(String(metrics.finalWords || 0))} words</span>
+          <span class="pill">${escapeHtml(String(metrics.typingRate || 0))} chars/min</span>
+          <span class="pill">${escapeHtml(String(metrics.longPausesPer100w || 0))} long pauses/100w</span>
+          <span class="pill">${escapeHtml(String(metrics.localRevisionsPer100w || 0))} local revisions/100w</span>
+          <span class="pill">${escapeHtml(String(Math.round(Number(metrics.productProcessRatio || 0) * 100)))}% text survival</span>
+          ${idleNote}
+        </div>
       </div>
     `;
   }
@@ -5473,7 +5559,7 @@ function renderAdminClassDetail() {
                       ` : ""}
                     <div style="margin-top:12px;">
                         <span class="mini-label">Writing fluency</span>
-                        ${renderAdminWritingBehaviourCard(sub, member)}
+                        ${renderAdminWritingBehaviourCard(sub, member, assignment)}
                       </div>
                     ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No work started yet.</p>`}
                   </div>
@@ -5557,7 +5643,7 @@ function renderAdminClassDetail() {
                     <div style="margin-top:10px;display:grid;gap:8px;">
                       ${studentSubs.map(sub => {
                         const a = (detail.assignments || []).find(a => a.id === sub.assignment_id);
-                        return renderAdminWritingBehaviourCard(sub, m, a?.title || "Assignment");
+                        return renderAdminWritingBehaviourCard(sub, m, a || { title: "Assignment" });
                       }).join("")}
                     </div>
                   ` : ""}
@@ -7703,6 +7789,7 @@ function renderPlaybackScreenOnly() {
 }
 
 const PLAYBACK_INTRA_EVENT_DELAY_MS = 60;
+const PLAYBACK_MAX_FRAME_DELAY_MS = 1200;
 
 function getPlaybackSpeedMultiplier() {
   const speed = Number(ui.playback.speed || 1);
@@ -7711,7 +7798,7 @@ function getPlaybackSpeedMultiplier() {
 
 function getPlaybackFrameDelayMs(frames, index) {
   const rawDelay = Math.max(0, Number(frames?.[index]?.delayMs || 0));
-  return rawDelay / getPlaybackSpeedMultiplier();
+  return Math.min(rawDelay, PLAYBACK_MAX_FRAME_DELAY_MS) / getPlaybackSpeedMultiplier();
 }
 
 function startPlayback(frames) {
@@ -8286,6 +8373,8 @@ function getWritingTimeSummary(submission) {
 function calculateMeanBurstLength(submission) {
   const events = safeArray(submission?.writingEvents);
   if (!events.length) return 0;
+  const minPauseMs = window.PraxisWritingProcess?.LONG_PAUSE_MIN_MS || 2000;
+  const maxThinkingPauseMs = window.PraxisWritingProcess?.THINKING_PAUSE_MAX_MS || 120000;
   const pauses = safeArray(submission?.keystrokeLog).map(e => e.gap);
   if (!pauses.length) {
     const insertEvents = events.filter(e => e.type === "insert" && e.insertedText);
@@ -8294,7 +8383,7 @@ function calculateMeanBurstLength(submission) {
       insertEvents.reduce((sum, e) => sum + String(e.insertedText || "").length, 0) / insertEvents.length
     );
   }
-  const longPauses = pauses.filter(g => g >= 2000).length;
+  const longPauses = pauses.filter(g => g >= minPauseMs && g <= maxThinkingPauseMs).length;
   const totalChars = events
     .filter(e => e.type === "insert")
     .reduce((sum, e) => sum + String(e.insertedText || "").length, 0);
@@ -8303,7 +8392,9 @@ function calculateMeanBurstLength(submission) {
 }
 
 function calculatePauseFrequency(submission) {
-  const pauses = safeArray(submission?.keystrokeLog).filter(e => e.gap >= 2000);
+  const minPauseMs = window.PraxisWritingProcess?.LONG_PAUSE_MIN_MS || 2000;
+  const maxThinkingPauseMs = window.PraxisWritingProcess?.THINKING_PAUSE_MAX_MS || 120000;
+  const pauses = safeArray(submission?.keystrokeLog).filter(e => e.gap >= minPauseMs && e.gap <= maxThinkingPauseMs);
   const finalText = submission?.finalText || submission?.draftText || "";
   const words = wordCount(finalText);
   if (!words) return 0;

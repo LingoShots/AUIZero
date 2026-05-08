@@ -160,6 +160,47 @@ test("writing process analysis uses review language and gates short submissions"
   assert.doesNotMatch(teacherFacingText, /cheating|plagiarism|suspicious|inauthentic|detected/);
 });
 
+test("writing process analysis excludes away-from-keyboard gaps from thinking pauses", () => {
+  const analysis = writingProcessAnalyze.analyzeSubmission({
+    finalText: repeatedWords("draft", 100),
+    writingEvents: [
+      {
+        id: "event-1",
+        timestamp: "2026-05-08T10:00:00.000Z",
+        type: "insert",
+        phase: "draft",
+        start: 0,
+        end: 0,
+        insertedText: "x".repeat(120),
+        removedText: "",
+      },
+      {
+        id: "event-2",
+        timestamp: "2026-05-08T10:05:00.000Z",
+        type: "insert",
+        phase: "draft",
+        start: 120,
+        end: 120,
+        insertedText: "x".repeat(120),
+        removedText: "",
+      },
+    ],
+    keystrokeLog: [
+      { gap: 1500 },
+      { gap: 2000 },
+      { gap: 60000 },
+      { gap: 180000 },
+    ],
+  }, {
+    languageLevel: "B1",
+  });
+
+  assert.equal(analysis.metrics.longPauseCount, 2);
+  assert.equal(analysis.metrics.ignoredIdlePauseCount, 1);
+  assert.equal(analysis.metrics.longPausesPer100w, 2);
+  assert.equal(analysis.metrics.activeMinutes, 2);
+});
+
 test("large external paste contributes evidence while own-outline paste is separated", () => {
   const outlineText = "My plan is to explain healthy eating, daily exercise, and enough sleep with simple examples.";
   const pastedEssayText = repeatedWords("health", 120);
@@ -225,6 +266,7 @@ test("writing process admin summary excludes test accounts and flagged submissio
   });
 
   assert.equal(summary.includedSubmissions, 1);
+  assert.equal(summary.includedProcessSubmissions, 1);
   assert.equal(summary.excludedSubmissions, 2);
   assert.equal(summary.excludedByTestAccount, 1);
   assert.equal(summary.excludedBySubmissionFlag, 1);

@@ -6,6 +6,7 @@ const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
 const { parseRubricBuffer, parseRubricText } = require('./rubricParser');
 const { analyzeSubmission } = require('./writing-process/analyze');
+const { ANALYSIS_VERSION } = require('./writing-process/types');
 const {
   appendResetQuery,
   getTeacherReviewSavedAt,
@@ -896,6 +897,113 @@ async function computeAndStoreProcessAnalysis(context, { store = true } = {}) {
     inputHash,
     stored: data || null,
     storageError: error ? error.message : null,
+  };
+}
+
+function submissionHasProcessInput(submission = {}) {
+  return Boolean(
+    String(submission.final_text || submission.finalText || submission.draft_text || submission.draftText || '').trim()
+    || (Array.isArray(submission.writing_events || submission.writingEvents) && (submission.writing_events || submission.writingEvents).length)
+    || (Array.isArray(submission.keystroke_log || submission.keystrokeLog) && (submission.keystroke_log || submission.keystrokeLog).length)
+  );
+}
+
+async function recomputeStaleProcessAnalyses({ limit = 50 } = {}) {
+  const cappedLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
+  const { data: assignments, error: assignmentError } = await supabase
+    .from('assignments')
+    .select('*');
+  if (assignmentError) throw assignmentError;
+
+  const assignmentIds = (assignments || []).map((assignment) => assignment.id).filter(Boolean);
+  if (!assignmentIds.length) {
+    return {
+      analysisVersion: ANALYSIS_VERSION,
+      checked: 0,
+      stale: 0,
+      recomputed: 0,
+      skipped: 0,
+      remainingEstimate: 0,
+      storageWarnings: [],
+    };
+  }
+
+  const [
+    submissionsResult,
+    analysesResult,
+    profilesResult,
+  ] = await Promise.all([
+    supabase
+      .from('submissions')
+      .select('*'),
+    supabase
+      .from('submission_process_analyses')
+      .select('submission_id, analysis_version, input_hash'),
+    supabase
+      .from('profiles')
+      .select('id, name, role, is_test_account'),
+  ]);
+
+  if (submissionsResult.error) throw submissionsResult.error;
+  if (analysesResult.error) throw analysesResult.error;
+  if (profilesResult.error && !isMissingProfileFlagColumn(profilesResult.error)) throw profilesResult.error;
+
+  const assignmentById = new Map((assignments || []).map((assignment) => [assignment.id, assignment]));
+  const analysisBySubmissionId = new Map((analysesResult.data || []).map((analysis) => [analysis.submission_id, analysis]));
+  const profiles = profilesResult.error && isMissingProfileFlagColumn(profilesResult.error)
+    ? []
+    : (profilesResult.data || []);
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const staleContexts = [];
+  let checked = 0;
+  let stale = 0;
+  let skipped = 0;
+
+  for (const submission of (submissionsResult.data || [])) {
+    const assignment = assignmentById.get(submission.assignment_id);
+    if (!assignment || !submissionHasProcessInput(submission)) {
+      skipped += 1;
+      continue;
+    }
+
+    checked += 1;
+    const studentProfile = profileById.get(submission.student_id) || {};
+    const inputHash = getSubmissionProcessInputHash(submission, assignment, studentProfile);
+    const existing = analysisBySubmissionId.get(submission.id);
+    const isStale = !existing
+      || existing.analysis_version !== ANALYSIS_VERSION
+      || existing.input_hash !== inputHash;
+
+    if (!isStale) continue;
+    stale += 1;
+    if (staleContexts.length < cappedLimit) {
+      staleContexts.push({ submission, assignment, studentProfile, inputHash });
+    }
+  }
+
+  const storageWarnings = [];
+  let recomputed = 0;
+  for (const context of staleContexts) {
+    const result = await computeAndStoreProcessAnalysis(context, { store: true });
+    if (result.storageError) {
+      storageWarnings.push({
+        submissionId: context.submission.id,
+        error: result.storageError,
+      });
+    } else {
+      recomputed += 1;
+    }
+  }
+
+  return {
+    analysisVersion: ANALYSIS_VERSION,
+    checked,
+    stale,
+    recomputed,
+    skipped,
+    limit: cappedLimit,
+    remainingEstimate: Math.max(0, stale - staleContexts.length),
+    storageWarnings,
   };
 }
 
@@ -2285,7 +2393,7 @@ app.get('/api/admin/writing-process/benchmarks', async (req, res) => {
 
     const { data: submissions, error: subError } = await readClient
       .from('submissions')
-      .select('id, assignment_id, student_id, writing_events, teacher_review, final_text, draft_text')
+      .select('id, assignment_id, student_id, writing_events, keystroke_log, teacher_review, final_text, draft_text, updated_at, submitted_at, started_at')
       .in('assignment_id', assignmentIds);
     if (subError) return res.status(400).json({ error: subError.message });
 
@@ -2302,19 +2410,20 @@ app.get('/api/admin/writing-process/benchmarks', async (req, res) => {
 
     const testAccountIds = new Set((profiles || []).map(p => p.id));
 
-    // Build a map of assignmentId -> language_level
-    const levelByAssignment = {};
+    // Build assignment lookups for the shared writing-process analyzer.
+    const assignmentById = {};
     for (const a of (assignments || [])) {
-      levelByAssignment[a.id] = (a.language_level || 'B1').trim().toUpperCase();
+      assignmentById[a.id] = a;
     }
 
     // Group included submission metrics by CEFR level
     const byLevel = {};
     for (const sub of (submissions || [])) {
-      const level = levelByAssignment[sub.assignment_id] || 'B1';
+      const assignment = assignmentById[sub.assignment_id] || {};
+      const level = String(assignment.language_level || 'B1').trim().toUpperCase();
       const isTestAccount = testAccountIds.has(sub.student_id);
       const review = sub.teacher_review || {};
-      const isExcluded = isTestAccount || Boolean(review.writingBehaviourExcluded);
+      const isExcluded = isTestAccount || Boolean(review.writingBehaviourExcluded || review.writing_behaviour_excluded);
 
       if (!byLevel[level]) {
         byLevel[level] = {
@@ -2339,58 +2448,18 @@ app.get('/api/admin/writing-process/benchmarks', async (req, res) => {
 
       byLevel[level].included += 1;
 
-      // Compute basic metrics inline (no dependency on writing-process module server-side)
-      const events = (sub.writing_events || []).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-      const finalText = sub.final_text || sub.draft_text || '';
-      const finalWords = finalText.trim().split(/\s+/).filter(Boolean).length;
-      if (finalWords < 50) continue;
+      const analysis = analyzeSubmission(sub, assignment, {
+        excludedFromAnalytics: false,
+        exclusionSources: [],
+      });
+      if (analysis.status === 'not_enough_writing_data') continue;
 
-      const insertedChars = events.reduce((s, e) => s + String(e.insertedText || '').length, 0);
-      const finalChars = finalText.length;
-
-      // Typing rate
-      const times = events.map(e => Date.parse(e.timestamp)).filter(Number.isFinite);
-      if (times.length >= 2) {
-        const activeMinutes = Math.max(0.25, (times[times.length - 1] - times[0]) / 60000);
-        byLevel[level].typingRates.push(Math.round(insertedChars / activeMinutes));
-      }
-
-      // Product/process ratio
-      if (insertedChars > 0) {
-        byLevel[level].productProcessRatios.push(Math.min(1, finalChars / insertedChars));
-      }
-
-      // Paste share
-      const pasteChars = events
-        .filter(e => e.type === 'paste' || e.flagged)
-        .reduce((s, e) => s + String(e.insertedText || '').length, 0);
-      byLevel[level].pasteShares.push(Math.min(1, pasteChars / Math.max(1, finalChars)));
-
-      // Long pauses (>= 2000ms gaps in keystroke log)
-      // Approximate from event timestamps: gaps >= 2000ms
-      let longPauses = 0;
-      for (let i = 1; i < times.length; i++) {
-        if (times[i] - times[i - 1] >= 2000) longPauses++;
-      }
-      byLevel[level].longPausesPer100w.push((longPauses / Math.max(1, finalWords)) * 100);
-
-      // Local revisions (delete/replace events in groups of 4–50 chars)
-      const deleteEvents = events.filter(e => e.type === 'delete' || e.type === 'replace');
-      let localRevisions = 0;
-      let groupChars = 0;
-      let lastDeleteTime = null;
-      for (const e of deleteEvents) {
-        const chars = String(e.removedText || '').length || Math.abs(Number(e.delta || 0));
-        const t = Date.parse(e.timestamp);
-        if (lastDeleteTime && (t - lastDeleteTime) > 700) {
-          if (groupChars >= 4 && groupChars <= 50) localRevisions++;
-          groupChars = 0;
-        }
-        groupChars += chars;
-        lastDeleteTime = t;
-      }
-      if (groupChars >= 4 && groupChars <= 50) localRevisions++;
-      byLevel[level].localRevisionsPer100w.push((localRevisions / Math.max(1, finalWords)) * 100);
+      const metrics = analysis.metrics || {};
+      if (Number.isFinite(Number(metrics.typingRate))) byLevel[level].typingRates.push(metrics.typingRate);
+      if (Number.isFinite(Number(metrics.longPausesPer100w))) byLevel[level].longPausesPer100w.push(metrics.longPausesPer100w);
+      if (Number.isFinite(Number(metrics.localRevisionsPer100w))) byLevel[level].localRevisionsPer100w.push(metrics.localRevisionsPer100w);
+      if (Number.isFinite(Number(metrics.productProcessRatio))) byLevel[level].productProcessRatios.push(metrics.productProcessRatio);
+      if (Number.isFinite(Number(metrics.pasteShare))) byLevel[level].pasteShares.push(metrics.pasteShare);
     }
 
     // Compute medians and ranges per level
@@ -2578,6 +2647,23 @@ app.patch('/api/admin/students/:studentId/flags', async (req, res) => {
     res.json({ profile: data });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/process-analytics/recompute-stale', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const result = await recomputeStaleProcessAnalyses({
+      limit: req.body?.limit || req.query?.limit || 50,
+    });
+    res.json({ result });
+  } catch (error) {
+    const message = error.message || String(error);
+    res.status(500).json({
+      error: message,
+      needsMigration: /submission_process_analyses/i.test(message),
+    });
   }
 });
 
