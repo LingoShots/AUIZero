@@ -57,6 +57,10 @@
   function renderTimeline(timeline = []) {
     if (!timeline.length) return "";
     return `
+      <div class="process-timeline-header">
+        <span>Activity timeline</span>
+        <span>Blue bars show typed characters in each time segment. Pink dot = paste or bulk insert.</span>
+      </div>
       <div class="process-timeline" aria-label="Writing process timeline">
         ${timeline.map((bucket) => {
           const height = Math.max(8, Math.round(58 * Number(bucket.intensity || 0)));
@@ -81,6 +85,9 @@
     const positions = analysis.cohortComparison?.positions || {};
     const metrics = analysis.metrics || {};
     const coach = analysis.coachBaseline || {};
+    const idlePauseNote = Number(metrics.ignoredIdlePauseCount || 0) > 0
+      ? `<p class="subtle" style="margin:0 0 12px;font-size:0.78rem;">${escapeHtml(String(metrics.ignoredIdlePauseCount))} longer gap${Number(metrics.ignoredIdlePauseCount) === 1 ? "" : "s"} over 2 minutes treated as idle or away time, not thinking pauses.</p>`
+      : "";
     const metricCards = [
       { key: "typingRate", label: defs.typingRate?.label || "Typing rate", value: metrics.typingRate, coachValue: coach.typingRate, range: ranges.typingRate, position: positions.typingRate, help: defs.typingRate?.help },
       { key: "longPauses", label: defs.longPauses?.label || "Long thinking pauses", value: metrics.longPausesPer100w, coachValue: null, range: ranges.longPauses, position: positions.longPauses, help: defs.longPauses?.help },
@@ -110,6 +117,7 @@
             ${analysis.evidence.map((item) => `<span class="process-chip" title="${escapeHtml(item.detail)}">${escapeHtml(item.label)}</span>`).join("")}
           </div>
         ` : `<p class="subtle" style="margin:0 0 12px;">No specific process evidence needs highlighting.</p>`}
+        ${idlePauseNote}
         ${renderTimeline(analysis.timeline)}
         <div class="process-metric-grid">
           ${metricCards.map(renderMetricCard).join("")}

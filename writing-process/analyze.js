@@ -5,12 +5,17 @@
 
   const {
     ANALYSIS_VERSION,
+    LONG_PAUSE_MIN_MS,
     MIN_WORDS_FOR_STATUS,
     STATUS,
     STATUS_LABELS,
     STATUS_REASONS,
+    THINKING_PAUSE_MAX_MS,
     PHASES,
   } = types;
+
+  const LONG_PAUSE_MINIMUM_MS = LONG_PAUSE_MIN_MS || 2000;
+  const THINKING_PAUSE_CUTOFF_MS = THINKING_PAUSE_MAX_MS || 120000;
 
   function safeArray(value) {
     return Array.isArray(value) ? value : [];
@@ -73,6 +78,32 @@
     return events.filter((event) => eventsApi.isPasteLikeWritingEvent
       ? eventsApi.isPasteLikeWritingEvent(event)
       : event.type === "paste" || event.flagged);
+  }
+
+  function getEventGaps(events = []) {
+    const times = safeArray(events)
+      .map(getEventTimeMs)
+      .filter((time) => Number.isFinite(time))
+      .sort((a, b) => a - b);
+    const gaps = [];
+    for (let index = 1; index < times.length; index += 1) {
+      gaps.push(times[index] - times[index - 1]);
+    }
+    return gaps;
+  }
+
+  function calculateActiveDurationMs(events = [], submission = {}) {
+    const gaps = getEventGaps(events).filter((gap) => Number.isFinite(gap) && gap > 0);
+    if (gaps.length) {
+      return gaps.reduce((sum, gap) => sum + Math.min(gap, THINKING_PAUSE_CUTOFF_MS), 0);
+    }
+
+    const start = Date.parse(submission.startedAt || submission.started_at || submission.updatedAt || submission.updated_at || "");
+    const end = Date.parse(submission.submittedAt || submission.submitted_at || submission.updatedAt || submission.updated_at || "");
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return Math.min(end - start, THINKING_PAUSE_CUTOFF_MS);
+    }
+    return 0;
   }
 
   function normalizeMatchText(text = "") {
@@ -142,19 +173,25 @@
     };
   }
 
-  function calculatePauseMetrics(submission = {}, finalWords = 0) {
+  function calculatePauseMetrics(submission = {}, finalWords = 0, events = null) {
     const keystrokes = safeArray(submission.keystrokeLog || submission.keystroke_log);
-    const gaps = keystrokes
+    const keystrokeGaps = keystrokes
       .map((entry) => Number(entry.gap || 0))
       .filter((gap) => Number.isFinite(gap) && gap > 0);
-    const longPauses = gaps.filter((gap) => gap >= 2000);
+    const gaps = keystrokeGaps.length ? keystrokeGaps : getEventGaps(events || getEssayEvents(submission));
+    const longPauses = gaps.filter((gap) => gap >= LONG_PAUSE_MINIMUM_MS && gap <= THINKING_PAUSE_CUTOFF_MS);
     const shortPauses = gaps.filter((gap) => gap >= 200);
+    const idleGaps = gaps.filter((gap) => gap > THINKING_PAUSE_CUTOFF_MS);
     const words = Math.max(1, finalWords);
     return {
       shortPauseCount: shortPauses.length,
       longPauseCount: longPauses.length,
       longPausesPer100w: round((longPauses.length / words) * 100),
       meanLongPauseMs: longPauses.length ? Math.round(longPauses.reduce((sum, gap) => sum + gap, 0) / longPauses.length) : 0,
+      ignoredIdlePauseCount: idleGaps.length,
+      ignoredIdlePauseMs: idleGaps.reduce((sum, gap) => sum + gap, 0),
+      longPauseMinMs: LONG_PAUSE_MINIMUM_MS,
+      thinkingPauseMaxMs: THINKING_PAUSE_CUTOFF_MS,
     };
   }
 
@@ -210,9 +247,7 @@
         localRevisionsPer100w: null,
       };
     }
-    const first = getEventTimeMs(outlineEvents[0]) || 0;
-    const last = getEventTimeMs(outlineEvents[outlineEvents.length - 1]) || first;
-    const activeMinutes = Math.max(0.25, (last - first) / 60000);
+    const activeMinutes = Math.max(0.25, calculateActiveDurationMs(outlineEvents) / 60000);
     const typedChars = getInsertedCharacters(outlineEvents);
     const text = outlineEvents.map((event) => event.insertedText || "").join(" ");
     const words = wordCount(text);
@@ -287,13 +322,9 @@
     }));
     const externalPasteEvents = pasteEvents.filter((event) => event.source !== "own_outline");
     const pasteChars = externalPasteEvents.reduce((sum, event) => sum + String(event.insertedText || "").length, 0);
-    const firstEvent = events[0];
-    const lastEvent = events[events.length - 1];
-    const firstMs = getEventTimeMs(firstEvent) || Date.parse(submission.startedAt || submission.started_at || submission.updatedAt || submission.updated_at || "") || Date.now();
-    const lastMs = getEventTimeMs(lastEvent) || Date.parse(submission.submittedAt || submission.submitted_at || submission.updatedAt || submission.updated_at || "") || firstMs;
-    const activeMinutes = Math.max(0.25, (lastMs - firstMs) / 60000);
+    const activeMinutes = Math.max(0.25, calculateActiveDurationMs(events, submission) / 60000);
     const revisionMetrics = calculateRevisionMetrics(events, finalWords);
-    const pauseMetrics = calculatePauseMetrics(submission, finalWords);
+    const pauseMetrics = calculatePauseMetrics(submission, finalWords, events);
     const meanBurstLength = pauseMetrics.longPauseCount
       ? Math.round(insertedChars / (pauseMetrics.longPauseCount + 1))
       : insertedChars;
@@ -373,6 +404,7 @@
     wordCount,
     calculateRevisionMetrics,
     calculatePauseMetrics,
+    calculateActiveDurationMs,
   };
 
   if (typeof module !== "undefined" && module.exports) {

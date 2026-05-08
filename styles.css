@@ -1611,6 +1611,21 @@ button.rubric-level-cell:hover {
   font-size: 0.9rem;
 }
 
+.process-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 4px 0 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.process-timeline-header span:first-child {
+  color: var(--ink);
+  font-weight: 700;
+}
+
 .process-timeline {
   display: grid;
   grid-template-columns: repeat(12, minmax(8px, 1fr));

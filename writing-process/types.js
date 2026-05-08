@@ -1,7 +1,9 @@
 (() => {
-  const ANALYSIS_VERSION = "writing-process-v1";
+  const ANALYSIS_VERSION = "writing-process-v2";
   const LARGE_PASTE_LIMIT = 220;
   const MIN_WORDS_FOR_STATUS = 80;
+  const LONG_PAUSE_MIN_MS = 2000;
+  const THINKING_PAUSE_MAX_MS = 120000;
 
   const STATUS = {
     TYPICAL: "typical_process",
@@ -37,7 +39,7 @@
     },
     longPauses: {
       label: "Long thinking pauses",
-      help: "Pauses of 2 seconds or more per 100 words. L2 writers pause in different places depending on planning, vocabulary search, and sentence boundaries.",
+      help: "Pauses of 2 seconds to 2 minutes per 100 words. Longer gaps are treated as idle or away time, not thinking pauses.",
     },
     localRevisions: {
       label: "Local revisions",
@@ -57,6 +59,8 @@
     ANALYSIS_VERSION,
     LARGE_PASTE_LIMIT,
     MIN_WORDS_FOR_STATUS,
+    LONG_PAUSE_MIN_MS,
+    THINKING_PAUSE_MAX_MS,
     STATUS,
     STATUS_LABELS,
     STATUS_REASONS,
