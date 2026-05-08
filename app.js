@@ -51,6 +51,7 @@ let currentClassMembers = [];
 let reviewRefreshTimer = null;
 let adminClassRefreshTimer = null;
 let storageWarningShown = false;
+const processAnalysisSnapshotRequests = new Set();
 
 function getProfileScopedStorageKey(baseKey, profile = currentProfile) {
   if (!profile?.id || !profile?.role) return baseKey;
@@ -693,6 +694,7 @@ function fluencyBadgeStyle(value, low, high) {
 
 function renderWritingBehaviour(submission, assignment) {
   if (window.PraxisWritingProcess?.renderTeacherPanel) {
+    requestProcessAnalysisSnapshot(submission);
     const excludedSources = [];
     if (submission?.teacherReview?.writingBehaviourExcluded) excludedSources.push("submission_flag");
     return window.PraxisWritingProcess.renderTeacherPanel(submission, assignment, {
@@ -879,6 +881,20 @@ function renderWritingBehaviour(submission, assignment) {
       <p style="margin:10px 0 0;font-size:0.80rem;color:${bandColour};line-height:1.5;">${escapeHtml(explanation)}</p>
     </div>
   `;
+}
+
+function requestProcessAnalysisSnapshot(submission) {
+  if (!submission?.id || String(submission.id).startsWith("submission-") || String(submission.id).startsWith("pending-review-")) {
+    return;
+  }
+  if (processAnalysisSnapshotRequests.has(submission.id)) {
+    return;
+  }
+  processAnalysisSnapshotRequests.add(submission.id);
+  Auth.apiFetch(`/api/submissions/${submission.id}/process-analysis`)
+    .catch((error) => {
+      console.warn("Could not persist writing process analysis snapshot:", error.message || error);
+    });
 }
 
 function renderFluencyCard(submission, assignmentTitle = "") {
