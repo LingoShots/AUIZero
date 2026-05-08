@@ -5125,12 +5125,32 @@ function renderAdminCefrBenchmarkPanel() {
   };
 
   const METRIC_LABELS = {
-    typingRate:            { label: 'Typing rate', unit: 'chars/min' },
-    longPausesPer100w:     { label: 'Long pauses', unit: 'per 100w' },
-    localRevisionsPer100w: { label: 'Local revisions', unit: 'per 100w' },
-    productProcessRatio:   { label: 'Product/process ratio', unit: '' },
-    pasteShare:            { label: 'Paste share', unit: '' },
-  };
+  typingRate: {
+    label: 'Typing rate',
+    unit: 'chars/min',
+    help: 'How quickly the student typed during the writing task. Very low typing may suggest hesitation, difficulty, or lots of thinking time.'
+  },
+  longPausesPer100w: {
+    label: 'Long pauses',
+    unit: 'per 100w',
+    help: 'How often the student stopped typing for a longer time. Some pauses are normal because writers think, plan, and check their work.'
+  },
+  localRevisionsPer100w: {
+    label: 'Local revisions',
+    unit: 'per 100w',
+    help: 'Small changes made while writing, such as fixing words, grammar, spelling, or reworking part of a sentence.'
+  },
+  productProcessRatio: {
+    label: 'Product/process ratio',
+    unit: '',
+    help: 'A rough comparison between the final text and the amount of writing activity used to create it. Lower values can mean more drafting, deleting, or revising.'
+  },
+  pasteShare: {
+    label: 'Paste share',
+    unit: '',
+    help: 'How much of the final writing appears to have come from pasted text rather than normal typing.'
+  },
+};
 
   function statusDot(measured, range) {
     if (measured === null || measured === undefined || !range) return '<span style="color:var(--muted);">—</span>';
@@ -5188,11 +5208,16 @@ function renderAdminCefrBenchmarkPanel() {
           </thead>
           <tbody>
             ${metricKeys.map((key, rowIndex) => {
-              const { label, unit } = METRIC_LABELS[key];
+              const { label, unit, help } = METRIC_LABELS[key];
               const bg = rowIndex % 2 === 0 ? '#fafaf8' : '#fff';
               return `
                 <tr style="border-bottom:1px solid var(--line);background:${bg};">
-                  <td style="padding:8px 10px;font-weight:600;white-space:nowrap;">${escapeHtml(label)}</td>
+                  <td 
+ 				    title="${escapeAttribute(help)}"
+				    style="padding:8px 10px;font-weight:600;white-space:nowrap;cursor:help;text-decoration:underline dotted;text-underline-offset:3px;"
+				  >
+				    ${escapeHtml(label)}
+				  </td>
                   ${levelsWithData.map(l => {
                     const measured = byLevel[l]?.measured?.[key];
                     const range = BENCHMARKS[l]?.[key === 'longPausesPer100w' ? 'longPauses' : key === 'localRevisionsPer100w' ? 'localRevisions' : key];
