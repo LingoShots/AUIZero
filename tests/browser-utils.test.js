@@ -9,6 +9,7 @@ const notificationUtils = require("../notification-utils.js");
 const submissionUtils = require("../submission-utils.js");
 const submissionSanitizer = require("../submission-sanitizer.js");
 const canonicalUrlUtils = require("../canonical-url-utils.js");
+const adminUtils = require("../admin-utils.js");
 const submissionRegressionFixture = require("./fixtures/submission-regression-fixture.js");
 
 global.window = global.window || {};
@@ -88,6 +89,21 @@ test("AI action buttons are disabled while requests are pending", () => {
     disabled: false,
     label: "Get AI feedback (1/2)",
   });
+});
+
+test("admin class detail signatures change when roster or assignments change", () => {
+  const original = adminUtils.getAdminClassDetailSignature({
+    members: [{ id: "student-1", name: "Student One", is_test_account: false }],
+    assignments: [{ id: "assignment-1", title: "Original", status: "published" }],
+    submissions: [{ id: "submission-1", assignment_id: "assignment-1", student_id: "student-1", status: "submitted" }],
+  });
+  const changed = adminUtils.getAdminClassDetailSignature({
+    members: [{ id: "student-1", name: "Student One", is_test_account: true }],
+    assignments: [{ id: "assignment-2", title: "Replacement", status: "published" }],
+    submissions: [],
+  });
+
+  assert.notEqual(original, changed);
 });
 
 test("notification utils normalize password reset redirects", () => {

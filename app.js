@@ -8,6 +8,7 @@ const LARGE_PASTE_LIMIT = 220;
 const PRODUCT_NAME = "praxis";
 const PRODUCT_TAGLINE = "Think clearly. Write clearly.";
 const REVIEW_REFRESH_MS = 20000;
+const ADMIN_REFRESH_MS = 20000;
 
 const {
   buildDeadlineTimeOptions,
@@ -38,6 +39,9 @@ const {
   buildCriterionAnalytics,
 } = window.ReviewUtils;
 const calculateTeacherReviewSummaryCore = window.ReviewUtils.calculateTeacherReviewSummary;
+const {
+  getAdminClassDetailSignature,
+} = window.AdminUtils;
 
 // App state — now server-backed
 let currentProfile = null;
@@ -45,6 +49,7 @@ let currentClasses = [];
 let currentClassId = null;
 let currentClassMembers = [];
 let reviewRefreshTimer = null;
+let adminClassRefreshTimer = null;
 let storageWarningShown = false;
 
 function getProfileScopedStorageKey(baseKey, profile = currentProfile) {
@@ -1779,20 +1784,71 @@ async function loadAdminData() {
   ui.adminTeachers = data.teachers || [];
 }
 
-async function refreshAdminClassDetail({ keepNotice = false } = {}) {
+async function refreshAdminClassDetail({ keepNotice = false, silent = false } = {}) {
   if (!ui.adminSelectedClassId) return;
   const data = await Auth.apiFetch(`/api/admin/classes/${ui.adminSelectedClassId}/detail`);
   if (data.error) {
-    ui.notice = `Could not refresh admin class data: ${data.error}`;
+    if (!silent) {
+      ui.notice = `Could not refresh admin class data: ${data.error}`;
+    }
     return;
   }
   ui.adminClassDetail = data;
   if (ui.adminSelectedAssignmentId && !safeArray(data.assignments).some((assignment) => assignment.id === ui.adminSelectedAssignmentId)) {
     ui.adminSelectedAssignmentId = null;
     ui.notice = "This assignment no longer exists. Admin data refreshed.";
-  } else if (!keepNotice) {
+  } else if (!keepNotice && !silent) {
     ui.notice = "Admin data refreshed.";
   }
+}
+
+function stopAdminClassPolling() {
+  if (adminClassRefreshTimer) {
+    window.clearInterval(adminClassRefreshTimer);
+    adminClassRefreshTimer = null;
+  }
+}
+
+async function refreshAdminClassDetailIfChanged() {
+  if (
+    currentProfile?.role !== "admin"
+    || isAdminTeacherView()
+    || ui.adminView !== "class"
+    || !ui.adminSelectedClassId
+    || document.visibilityState !== "visible"
+  ) {
+    return;
+  }
+
+  const currentSignature = getAdminClassDetailSignature(ui.adminClassDetail);
+  await refreshAdminClassDetail({ keepNotice: true, silent: true });
+  const nextSignature = getAdminClassDetailSignature(ui.adminClassDetail);
+  if (currentSignature !== nextSignature) {
+    render();
+  }
+}
+
+function syncAdminClassPolling() {
+  const shouldPoll =
+    currentProfile?.role === "admin"
+    && !isAdminTeacherView()
+    && ui.adminView === "class"
+    && Boolean(ui.adminSelectedClassId);
+
+  if (!shouldPoll) {
+    stopAdminClassPolling();
+    return;
+  }
+
+  if (adminClassRefreshTimer) {
+    return;
+  }
+
+  adminClassRefreshTimer = window.setInterval(() => {
+    refreshAdminClassDetailIfChanged().catch((error) => {
+      console.error("Could not refresh admin class data:", error);
+    });
+  }, ADMIN_REFRESH_MS);
 }
 
 async function loadTeacherClassContext(classId) {
@@ -3236,14 +3292,6 @@ if (action === "admin-select-assignment") {
     return;
   }
 
-  if (action === "admin-refresh-class-detail") {
-    ui.notice = "Refreshing admin data...";
-    render();
-    await refreshAdminClassDetail();
-    render();
-    return;
-  }
-  
   if (action === "admin-select-class") {
     ui.adminSelectedClassId = target.dataset.classId;
     ui.adminSelectedTeacherId = target.dataset.teacherId;
@@ -4578,6 +4626,7 @@ function render() {
   document.title = PRODUCT_NAME;
   if (!currentProfile || !Auth.getToken() || !Auth.getProfile()) {
     stopTeacherReviewPolling();
+    stopAdminClassPolling();
     resetAppShellState();
     const params = new URLSearchParams(window.location.search);
     renderAuthScreen(params.get("join"));
@@ -4628,6 +4677,7 @@ function render() {
   });
 
   syncTeacherReviewPolling();
+  syncAdminClassPolling();
 }
 
 function setAuthTab(tab) {
@@ -5123,17 +5173,20 @@ function renderSubmissionBehaviourFlagPanel(submission) {
   const review = createDefaultTeacherReview(submission?.teacherReview);
   const isFlagged = Boolean(review.writingBehaviourExcluded);
   return `
-    <div style="margin-bottom:16px;padding:12px;border:1px solid ${isFlagged ? "#d46a7b" : "var(--line)"};border-radius:12px;background:${isFlagged ? "#fff5f7" : "#fafaf8"};">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:240px;">
-          <p class="mini-label" style="margin-bottom:4px;">Writing behaviour analytics</p>
-          <p style="margin:0;color:var(--muted);font-size:0.84rem;line-height:1.5;">
-            ${isFlagged
-              ? `This submission is flagged and should be ignored by future writing behaviour analytics.`
-              : `Flag only this submission if its writing behaviour looks unreliable, cheated, or unsuitable for future analytics.`}
-          </p>
-          ${isFlagged ? `<p style="margin:6px 0 0;font-size:0.78rem;color:#9b3651;">Flagged ${escapeHtml(formatDateTime(review.writingBehaviourExcludedAt))}${review.writingBehaviourExclusionReason ? ` · ${escapeHtml(review.writingBehaviourExclusionReason)}` : ""}</p>` : ""}
-        </div>
+    <details style="margin-bottom:12px;border:1px solid ${isFlagged ? "#d46a7b" : "var(--line)"};border-radius:12px;background:${isFlagged ? "#fff8fa" : "#fafaf8"};">
+      <summary style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;list-style-position:inside;">
+        <span style="font-weight:700;color:var(--ink);">Writing behaviour analytics</span>
+        <span class="${isFlagged ? "warning-pill" : "pill"}" style="margin-left:auto;">
+          ${isFlagged ? "Flagged" : "Optional"}
+        </span>
+      </summary>
+      <div style="padding:0 12px 12px;">
+        <p style="margin:0;color:var(--muted);font-size:0.84rem;line-height:1.5;">
+          ${isFlagged
+            ? `This submission is ignored by future writing behaviour analytics.`
+            : `Flag only this submission if its writing behaviour looks unreliable, cheated, or unsuitable for future analytics.`}
+        </p>
+        ${isFlagged ? `<p style="margin:6px 0 10px;font-size:0.78rem;color:#9b3651;">Flagged ${escapeHtml(formatDateTime(review.writingBehaviourExcludedAt))}${review.writingBehaviourExclusionReason ? ` · ${escapeHtml(review.writingBehaviourExclusionReason)}` : ""}</p>` : `<div style="height:10px;"></div>`}
         <button
           class="${isFlagged ? "button-ghost" : "button-secondary"}"
           data-action="toggle-submission-behaviour-exclusion"
@@ -5143,7 +5196,7 @@ function renderSubmissionBehaviourFlagPanel(submission) {
           ${isFlagged ? "Unflag submission" : "Flag submission"}
         </button>
       </div>
-    </div>
+    </details>
   `;
 }
 
@@ -5168,7 +5221,6 @@ function renderAdminClassDetail() {
           <button class="button-ghost" data-action="admin-back-to-class" style="font-size:0.85rem;">${escapeHtml(ui.adminSelectedClassName || "Class")}</button>
           <span style="color:var(--muted);">/</span>
           <span style="font-weight:600;">${escapeHtml(assignment?.title || "Assignment")}</span>
-          <button class="button-ghost" data-action="admin-refresh-class-detail" style="font-size:0.85rem;margin-left:auto;">Refresh admin data</button>
         </div>
 
         <div style="margin-bottom:16px;">
@@ -5260,7 +5312,6 @@ function renderAdminClassDetail() {
         <button class="button-ghost" data-action="admin-back-to-teacher" style="font-size:0.85rem;">${escapeHtml(teacher?.name || "Teacher")}</button>
         <span style="color:var(--muted);">/</span>
         <span style="font-weight:600;">${escapeHtml(ui.adminSelectedClassName || "Class")}</span>
-        <button class="button-ghost" data-action="admin-refresh-class-detail" style="font-size:0.85rem;margin-left:auto;">Refresh admin data</button>
       </div>
 
       <div style="margin-bottom:24px;">
