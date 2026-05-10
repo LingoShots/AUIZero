@@ -518,7 +518,6 @@
   const AdminRender = {
     renderAdminProcessRefreshStatus,
     renderAdminCefrBenchmarkPanel,
-    metricNameWithHelp,
     renderAdminTeacherList,
     renderAdminTeacherDetail,
     renderAdminStudentDataFlags,
