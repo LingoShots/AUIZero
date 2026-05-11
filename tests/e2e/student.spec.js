@@ -4,16 +4,19 @@ const {
   login,
   openFirstStudentAssignment,
   selectStudentTestClass,
+  collectPageErrors,
 } = require("./helpers");
 
 test.describe("Student workflow", () => {
   test.skip(!hasCredentials("student"), "Set STUDENT_EMAIL and STUDENT_PASSWORD to run student tests.");
 
   test("student dashboard loads after login", async ({ page }) => {
+    const { getErrors } = collectPageErrors(page);
     await login(page, "student");
 
     await expect(page.getByText(/student view/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByLabel(/select assignment/i)).toBeVisible();
+    expect(getErrors(), "no JS errors on student dashboard").toEqual([]);
   });
 
   test("student can see published assignments in their class", async ({ page }) => {

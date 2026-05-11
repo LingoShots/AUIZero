@@ -1,6 +1,9 @@
 name: Playwright E2E Tests
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       test_file:
@@ -17,7 +20,7 @@ on:
 
 jobs:
   e2e:
-    name: Run ${{ inputs.test_file }} Playwright test
+    name: ${{ github.event_name == 'push' && 'Smoke tests (push to main)' || format('Run {0} Playwright test', inputs.test_file) }}
     runs-on: ubuntu-latest
 
     env:
@@ -42,36 +45,40 @@ jobs:
       - name: Install Chromium browser
         run: npx playwright install --with-deps chromium
 
-      - name: Run selected Playwright tests
+      - name: Run Playwright tests
         shell: bash
         run: |
-          case "${{ inputs.test_file }}" in
-            auth)
-              npx playwright test tests/e2e/auth.spec.js
-              ;;
-            teacher)
-              npx playwright test tests/e2e/teacher.spec.js
-              ;;
-            student)
-              npx playwright test tests/e2e/student.spec.js
-              ;;
-            full-flow)
-              npx playwright test tests/e2e/full-flow.spec.js
-              ;;
-            all)
-              npx playwright test
-              ;;
-            *)
-              echo "Unknown test choice: ${{ inputs.test_file }}"
-              exit 1
-              ;;
-          esac
+          if [ "${{ github.event_name }}" = "push" ]; then
+            npx playwright test tests/e2e/auth.spec.js tests/e2e/teacher.spec.js tests/e2e/student.spec.js
+          else
+            case "${{ inputs.test_file }}" in
+              auth)
+                npx playwright test tests/e2e/auth.spec.js
+                ;;
+              teacher)
+                npx playwright test tests/e2e/teacher.spec.js
+                ;;
+              student)
+                npx playwright test tests/e2e/student.spec.js
+                ;;
+              full-flow)
+                npx playwright test tests/e2e/full-flow.spec.js
+                ;;
+              all)
+                npx playwright test
+                ;;
+              *)
+                echo "Unknown test choice: ${{ inputs.test_file }}"
+                exit 1
+                ;;
+            esac
+          fi
 
       - name: Upload Playwright HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-${{ inputs.test_file }}-html-report
+          name: e2e-${{ github.event_name == 'push' && 'smoke' || inputs.test_file }}-html-report
           path: playwright-report/
           if-no-files-found: ignore
 
@@ -79,6 +86,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-${{ inputs.test_file }}-failure-artifacts
+          name: e2e-${{ github.event_name == 'push' && 'smoke' || inputs.test_file }}-failure-artifacts
           path: test-results/
           if-no-files-found: ignore
