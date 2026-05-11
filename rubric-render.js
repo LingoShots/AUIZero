@@ -7,10 +7,6 @@
 // for backward compatibility with existing app.js call sites.
 
 (function () {
-  function safeArray(value) {
-    return Array.isArray(value) ? value : [];
-  }
-
   function getRubricUtils() {
     return (typeof window !== "undefined" && window.RubricUtils) || {};
   }

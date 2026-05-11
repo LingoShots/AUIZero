@@ -1,12 +1,4 @@
 (() => {
-  function safeArrayFallback(value) {
-    return Array.isArray(value) ? value : [];
-  }
-
-  function safeArray(value) {
-    return typeof window.safeArray === "function" ? window.safeArray(value) : safeArrayFallback(value);
-  }
-
   function slugifyRubricId(text, fallback = "criterion") {
     const cleaned = String(text || "")
       .toLowerCase()

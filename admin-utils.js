@@ -7,10 +7,6 @@
     root.AdminUtils = api;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function buildAdminUtils() {
-  function safeArray(value) {
-    return Array.isArray(value) ? value : [];
-  }
-
   function getAdminClassDetailSignature(detail) {
     if (!detail) return "";
     try {

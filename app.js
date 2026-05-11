@@ -900,25 +900,6 @@ async function copyLmsGradeToClipboard(assignment, submission) {
   }
 }
 
-function escapeHtml(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replaceAll("`", "&#96;");
-}
-if (typeof window !== "undefined") window.escapeHtml = escapeHtml;
-if (typeof window !== "undefined") window.escapeAttribute = escapeAttribute;
-
-function titleCase(text) {
-  return String(text || "").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-window.titleCase = titleCase;
 
 function stopPlayback() {
   ui.playback.isPlaying = false;
@@ -7021,15 +7002,6 @@ function updateStudentDisplayName(studentId, nextName) {
   state.submissions = state.submissions.map((submission) => submission.studentId === studentId ? { ...submission, _studentName: name } : submission);
 }
 
-function uid(prefix) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
-window.uid = uid;
-
-function wordCount(text) {
-  return (String(text || "").trim().match(/\b[\w'-]+\b/g) || []).length;
-}
-if (typeof window !== "undefined") window.wordCount = wordCount;
 
 function splitLines(text) {
   return String(text || "").split("\n").map((line) => line.trim()).filter(Boolean);
@@ -7121,10 +7093,6 @@ function extractKeywords(text) {
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([word]) => word);
 }
 
-function trimTo(text, length) {
-  return text.length > length ? `${text.slice(0, length - 1)}…` : text;
-}
-window.trimTo = trimTo;
 
 function renderProductWordmark(tagName = "span", className = "") {
   const cls = className ? ` class="${className}"` : "";
@@ -7135,32 +7103,6 @@ function renderBrandGlyph() {
   return `<img src="favicon-256.png" alt="" aria-hidden="true" width="64" height="64" style="display:block;border-radius:14px;">`;
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-window.clamp = clamp;
-
-function clamp01(value) {
-  return clamp(value, 0, 1);
-}
-
-function formatDateTime(value) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-if (typeof window !== "undefined") window.formatDateTime = formatDateTime;
-
-function formatTime(value) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-window.formatTime = formatTime;
 
 function renderEventSummary(entry) {
   const core = `${formatTime(entry.timestamp)} • ${entry.delta >= 0 ? "+" : ""}${entry.delta} chars`;
@@ -7202,7 +7144,3 @@ function hasOpeningClaim(text) {
   return wordCount(firstParagraph) >= 12;
 }
 
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-if (typeof window !== "undefined") window.safeArray = safeArray;

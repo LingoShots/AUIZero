@@ -1,10 +1,6 @@
 (() => {
   const LARGE_SINGLE_INSERT_LIMIT = 220;
 
-  function safeArray(value) {
-    return Array.isArray(value) ? value : [];
-  }
-
   function cleanLevelLabel(label = "") {
     if (typeof window.cleanRubricLevelLabel === "function") {
       return window.cleanRubricLevelLabel(label);
