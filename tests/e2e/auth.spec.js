@@ -1,19 +1,23 @@
 const { test, expect } = require("@playwright/test");
-const { hasCredentials, login, logout, getCredentials } = require("./helpers");
+const { hasCredentials, login, logout, getCredentials, collectPageErrors } = require("./helpers");
 
 test.describe("Authentication", () => {
   test("teacher can log in successfully", async ({ page }) => {
     test.skip(!hasCredentials("teacher"), "Set TEACHER_EMAIL and TEACHER_PASSWORD to run this test.");
 
+    const { getErrors } = collectPageErrors(page);
     await login(page, "teacher");
     await expect(page.getByText(/class work/i).first()).toBeVisible();
+    expect(getErrors(), "no JS errors on teacher dashboard").toEqual([]);
   });
 
   test("student can log in successfully", async ({ page }) => {
     test.skip(!hasCredentials("student"), "Set STUDENT_EMAIL and STUDENT_PASSWORD to run this test.");
 
+    const { getErrors } = collectPageErrors(page);
     await login(page, "student");
     await expect(page.getByText(/student view/i).first()).toBeVisible();
+    expect(getErrors(), "no JS errors on student dashboard").toEqual([]);
   });
 
   test("login with wrong password shows an error", async ({ page }) => {

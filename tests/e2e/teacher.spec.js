@@ -4,16 +4,19 @@ const {
   login,
   selectTeacherTestClass,
   createAndPublishAssignment,
+  collectPageErrors,
 } = require("./helpers");
 
 test.describe("Teacher workflow", () => {
   test.skip(!hasCredentials("teacher"), "Set TEACHER_EMAIL and TEACHER_PASSWORD to run teacher tests.");
 
   test("teacher dashboard loads after login", async ({ page }) => {
+    const { getErrors } = collectPageErrors(page);
     await login(page, "teacher");
 
     await expect(page.getByText(/class work/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("banner").getByText(/current class:/i)).toBeVisible();
+    expect(getErrors(), "no JS errors on teacher dashboard").toEqual([]);
   });
 
   test("teacher can navigate to the existing test class", async ({ page }) => {

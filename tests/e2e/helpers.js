@@ -277,6 +277,27 @@ async function gradeSubmittedAssignment(page, title) {
   await expect(page.getByText(/last saved/i).first()).toBeVisible({ timeout: 30_000 });
 }
 
+// Attaches console.error and uncaught-exception listeners to a page.
+// Returns a getter so tests can assert on collected errors after the fact.
+// Filters out known noisy-but-harmless browser messages.
+function collectPageErrors(page) {
+  const errors = [];
+
+  page.on("pageerror", (err) => {
+    errors.push(`[uncaught] ${err.message}`);
+  });
+
+  page.on("console", (msg) => {
+    if (msg.type() !== "error") return;
+    const text = msg.text();
+    // Ignore browser-level noise that isn't caused by app code.
+    if (/favicon|net::ERR_|Failed to load resource/.test(text)) return;
+    errors.push(`[console.error] ${text}`);
+  });
+
+  return { getErrors: () => errors };
+}
+
 module.exports = {
   TEST_CLASS_ID,
   getCredentials,
@@ -291,4 +312,5 @@ module.exports = {
   openStudentAssignment,
   completeStudentDraftFlow,
   gradeSubmittedAssignment,
+  collectPageErrors,
 };
