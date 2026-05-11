@@ -8,6 +8,9 @@
 // which mutates window.AppState.ui.teacherDraft properties in place.
 
 (function () {
+  const { createScoreBandsForPoints } = window.ReviewUtils;
+  const { combineDeadlineParts, getDeadlineTimePart } = window.DeadlineUtils;
+
   function createSimpleRubricCriterion(name, description, points = 4) {
     const maxPoints = Math.max(1, Number(points || 4));
     return {
