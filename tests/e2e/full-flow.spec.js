@@ -11,11 +11,11 @@ const {
 test.describe("Full teacher to student to teacher flow", () => {
   test.skip(!hasAllCredentials(), "Set all four TEACHER_* and STUDENT_* secrets to run the full flow.");
 
-  test.skip("teacher creates, student submits, and teacher grades an assignment", async ({ browser }, testInfo) => {
-    // SKIPPED: Test was hitting a Playwright-specific flake on the teacher's grading
-    // step (AI suggestion panel does not render in test context, but works correctly
-    // for real users in production). The auth, teacher, and student specs already
-    // cover these code paths individually. Revisit if the grading flow is refactored.
+  test("teacher creates, student submits, and teacher grades an assignment", async ({ browser }, testInfo) => {
+    // VERIFY: This was previously skipped due to a flake on the AI suggestion
+    // panel in the grading step. Re-enabling to see whether recent refactors
+    // (AppState bridge, teacher-assist extraction, abort-controller logic in
+    // requestAiGenerate) have fixed it. If it still flakes, re-skip it.
     //
     // This path intentionally exercises multiple AI-backed calls, so it needs a
     // longer timeout than the smaller smoke tests.

@@ -23,6 +23,7 @@ test.describe("Authentication", () => {
   test("login with wrong password shows an error", async ({ page }) => {
     test.skip(!hasCredentials("teacher"), "Set TEACHER_EMAIL and TEACHER_PASSWORD to run this test.");
 
+    const { getErrors } = collectPageErrors(page);
     const { email } = getCredentials("teacher");
     await page.goto("/");
     await page.getByPlaceholder("Email").first().fill(email);
@@ -33,12 +34,20 @@ test.describe("Authentication", () => {
 
     await expect(page.locator("#auth-error")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("#auth-error")).toContainText(/invalid|wrong|password|email|credentials|login/i);
+    // VERIFY: A failed login must not throw uncaught JS — only render an error UI.
+    // We filter the expected auth-error noise so we still catch real regressions.
+    expect(
+      getErrors().filter((e) => !/invalid|credentials|password|wrong/i.test(e)),
+      "no JS errors during failed login (beyond expected auth error)"
+    ).toEqual([]);
   });
 
   test("logged-in user can log out", async ({ page }) => {
     test.skip(!hasCredentials("teacher"), "Set TEACHER_EMAIL and TEACHER_PASSWORD to run this test.");
 
+    const { getErrors } = collectPageErrors(page);
     await login(page, "teacher");
     await logout(page);
+    expect(getErrors(), "no JS errors during login/logout cycle").toEqual([]);
   });
 });
