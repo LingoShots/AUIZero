@@ -1,16 +1,19 @@
 function stripTrailingSlash(value) {
-  return String(value || "").replace(/\/+$/, "");
+  const raw = String(value || "");
+  let end = raw.length;
+  while (end > 0 && raw[end - 1] === "/") end -= 1;
+  return raw.slice(0, end);
 }
 
 function normalizeHost(value) {
-  return String(value || "")
-    .split(",")[0]
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/:443$/, "")
-    .replace(/:80$/, "");
+  let host = String(value || "").split(",")[0].trim().toLowerCase();
+  if (host.startsWith("http://")) host = host.slice(7);
+  if (host.startsWith("https://")) host = host.slice(8);
+  const slashIndex = host.indexOf("/");
+  if (slashIndex >= 0) host = host.slice(0, slashIndex);
+  if (host.endsWith(":443")) host = host.slice(0, -4);
+  if (host.endsWith(":80")) host = host.slice(0, -3);
+  return host;
 }
 
 function isLocalHost(value) {
@@ -37,7 +40,7 @@ function getConfiguredBaseUrl(env = process.env) {
 function getSafeRedirectPath(originalUrl = "/") {
   const raw = String(originalUrl || "/").trim();
 
-  if (!raw || /[\r\n]/.test(raw)) return "/";
+  if (!raw || raw.includes("\r") || raw.includes("\n")) return "/";
   if (!raw.startsWith("/")) return "/";
   if (raw.startsWith("//")) return "/";
   if (raw.startsWith("/\\")) return "/";
@@ -50,7 +53,8 @@ function getCanonicalRedirectTarget({ method, host, originalUrl = "/", configure
   if (verb !== "GET" && verb !== "HEAD") return "";
 
   const base = stripTrailingSlash(configuredBase);
-  if (!/^https?:\/\//i.test(base)) return "";
+  const lowerBase = base.toLowerCase();
+  if (!lowerBase.startsWith("http://") && !lowerBase.startsWith("https://")) return "";
   if (isLocalHost(base) || isLocalHost(host)) return "";
 
   const canonicalHost = normalizeHost(base);
