@@ -2884,14 +2884,7 @@ if (action === "sign-out") {
     ui.notice = newStatus === "published" ? "Publishing assignment..." : "Moving assignment back to draft...";
     render();
     try {
-      const data = await Auth.apiFetch(`/api/assignments/${assignmentId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: newStatus })
-      });
-      if (data.error) {
-        ui.notice = "Could not update assignment: " + data.error;
-        return;
-      }
+      await window.ApiService.setAssignmentStatus(assignmentId, newStatus);
       await loadTeacherClassContext(currentClassId);
       ui.selectedAssignmentId = assignmentId;
       ui.notice = newStatus === "published"
@@ -2935,9 +2928,10 @@ if (action === "delete-class") {
   if (action === "delete-assignment") {
     const assignmentId = target.dataset.assignmentId;
     if (!confirm("Delete this assignment? This cannot be undone.")) return;
-    const result = await Auth.apiFetch(`/api/assignments/${assignmentId}`, { method: 'DELETE' });
-    if (result.error) {
-      ui.notice = `Could not delete assignment: ${result.error}`;
+    try {
+  	  await window.ApiService.deleteAssignment(assignmentId);
+	} catch (error) {
+      ui.notice = `Could not delete assignment: ${error.message}`;
       render();
       return;
     }
@@ -4256,39 +4250,13 @@ async function saveTeacherAssignment() {
   }
   currentClassId = selectedClassId;
 
-  const payload = {
-      title: assignment.title,
-      prompt: assignment.prompt,
-      focus: assignment.focus,
-      brief: assignment.brief,
-      assignment_type: assignment.assignmentType,
-      language_level: assignment.languageLevel,
-      word_count_min: assignment.wordCountMin,
-      word_count_max: assignment.wordCountMax,
-      feedback_request_limit: assignment.feedbackRequestLimit,
-      student_focus: assignment.studentFocus,
-      rubric: assignment.rubricSchema || assignment.rubric,
-      deadline: assignment.deadline || null,
-      chat_time_limit: assignment.chatTimeLimit,
-      uploaded_rubric_text: assignment.uploadedRubricText,
-      status: assignment.status || 'draft'
-    };
-  const data = editingAssignment
-    ? await Auth.apiFetch(`/api/assignments/${editingAssignment.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload)
-      })
-    : await Auth.apiFetch(`/api/classes/${selectedClassId}/assignments`, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
-  if (data.error) {
-    ui.notice = "Could not save assignment: " + data.error;
-    render();
-    return;
-  }
+  const savedAssignment = await window.ApiService.saveAssignment(
+  selectedClassId,
+  assignment,
+  editingAssignment?.id || null
+);
 
-  const savedAssignmentId = data.assignment?.id || null;
+const savedAssignmentId = savedAssignment?.id || null;
   await loadTeacherClassContext(selectedClassId);
   ui.selectedAssignmentId = savedAssignmentId || state.assignments[0]?.id || null;
   ui.selectedReviewSubmissionId = null;
