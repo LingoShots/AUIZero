@@ -95,7 +95,79 @@
       ...overrides,
     };
   }
+function buildAssignmentServerPayload(assignment = {}, overrides = {}) {
+  return {
+    title: assignment.title,
+    prompt: assignment.prompt,
+    focus: assignment.focus,
+    brief: assignment.brief,
+    assignment_type: assignment.assignmentType,
+    language_level: assignment.languageLevel,
+    word_count_min: assignment.wordCountMin,
+    word_count_max: assignment.wordCountMax,
+    feedback_request_limit: assignment.feedbackRequestLimit,
+    student_focus: assignment.studentFocus,
+    rubric: assignment.rubricSchema || assignment.rubric,
+    deadline: assignment.deadline || null,
+    chat_time_limit: assignment.chatTimeLimit,
+    uploaded_rubric_text: assignment.uploadedRubricText,
+    status: assignment.status || "draft",
+    ...overrides,
+  };
+}
 
+async function saveAssignment(classId, assignment = {}, editingAssignmentId = null) {
+  if (!classId) {
+    throw new Error("Missing class for assignment save.");
+  }
+
+  const payload = buildAssignmentServerPayload(assignment);
+  const result = editingAssignmentId
+    ? await apiFetch(`/api/assignments/${editingAssignmentId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      })
+    : await apiFetch(`/api/classes/${classId}/assignments`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+  if (result?.error) throw new Error(result.error);
+  if (!result?.assignment) throw new Error("Server did not return the saved assignment.");
+  return mapServerAssignment(result.assignment);
+}
+
+async function patchAssignment(assignmentId, payload = {}) {
+  if (!assignmentId) {
+    throw new Error("Missing assignment for update.");
+  }
+
+  const result = await apiFetch(`/api/assignments/${assignmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+  if (result?.error) throw new Error(result.error);
+  return result?.assignment ? mapServerAssignment(result.assignment) : result;
+}
+
+async function setAssignmentStatus(assignmentId, status) {
+  return patchAssignment(assignmentId, { status });
+}
+
+async function deleteAssignment(assignmentId) {
+  if (!assignmentId) {
+    throw new Error("Missing assignment for delete.");
+  }
+
+  const result = await apiFetch(`/api/assignments/${assignmentId}`, {
+    method: "DELETE",
+  });
+
+  if (result?.error) throw new Error(result.error);
+  return result;
+}
+  
   async function loadClassAssignments(classId) {
     const result = await apiFetch(`/api/classes/${classId}/assignments`);
     return safeArray(result?.assignments).map(mapServerAssignment);
@@ -159,6 +231,11 @@
     upsertStudentSubmission,
     patchSubmission,
     saveTeacherReviewSubmission,
+    buildAssignmentServerPayload,
+    saveAssignment,
+    patchAssignment,
+    setAssignmentStatus,
+    deleteAssignment,
   };
 
   root.ApiService = ApiService;
