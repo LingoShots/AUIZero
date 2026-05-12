@@ -20,7 +20,7 @@
     while (start < raw.length && (raw[start] === "\n" || raw[start] === "\r")) {
       start += 1;
     }
-    return raw.slice(start, raw.length - 3).trim();
+    return raw.slice(start, -3).trim();
   }
 
   function extractJsonBlock(text = "") {
