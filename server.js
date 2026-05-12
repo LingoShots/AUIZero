@@ -228,6 +228,20 @@ function maskEmail(email = '') {
   return `${visibleName}@${domain}`;
 }
 
+function safeLogId(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return crypto
+    .createHash('sha256')
+    .update(raw)
+    .digest('hex')
+    .slice(0, 12);
+}
+
+function safeLogError(error) {
+  return error?.message || String(error || 'Unknown error');
+}
+
 function validatePasswordStrength(password) {
   const value = String(password || '');
   if (value.length < 8) {
@@ -1142,7 +1156,11 @@ app.post('/api/auth/signup', async (req, res) => {
     if (profileError || !profile) {
       const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
       if (deleteError) {
-        console.error('ORPHAN AUTH USER - manual cleanup needed:', createdUserId, createdUserEmail, deleteError.message);
+        console.error('ORPHAN AUTH USER - manual cleanup needed:', {
+            userRef: safeLogId(createdUserId),
+            emailRef: safeLogId(createdUserEmail),
+            reason: safeLogError(deleteError),
+        });
       }
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
@@ -1852,7 +1870,11 @@ app.get('/api/assignments/:assignmentId/submissions', async (req, res) => {
     try {
       ownedAssignment = await ensureTeacherOwnsAssignment(req.params.assignmentId, user.id, readClient);
     } catch (accessError) {
-      console.error('Could not verify teacher assignment access:', req.params.assignmentId, user.id, accessError.message);
+      console.error('Could not verify teacher assignment access:', {
+        assignmentRef: safeLogId(req.params.assignmentId),
+        userRef: safeLogId(user.id),
+        reason: safeLogError(accessError),
+      });
       return res.status(400).json({ error: 'Could not verify access to this assignment. Please refresh and try again.' });
     }
     if (!ownedAssignment) return res.status(403).json({ error: 'You can only view submissions for your own assignments.' });
@@ -1878,7 +1900,10 @@ app.get('/api/assignments/:assignmentId/submissions', async (req, res) => {
       lastError = result.error;
     }
     if (lastError) {
-      console.error('Could not load assignment submissions:', req.params.assignmentId, lastError.message);
+      console.error('Could not load assignment submissions:', {
+        assignmentRef: safeLogId(req.params.assignmentId),
+        reason: safeLogError(lastError),
+      });
       return res.status(400).json({ error: 'Could not load submissions for this assignment. Please refresh and try again.' });
     }
     res.json({ submissions: data });
