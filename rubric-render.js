@@ -7,6 +7,18 @@
 // for backward compatibility with existing app.js call sites.
 
 (function () {
+  function cleanLevelLabel(label = "") {
+    const raw = String(label || "").trim();
+    const separators = [" - ", " – "];
+    for (const separator of separators) {
+      const index = raw.lastIndexOf(separator);
+      if (index < 0) continue;
+      const suffix = raw.slice(index + separator.length).trim();
+      if (suffix && Number.isFinite(Number(suffix))) return raw.slice(0, index).trim();
+    }
+    return raw;
+  }
+
   function getRubricUtils() {
     return (typeof window !== "undefined" && window.RubricUtils) || {};
   }
@@ -37,7 +49,7 @@
         maxScore: Number(row?.points || 0),
         levels: safeArray(row?.levels).map((level, levelIndex) => ({
           id: level?.id || `${row?.id || `criterion-${rowIndex + 1}`}-level-${levelIndex + 1}`,
-          label: String(level?.label || "").replace(/\s+[–-]\s+\d+(?:\.\d+)?$/, "").trim() || `Level ${levelIndex + 1}`,
+          label: cleanLevelLabel(level?.label) || `Level ${levelIndex + 1}`,
           score: Number(level?.points ?? 0),
           description: String(level?.description || "").trim(),
         })),

@@ -54,7 +54,12 @@ function appendResetQuery(urlValue = "") {
     url.hash = "";
     return url.toString();
   } catch (_) {
-    const stripped = raw.replace(/[?#].*$/, "").replace(/\/+$/, "");
+    let stripped = raw;
+    const queryIndex = stripped.indexOf("?");
+    const hashIndex = stripped.indexOf("#");
+    const cutIndex = [queryIndex, hashIndex].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+    if (cutIndex >= 0) stripped = stripped.slice(0, cutIndex);
+    while (stripped.endsWith("/")) stripped = stripped.slice(0, -1);
     return `${stripped}/?reset=1`;
   }
 }

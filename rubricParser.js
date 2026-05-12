@@ -49,11 +49,29 @@ RULES:
 - If the rubric contains bold text, preserve it in bold. 
 `.trim();
 
+function isAsciiAlphaNumeric(char) {
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
+}
+
+function trimHyphens(value) {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === '-') start += 1;
+  while (end > start && value[end - 1] === '-') end -= 1;
+  return value.slice(start, end);
+}
+
 function slugifyRubricId(text, fallback = 'criterion') {
-  const cleaned = String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  let slug = '';
+  for (const char of String(text || '').toLowerCase()) {
+    if (isAsciiAlphaNumeric(char)) {
+      slug += char;
+    } else if (slug[slug.length - 1] !== '-') {
+      slug += '-';
+    }
+  }
+  const cleaned = trimHyphens(slug);
   return cleaned || fallback;
 }
 
@@ -303,7 +321,14 @@ async function parseWithClaude(rawText, fileName = 'Uploaded rubric') {
   const raw = Array.isArray(data?.content)
     ? data.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
     : '';
-  const cleaned = raw.replace(/^```(?:json)?/m, '').replace(/```$/m, '').trim();
+  const trimmed = raw.trim();
+  let cleaned = trimmed;
+  if (trimmed.startsWith('```') && trimmed.endsWith('```')) {
+    const firstLineEnd = trimmed.indexOf('\n');
+    if (firstLineEnd >= 0) {
+      cleaned = trimmed.slice(firstLineEnd + 1, -3).trim();
+    }
+  }
 
   let parsed;
   try {

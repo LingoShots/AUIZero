@@ -2,6 +2,7 @@
   const root = typeof window !== "undefined" ? window.PraxisWritingProcess || {} : {};
   const LARGE_PASTE_LIMIT = root.LARGE_PASTE_LIMIT || 220;
   const PHASES = root.PHASES || { DRAFT: "draft", FINAL: "final", COACH_OUTLINE: "coach_outline" };
+  let fallbackEventIdCounter = 0;
 
   function getTextOperation(previousText = "", nextText = "") {
     const previous = String(previousText || "");
@@ -44,6 +45,18 @@
       Boolean(event.flagged && insertedLength >= LARGE_PASTE_LIMIT);
   }
 
+  function randomIdSegment() {
+    const cryptoApi = globalThis.crypto;
+    if (cryptoApi?.randomUUID) return cryptoApi.randomUUID().slice(0, 12);
+    if (cryptoApi?.getRandomValues) {
+      const bytes = new Uint8Array(6);
+      cryptoApi.getRandomValues(bytes);
+      return Array.from(bytes, (byte) => byte.toString(36).padStart(2, "0")).join("");
+    }
+    fallbackEventIdCounter += 1;
+    return `${Date.now().toString(36)}-${fallbackEventIdCounter.toString(36)}`;
+  }
+
   function createWritingEvent({
     previousText = "",
     nextText = "",
@@ -65,7 +78,7 @@
     const flagged = (type === "paste" && insertedLength >= largePasteLimit) || isLargeSingleInsert;
 
     return {
-      id: idFactory ? idFactory() : `event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: idFactory ? idFactory() : `event-${Date.now()}-${randomIdSegment()}`,
       timestamp,
       type,
       phase,
@@ -83,7 +96,7 @@
 
   function normalizeWritingEvent(entry = {}) {
     return {
-      id: entry.id || `event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: entry.id || `event-${Date.now()}-${randomIdSegment()}`,
       timestamp: entry.timestamp || new Date().toISOString(),
       type: entry.type || "insert",
       phase: entry.phase || PHASES.DRAFT,

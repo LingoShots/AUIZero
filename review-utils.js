@@ -5,7 +5,15 @@
     if (typeof window.cleanRubricLevelLabel === "function") {
       return window.cleanRubricLevelLabel(label);
     }
-    return String(label || "").replace(/\s+[–-]\s+\d+(?:\.\d+)?$/, "").trim();
+    const raw = String(label || "").trim();
+    const separators = [" - ", " – "];
+    for (const separator of separators) {
+      const index = raw.lastIndexOf(separator);
+      if (index < 0) continue;
+      const suffix = raw.slice(index + separator.length).trim();
+      if (suffix && Number.isFinite(Number(suffix))) return raw.slice(0, index).trim();
+    }
+    return raw;
   }
 
   function createScoreBandsForPoints(maxPoints) {

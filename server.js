@@ -155,7 +155,7 @@ function getRequestBaseUrl(req) {
     process.env.SITE_URL ||
     process.env.PUBLIC_SITE_URL;
   if (configuredBase) {
-    return String(configuredBase).replace(/\/+$/, '');
+    return stripTrailingSlashes(configuredBase);
   }
 
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
@@ -163,15 +163,15 @@ function getRequestBaseUrl(req) {
   const originHeader = String(req.headers.origin || '').trim();
 
   if (originHeader) {
-    return originHeader.replace(/\/+$/, '');
+    return stripTrailingSlashes(originHeader);
   }
   if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, '');
+    return stripTrailingSlashes(`${forwardedProto}://${forwardedHost}`);
   }
 
   const host = req.headers.host;
   if (host) {
-    return `${req.protocol || 'https'}://${host}`.replace(/\/+$/, '');
+    return stripTrailingSlashes(`${req.protocol || 'https'}://${host}`);
   }
 
   return 'http://localhost:3000';
@@ -184,17 +184,29 @@ function getConfiguredPublicBaseUrl() {
     process.env.SITE_URL ||
     process.env.PUBLIC_SITE_URL ||
     '';
-  return String(configuredBase || '').replace(/\/+$/, '');
+  return stripTrailingSlashes(configuredBase);
 }
 
 function isLocalhostUrl(value) {
-  return /(^https?:\/\/)?(localhost|127\.0\.0\.1|\[?::1\]?)(?::\d+)?/i.test(String(value || '').trim());
+  let raw = String(value || '').trim().toLowerCase();
+  if (raw.startsWith('http://')) raw = raw.slice(7);
+  if (raw.startsWith('https://')) raw = raw.slice(8);
+  const slashIndex = raw.indexOf('/');
+  if (slashIndex >= 0) raw = raw.slice(0, slashIndex);
+  return raw === 'localhost' ||
+    raw.startsWith('localhost:') ||
+    raw === '127.0.0.1' ||
+    raw.startsWith('127.0.0.1:') ||
+    raw === '::1' ||
+    raw === '[::1]' ||
+    raw.startsWith('[::1]:');
 }
 
 function getPasswordResetBaseUrl(req, requestedRedirect) {
   const redirectFromClient = String(requestedRedirect || '').trim();
-  if (/^https?:\/\//i.test(redirectFromClient) && !isLocalhostUrl(redirectFromClient)) {
-    return redirectFromClient.replace(/\/+$/, '');
+  const lowerRedirect = redirectFromClient.toLowerCase();
+  if ((lowerRedirect.startsWith('http://') || lowerRedirect.startsWith('https://')) && !isLocalhostUrl(redirectFromClient)) {
+    return stripTrailingSlashes(redirectFromClient);
   }
 
   const configuredBase = getConfiguredPublicBaseUrl();
@@ -205,15 +217,22 @@ function getPasswordResetBaseUrl(req, requestedRedirect) {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
   if (forwardedProto && forwardedHost && !isLocalhostUrl(forwardedHost)) {
-    return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, '');
+    return stripTrailingSlashes(`${forwardedProto}://${forwardedHost}`);
   }
 
   const originHeader = String(req.headers.origin || '').trim();
   if (originHeader && !isLocalhostUrl(originHeader)) {
-    return originHeader.replace(/\/+$/, '');
+    return stripTrailingSlashes(originHeader);
   }
 
   return getRequestBaseUrl(req);
+}
+
+function stripTrailingSlashes(value) {
+  const raw = String(value || '');
+  let end = raw.length;
+  while (end > 0 && raw[end - 1] === '/') end -= 1;
+  return raw.slice(0, end);
 }
 
 function canSendNotificationEmails() {
@@ -411,7 +430,7 @@ async function notifyStudentsAboutAssignment({
   const safeTitle = escapeHtmlEmail(assignment.title || 'New assignment');
   const safeClassName = escapeHtmlEmail(className || 'your class');
   const safeDeadline = formatDeadline(assignment.deadline);
-  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const normalizedBaseUrl = stripTrailingSlashes(baseUrl);
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const subject = mode === 'deadline-reminder'
     ? 'Assignment due soon'
@@ -491,7 +510,7 @@ async function notifyStudentAboutGradedSubmission({
   const safeStudentName = escapeHtmlEmail(studentName);
   const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
   const safeClassName = escapeHtmlEmail(assignment.classes?.name || assignment.className || 'your class');
-  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const normalizedBaseUrl = stripTrailingSlashes(baseUrl);
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const score = submission.teacher_review?.finalScore;
   const scoreLine = score !== undefined && score !== null && String(score) !== ''
@@ -560,7 +579,7 @@ async function notifyStudentAboutReopenedSubmission({
   const safeStudentName = escapeHtmlEmail(studentName);
   const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
   const safeClassName = escapeHtmlEmail(assignment.classes?.name || assignment.className || 'your class');
-  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const normalizedBaseUrl = stripTrailingSlashes(baseUrl);
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const buttonHtml = safeBaseUrl
     ? `<p><a href="${escapeHtmlEmail(safeBaseUrl)}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#4c6fe7;color:#ffffff;text-decoration:none;font-weight:600;">Open assignment</a></p>`
@@ -626,7 +645,7 @@ async function notifyTeacherAboutStudentSubmission({
   const safeStudentName = escapeHtmlEmail(studentName);
   const safeTitle = escapeHtmlEmail(assignment.title || 'Assignment');
   const safeClassName = escapeHtmlEmail(classRow.name || 'your class');
-  const normalizedBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  const normalizedBaseUrl = stripTrailingSlashes(baseUrl);
   const safeBaseUrl = normalizedBaseUrl ? `${normalizedBaseUrl}/` : '';
   const submittedAt = formatDeadline(submission.submitted_at || submission.submittedAt || new Date().toISOString());
   const submittedLine = submittedAt

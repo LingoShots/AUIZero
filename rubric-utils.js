@@ -1,14 +1,40 @@
 (() => {
+  function isAsciiAlphaNumeric(char) {
+    const code = char.charCodeAt(0);
+    return (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
+  }
+
+  function trimHyphens(value) {
+    let start = 0;
+    let end = value.length;
+    while (start < end && value[start] === "-") start += 1;
+    while (end > start && value[end - 1] === "-") end -= 1;
+    return value.slice(start, end);
+  }
+
   function slugifyRubricId(text, fallback = "criterion") {
-    const cleaned = String(text || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    let slug = "";
+    for (const char of String(text || "").toLowerCase()) {
+      if (isAsciiAlphaNumeric(char)) {
+        slug += char;
+      } else if (slug[slug.length - 1] !== "-") {
+        slug += "-";
+      }
+    }
+    const cleaned = trimHyphens(slug);
     return cleaned || fallback;
   }
 
   function cleanRubricLevelLabel(label = "") {
-    return String(label || "").replace(/\s+[–-]\s+\d+(?:\.\d+)?$/, "").trim();
+    const raw = String(label || "").trim();
+    const separators = [" - ", " – "];
+    for (const separator of separators) {
+      const index = raw.lastIndexOf(separator);
+      if (index < 0) continue;
+      const suffix = raw.slice(index + separator.length).trim();
+      if (suffix && Number.isFinite(Number(suffix))) return raw.slice(0, index).trim();
+    }
+    return raw;
   }
 
   const SHARED_RUBRIC_PART_RE = /\b(topic sentence|supporting (?:sentence|sentences|idea|ideas|detail|details)|concluding sentence|transitions?|unity|coherence)\b/i;

@@ -11,8 +11,16 @@
   function aiAssistUtilsFactory() {
   function stripCodeFence(text = "") {
     const raw = String(text || "").trim();
-    const fenceMatch = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-    return fenceMatch ? fenceMatch[1].trim() : raw;
+    if (!raw.startsWith("```") || !raw.endsWith("```")) return raw;
+    let start = 3;
+    while (start < raw.length && raw[start] !== "\n" && raw[start] !== "\r") {
+      start += 1;
+    }
+    if (start >= raw.length) return raw;
+    while (start < raw.length && (raw[start] === "\n" || raw[start] === "\r")) {
+      start += 1;
+    }
+    return raw.slice(start, raw.length - 3).trim();
   }
 
   function extractJsonBlock(text = "") {

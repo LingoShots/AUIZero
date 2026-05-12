@@ -4,6 +4,8 @@
 // Exposes window.CoreUtils plus each function directly on window for back-compat.
 
 (function (root) {
+  let fallbackUidCounter = 0;
+
   function escapeHtml(value) {
     return String(value || "")
       .replaceAll("&", "&amp;")
@@ -22,7 +24,17 @@
   }
 
   function uid(prefix) {
-    return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+    const cryptoApi = globalThis.crypto;
+    if (cryptoApi?.randomUUID) {
+      return `${prefix}-${cryptoApi.randomUUID().slice(0, 8)}`;
+    }
+    if (cryptoApi?.getRandomValues) {
+      const bytes = new Uint8Array(4);
+      cryptoApi.getRandomValues(bytes);
+      return `${prefix}-${Array.from(bytes, (byte) => byte.toString(36).padStart(2, "0")).join("")}`;
+    }
+    fallbackUidCounter += 1;
+    return `${prefix}-${Date.now().toString(36)}-${fallbackUidCounter.toString(36)}`;
   }
 
   function wordCount(text) {
