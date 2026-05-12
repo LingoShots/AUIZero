@@ -2,6 +2,7 @@ const fs = require('fs');
 const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
 const fetch = require('node-fetch');
+const { slugifyRubricId } = require('./core-utils');
 
 const SYSTEM_PROMPT = `
 You are an expert academic rubric parser.
@@ -48,32 +49,6 @@ RULES:
 - If a field is missing, use an empty string or a sensible default.
 - If the rubric contains bold text, preserve it in bold. 
 `.trim();
-
-function isAsciiAlphaNumeric(char) {
-  const code = char.charCodeAt(0);
-  return (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
-}
-
-function trimHyphens(value) {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value[start] === '-') start += 1;
-  while (end > start && value[end - 1] === '-') end -= 1;
-  return value.slice(start, end);
-}
-
-function slugifyRubricId(text, fallback = 'criterion') {
-  let slug = '';
-  for (const char of String(text || '').toLowerCase()) {
-    if (isAsciiAlphaNumeric(char)) {
-      slug += char;
-    } else if (slug[slug.length - 1] !== '-') {
-      slug += '-';
-    }
-  }
-  const cleaned = trimHyphens(slug);
-  return cleaned || fallback;
-}
 
 const SHARED_CRITERION_PART_RE = /\b(topic sentence|supporting (?:sentence|sentences|idea|ideas|detail|details)|concluding sentence|transitions?|unity|coherence)\b/i;
 
