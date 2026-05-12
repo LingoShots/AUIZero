@@ -1,0 +1,134 @@
+name: Apply SonarQube server cleanup
+
+on:
+  push:
+    branches:
+      - sonarqube-server-security-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sonarqube-server-security-cleanup
+      - name: Apply targeted SonarQube cleanup patch
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          canonical = Path('canonical-url-utils.js')
+          text = canonical.read_text()
+          if 'function getSafeRedirectPath' not in text:
+              text = text.replace(
+                  'function getConfiguredBaseUrl(env = process.env) {\n'
+                  '  return stripTrailingSlash(\n'
+                  '    env.PUBLIC_APP_URL ||\n'
+                  '    env.APP_URL ||\n'
+                  '    env.SITE_URL ||\n'
+                  '    env.PUBLIC_SITE_URL ||\n'
+                  '    ""\n'
+                  '  );\n'
+                  '}\n\n'
+                  'function getCanonicalRedirectTarget',
+                  'function getConfiguredBaseUrl(env = process.env) {\n'
+                  '  return stripTrailingSlash(\n'
+                  '    env.PUBLIC_APP_URL ||\n'
+                  '    env.APP_URL ||\n'
+                  '    env.SITE_URL ||\n'
+                  '    env.PUBLIC_SITE_URL ||\n'
+                  '    ""\n'
+                  '  );\n'
+                  '}\n\n'
+                  'function getSafeRedirectPath(originalUrl = "/") {\n'
+                  '  const raw = String(originalUrl || "/").trim();\n\n'
+                  '  if (!raw || /[\\r\\n]/.test(raw)) return "/";\n'
+                  '  if (!raw.startsWith("/")) return "/";\n'
+                  '  if (raw.startsWith("//")) return "/";\n'
+                  '  if (/^\\/\\\\/.test(raw)) return "/";\n\n'
+                  '  try {\n'
+                  '    const parsed = new URL(raw, "https://canonical.local");\n'
+                  '    if (parsed.origin !== "https://canonical.local") return "/";\n'
+                  '    return `${parsed.pathname}${parsed.search}${parsed.hash}`;\n'
+                  '  } catch (_) {\n'
+                  '    return "/";\n'
+                  '  }\n'
+                  '}\n\n'
+                  'function getCanonicalRedirectTarget'
+              )
+          text = text.replace(
+              '  const path = String(originalUrl || "/").startsWith("/") ? String(originalUrl || "/") : `/${originalUrl}`;\n'
+              '  if (path.startsWith("/api/")) return "";\n\n'
+              '  return `${base}${path}`;\n',
+              '  const path = getSafeRedirectPath(originalUrl);\n'
+              '  if (path.startsWith("/api/")) return "";\n\n'
+              '  return `${base}${path}`;\n'
+          )
+          text = text.replace(
+              '  getConfiguredBaseUrl,\n'
+              '  isLocalHost,\n',
+              '  getConfiguredBaseUrl,\n'
+              '  getSafeRedirectPath,\n'
+              '  isLocalHost,\n'
+          )
+          canonical.write_text(text)
+
+          server = Path('server.js')
+          text = server.read_text()
+          text = text.replace("const crypto = require('crypto');", "const crypto = require('node:crypto');")
+          text = text.replace(
+              '  getCanonicalRedirectTarget,\n'
+              '  getConfiguredBaseUrl,\n',
+              '  getCanonicalRedirectTarget,\n'
+              '  getConfiguredBaseUrl,\n'
+              '  getSafeRedirectPath,\n'
+          )
+          text = text.replace(
+              'const app = express();\n'
+              'app.use((req, res, next) => {\n'
+              '  const redirectTarget = getCanonicalRedirectTarget({\n'
+              '    method: req.method,\n'
+              "    host: req.headers['x-forwarded-host'] || req.headers.host,\n"
+              '    originalUrl: req.originalUrl || req.url,\n'
+              '    configuredBase: getConfiguredBaseUrl(),\n'
+              '  });\n'
+              '  if (redirectTarget) {\n'
+              '    return res.redirect(308, redirectTarget);\n'
+              '  }\n'
+              '  return next();\n'
+              '});\n',
+              'const app = express();\n'
+              'app.disable("x-powered-by");\n\n'
+              'app.use((req, res, next) => {\n'
+              '  const redirectPath = getSafeRedirectPath(req.originalUrl || req.url);\n'
+              '  const redirectTarget = getCanonicalRedirectTarget({\n'
+              '    method: req.method,\n'
+              "    host: req.headers['x-forwarded-host'] || req.headers.host,\n"
+              '    originalUrl: redirectPath,\n'
+              '    configuredBase: getConfiguredBaseUrl(),\n'
+              '  });\n'
+              '  if (redirectTarget) {\n'
+              "    res.set('Location', redirectTarget);\n"
+              '    return res.status(308).end();\n'
+              '  }\n'
+              '  return next();\n'
+              '});\n'
+          )
+          text = text.replace('.replace(/&/g, \'&amp;\')', ".replaceAll('&', '&amp;')")
+          text = text.replace('.replace(/</g, \'&lt;\')', ".replaceAll('<', '&lt;')")
+          text = text.replace('.replace(/>/g, \'&gt;\')', ".replaceAll('>', '&gt;')")
+          text = text.replace('.replace(/\\"/g, \'&quot;\')', ".replaceAll('\\"', '&quot;')")
+          text = text.replace('.replace(/\'/g, \'&#39;\')', ".replaceAll(\"'\", '&#39;')")
+          server.write_text(text)
+          PY
+      - name: Remove temporary workflow and commit changes
+        run: |
+          rm .github/workflows/apply-sonarqube-server-cleanup.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js canonical-url-utils.js .github/workflows/apply-sonarqube-server-cleanup.yml
+          git commit -m "Fix SonarQube server security issues" || exit 0
+          git push origin sonarqube-server-security-cleanup
