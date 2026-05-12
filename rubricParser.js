@@ -2,7 +2,7 @@ const fs = require('fs');
 const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
 const fetch = require('node-fetch');
-const { slugifyRubricId } = require('./core-utils');
+const { coalesceSharedRubricCriteria, slugifyRubricId } = require('./core-utils');
 
 const SYSTEM_PROMPT = `
 You are an expert academic rubric parser.
@@ -50,104 +50,6 @@ RULES:
 - If the rubric contains bold text, preserve it in bold. 
 `.trim();
 
-const SHARED_CRITERION_PART_RE = /\b(topic sentence|supporting (?:sentence|sentences|idea|ideas|detail|details)|concluding sentence|transitions?|unity|coherence)\b/i;
-
-function rubricScoreSignature(criterion = {}) {
-  return (Array.isArray(criterion?.levels) ? criterion.levels : [])
-    .map((level) => Number(level?.score ?? 0))
-    .join('|');
-}
-
-function criterionLooksLikeSharedPart(criterion = {}) {
-  const haystack = [
-    criterion?.name,
-    ...(Array.isArray(criterion?.levels) ? criterion.levels.map((level) => level?.description) : []),
-  ].join(' ');
-  return SHARED_CRITERION_PART_RE.test(String(haystack || ''));
-}
-
-function findMatchingLevel(criterion = {}, targetLevel = {}, fallbackIndex = 0) {
-  const levels = Array.isArray(criterion?.levels) ? criterion.levels : [];
-  const exactScore = levels.find((level) => Number(level?.score ?? 0) === Number(targetLevel?.score ?? 0));
-  return exactScore || levels[fallbackIndex] || null;
-}
-
-function deriveMergedCriterionName(group = []) {
-  const names = group.map((criterion) => String(criterion?.name || '').trim()).filter(Boolean);
-  const joined = names.join(' ').toLowerCase();
-  if (
-    /topic sentence/.test(joined) &&
-    /supporting (sentence|sentences|idea|ideas|detail|details)/.test(joined) &&
-    /concluding sentence/.test(joined)
-  ) {
-    return 'Organization, unity and coherence';
-  }
-  return names.join(' / ') || 'Combined criterion';
-}
-
-function mergeCriterionGroup(group = []) {
-  if (!group.length) return null;
-  if (group.length === 1) return group[0];
-
-  const template = group[0];
-  const name = deriveMergedCriterionName(group);
-  return {
-    id: slugifyRubricId(name, template.id || 'criterion'),
-    name,
-    minScore: template.minScore,
-    maxScore: template.maxScore,
-    levels: template.levels.map((level, levelIndex) => {
-      const description = group
-        .map((criterion) => {
-          const matchedLevel = findMatchingLevel(criterion, level, levelIndex);
-          const descriptor = String(matchedLevel?.description || '').trim();
-          if (!descriptor) return '';
-          const partName = String(criterion?.name || '').trim();
-          return partName ? `${partName}: ${descriptor}` : descriptor;
-        })
-        .filter(Boolean)
-        .join('\n');
-
-      return {
-        ...level,
-        description: description || level.description,
-      };
-    }),
-  };
-}
-
-function coalesceSharedCriteria(criteria = [], totalPoints = 0) {
-  const merged = [];
-  for (let index = 0; index < criteria.length; index += 1) {
-    const current = criteria[index];
-    const signature = rubricScoreSignature(current);
-    const group = [current];
-
-    while (index + 1 < criteria.length) {
-      const next = criteria[index + 1];
-      const totalWouldOverflow = totalPoints > 0 && merged
-        .concat(group)
-        .concat(next)
-        .reduce((sum, criterion) => sum + Number(criterion?.maxScore || 0), 0) > totalPoints;
-      if (
-        signature &&
-        signature === rubricScoreSignature(next) &&
-        criterionLooksLikeSharedPart(current) &&
-        criterionLooksLikeSharedPart(next) &&
-        totalWouldOverflow
-      ) {
-        group.push(next);
-        index += 1;
-        continue;
-      }
-      break;
-    }
-
-    merged.push(mergeCriterionGroup(group));
-  }
-  return merged.filter(Boolean);
-}
-
 function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
   const rawCriteria = Array.isArray(schema?.criteria)
     ? schema.criteria
@@ -186,7 +88,7 @@ function normalizeRubricSchema(schema = {}, fileName = 'Uploaded rubric') {
     : [];
 
   const requestedTotalPoints = Number(schema?.totalPoints || 0);
-  const criteria = coalesceSharedCriteria(rawCriteria, requestedTotalPoints);
+  const criteria = coalesceSharedRubricCriteria(rawCriteria, requestedTotalPoints);
   const criteriaTotalPoints = criteria.reduce((sum, criterion) => sum + Number(criterion.maxScore || 0), 0);
   // Score against the criteria that actually parsed. This prevents a declared
   // 20-point total from blocking a 3 x 5-point rubric that should score as 15.
