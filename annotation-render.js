@@ -1,6 +1,34 @@
 (function () {
+  const {
+    escapeHtml,
+    escapeAttribute,
+    formatDateTime,
+    safeArray,
+    wordCount,
+    trimTo,
+    uid,
+  } = window.CoreUtils;
+  const {
+    getEvidenceKindLabel,
+    getEvidenceStatusLabel,
+  } = window.PasteEvidenceUtils;
+
+  function requireLegacyAppFunction(name) {
+    const dependency = window[name];
+    if (typeof dependency !== "function") {
+      throw new Error(`AnnotationRender missing dependency: window.${name}`);
+    }
+    return dependency;
+  }
+
+  const getPasteEvidenceItems = (...args) => requireLegacyAppFunction("getPasteEvidenceItems")(...args);
+  const getWritingTimeSummary = (...args) => requireLegacyAppFunction("getWritingTimeSummary")(...args);
+  const getSubmissionReviewText = (...args) => requireLegacyAppFunction("getSubmissionReviewText")(...args);
+  const getAnnotationDisplayLabel = (...args) => requireLegacyAppFunction("getAnnotationDisplayLabel")(...args);
+  const isPasteLikeWritingEvent = (...args) => requireLegacyAppFunction("isPasteLikeWritingEvent")(...args);
+  const getOutlineFields = (...args) => requireLegacyAppFunction("getOutlineFields")(...args);
+
   function renderPasteEvidencePanel(submission) {
-    const { escapeHtml, escapeAttribute, formatDateTime, getPasteEvidenceItems } = window;
     const items = getPasteEvidenceItems(submission);
     if (!items.length) return "";
     return `
@@ -15,12 +43,8 @@
       </div>
       <div style="display:grid;gap:10px;margin-top:12px;">
         ${items.map((item) => {
-          const kindLabel = window.PasteEvidenceUtils?.getEvidenceKindLabel
-            ? window.PasteEvidenceUtils.getEvidenceKindLabel(item.kind)
-            : (item.kind === "paste" ? "Paste event" : "Large single insert");
-          const statusLabel = window.PasteEvidenceUtils?.getEvidenceStatusLabel
-            ? window.PasteEvidenceUtils.getEvidenceStatusLabel(item.foundExact)
-            : (item.foundExact ? "Still found in final text" : "Edited or removed");
+          const kindLabel = getEvidenceKindLabel(item.kind);
+          const statusLabel = getEvidenceStatusLabel(item.foundExact);
           const body = `
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
               <span class="pill">${escapeHtml(formatDateTime(item.timestamp))}</span>
@@ -67,7 +91,6 @@
   }
 
   function renderWritingTimeNote(submission) {
-    const { escapeHtml, getWritingTimeSummary } = window;
     const summary = getWritingTimeSummary(submission);
     return `
     <div class="teacher-ready-card" style="margin-bottom:16px;padding:12px 14px;">
@@ -83,7 +106,6 @@
   }
 
   function renderSuggestedGradePanel(submission) {
-    const { escapeHtml, safeArray } = window;
     if (!submission?.teacherReview?.suggestedGrade) return "";
     const suggestedGrade = submission.teacherReview.suggestedGrade;
     return `
@@ -117,7 +139,6 @@
   }
 
   function renderStudentAiFeedbackEvidence(submission) {
-    const { escapeHtml, safeArray, wordCount, formatDateTime, trimTo, getSubmissionReviewText } = window;
     const entries = safeArray(submission?.feedbackHistory)
       .filter((entry) => safeArray(entry?.items).length);
     if (!entries.length) return "";
@@ -161,7 +182,6 @@
   }
 
   function renderSuggestedGradeProcessNote(submission) {
-    const { escapeHtml, getPasteEvidenceItems } = window;
     const evidenceItems = getPasteEvidenceItems(submission);
     if (!evidenceItems.length) return "";
     const pasteCount = evidenceItems.filter((item) => item.kind === "paste").length;
@@ -181,8 +201,6 @@
   }
 
   function renderAnnotatedText(submission, options = {}) {
-    const { escapeHtml, escapeAttribute, uid, safeArray, getPasteEvidenceItems,
-      getSubmissionReviewText, getAnnotationDisplayLabel } = window;
     const {
       annotationClickTarget = "comment",
       includeClickHandlers = true,
@@ -301,7 +319,6 @@
   }
 
   function renderTextWithPasteHighlights(text, writingEvents) {
-    const { escapeHtml, isPasteLikeWritingEvent } = window;
     if (!text) return "";
     const flaggedPastes = (writingEvents || []).filter((entry) => isPasteLikeWritingEvent(entry) && entry.insertedText);
     if (!flaggedPastes.length) return `<pre class="context-expanded-text">${escapeHtml(text)}</pre>`;
@@ -320,7 +337,6 @@
   }
 
   function renderOutlineSummary(assignment, submission) {
-    const { getOutlineFields } = window;
     const outline = getOutlineFields(assignment, submission);
     const parts = outline.fields
       .map((field) => String(submission.outline?.[field.key] || "").trim())

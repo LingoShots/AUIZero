@@ -8,8 +8,20 @@
 // which mutates window.AppState.ui.teacherDraft properties in place.
 
 (function () {
+  const { uid, trimTo, titleCase } = window.CoreUtils;
   const { createScoreBandsForPoints } = window.ReviewUtils;
   const { combineDeadlineParts, getDeadlineTimePart } = window.DeadlineUtils;
+
+  function requireLegacyAppFunction(name) {
+    const dependency = window[name];
+    if (typeof dependency !== "function") {
+      throw new Error(`TeacherAssist missing dependency: window.${name}`);
+    }
+    return dependency;
+  }
+
+  const extractKeywords = (...args) => requireLegacyAppFunction("extractKeywords")(...args);
+  const inferTeacherBriefSettings = (...args) => requireLegacyAppFunction("inferTeacherBriefSettings")(...args);
 
   function createSimpleRubricCriterion(name, description, points = 4) {
     const maxPoints = Math.max(1, Number(points || 4));
