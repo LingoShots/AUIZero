@@ -37,6 +37,32 @@
     return `${prefix}-${Date.now().toString(36)}-${fallbackUidCounter.toString(36)}`;
   }
 
+  function isAsciiAlphaNumeric(char) {
+    const code = String(char || "").codePointAt(0);
+    return (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
+  }
+
+  function trimHyphens(value) {
+    let start = 0;
+    let end = value.length;
+    while (start < end && value[start] === "-") start += 1;
+    while (end > start && value.endsWith("-", end)) end -= 1;
+    return value.slice(start, end);
+  }
+
+  function slugifyRubricId(text, fallback = "criterion") {
+    let slug = "";
+    for (const char of String(text || "").toLowerCase()) {
+      if (isAsciiAlphaNumeric(char)) {
+        slug += char;
+      } else if (!slug.endsWith("-")) {
+        slug += "-";
+      }
+    }
+    const cleaned = trimHyphens(slug);
+    return cleaned || fallback;
+  }
+
   function wordCount(text) {
     return (String(text || "").trim().match(/\b[\w'-]+\b/g) || []).length;
   }
@@ -78,6 +104,9 @@
     escapeAttribute,
     titleCase,
     uid,
+    isAsciiAlphaNumeric,
+    trimHyphens,
+    slugifyRubricId,
     wordCount,
     trimTo,
     clamp,
@@ -89,4 +118,8 @@
 
   root.CoreUtils = CoreUtils;
   Object.assign(root, CoreUtils);
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = CoreUtils;
+  }
 })(typeof window !== "undefined" ? window : globalThis);
