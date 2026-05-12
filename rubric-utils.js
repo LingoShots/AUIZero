@@ -1,30 +1,4 @@
 (() => {
-  function isAsciiAlphaNumeric(char) {
-    const code = char.charCodeAt(0);
-    return (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
-  }
-
-  function trimHyphens(value) {
-    let start = 0;
-    let end = value.length;
-    while (start < end && value[start] === "-") start += 1;
-    while (end > start && value[end - 1] === "-") end -= 1;
-    return value.slice(start, end);
-  }
-
-  function slugifyRubricId(text, fallback = "criterion") {
-    let slug = "";
-    for (const char of String(text || "").toLowerCase()) {
-      if (isAsciiAlphaNumeric(char)) {
-        slug += char;
-      } else if (slug[slug.length - 1] !== "-") {
-        slug += "-";
-      }
-    }
-    const cleaned = trimHyphens(slug);
-    return cleaned || fallback;
-  }
-
   function cleanRubricLevelLabel(label = "") {
     const raw = String(label || "").trim();
     const separators = [" - ", " – "];
