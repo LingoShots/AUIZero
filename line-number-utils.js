@@ -72,7 +72,7 @@ function splitTokenToFitWidth(token, measureText, maxWidth) {
     module.exports = utils;
   }
 })(
-  typeof window !== "undefined" ? window : globalThis,
+  typeof window === "undefined" ? globalThis : window,
   function lineNumberUtilsFactory() {
     function buildWrappedLineEntries(text = "", metrics = {}, measureText = (value) => String(value || "").length) {
       const value = String(text || "");
@@ -156,11 +156,11 @@ function splitTokenToFitWidth(token, measureText, maxWidth) {
           }
 
           currentText += currentText ? token : token.trimStart();
-          if (!currentText.trim()) {
+          if (currentText.trim()) {
+            currentEnd = tokenStart + token.length;
+          } else {
             currentStart = cursor;
             currentEnd = cursor;
-          } else {
-            currentEnd = tokenStart + token.length;
           }
         });
 

@@ -1,5 +1,5 @@
 (() => {
-  const types = typeof require === "function" ? require("./types.js") : (typeof window !== "undefined" ? window.PraxisWritingProcess : {});
+  const types = typeof require === "function" ? require("./types.js") : (typeof window === "undefined" ? {} : window.PraxisWritingProcess);
 
   function safeArray(value) {
     return Array.isArray(value) ? value : [];

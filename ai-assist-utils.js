@@ -7,7 +7,7 @@
     module.exports = utils;
   }
 })(
-  typeof window !== "undefined" ? window : globalThis,
+  typeof window === "undefined" ? globalThis : window,
   function aiAssistUtilsFactory() {
   function stripCodeFence(text = "") {
     const raw = String(text || "").trim();

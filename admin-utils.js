@@ -6,7 +6,7 @@
   if (root) {
     root.AdminUtils = api;
   }
-})(typeof globalThis !== "undefined" ? globalThis : this, function buildAdminUtils() {
+})(typeof globalThis === "undefined" ? this : globalThis, function buildAdminUtils() {
   function getAdminClassDetailSignature(detail) {
     if (!detail) return "";
     try {

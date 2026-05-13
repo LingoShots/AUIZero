@@ -187,7 +187,7 @@
     const minScore = Number(criterion.minScore || 0);
     const maxScore = Number(criterion.maxScore || 0);
     const name = criterion.name;
-    const pointsLabel = minScore !== maxScore ? `${minScore} – ${maxScore} points` : `${maxScore} points`;
+    const pointsLabel = minScore === maxScore ? `${maxScore} points` : `${minScore} – ${maxScore} points`;
     return {
       id: criterion.id,
       name,
@@ -268,4 +268,4 @@
   if (typeof module !== "undefined" && module.exports) {
     module.exports = CoreUtils;
   }
-})(typeof window !== "undefined" ? window : globalThis);
+})(typeof window === "undefined" ? globalThis : window);
