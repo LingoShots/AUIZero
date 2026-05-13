@@ -6,7 +6,7 @@
   if (root) {
     root.SubmissionUtils = api;
   }
-})(typeof globalThis !== "undefined" ? globalThis : this, function buildSubmissionUtils() {
+})(typeof globalThis === "undefined" ? this : globalThis, function buildSubmissionUtils() {
   const SUBMITTED_STATUSES = new Set(["submitted", "graded"]);
   const CLOSED_STATUSES = new Set(["graded", "late", "missing"]);
 

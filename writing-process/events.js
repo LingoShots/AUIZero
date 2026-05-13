@@ -1,5 +1,5 @@
 (() => {
-  const root = typeof window !== "undefined" ? window.PraxisWritingProcess || {} : {};
+  const root = typeof window === "undefined" ? {} : window.PraxisWritingProcess || {};
   const LARGE_PASTE_LIMIT = root.LARGE_PASTE_LIMIT || 220;
   const PHASES = root.PHASES || { DRAFT: "draft", FINAL: "final", COACH_OUTLINE: "coach_outline" };
   let fallbackEventIdCounter = 0;

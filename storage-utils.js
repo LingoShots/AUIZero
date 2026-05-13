@@ -7,7 +7,7 @@
     module.exports = utils;
   }
 })(
-  typeof window !== "undefined" ? window : globalThis,
+  typeof window === "undefined" ? globalThis : window,
   function storageUtilsFactory(global) {
   function safeReadJson(key, fallback = null) {
     try {
