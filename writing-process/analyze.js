@@ -1,7 +1,7 @@
 (() => {
-  const types = typeof require === "function" ? require("./types.js") : (typeof window !== "undefined" ? window.PraxisWritingProcess : {});
-  const cohorts = typeof require === "function" ? require("./cohorts.js") : (typeof window !== "undefined" ? window.PraxisWritingProcess : {});
-  const eventsApi = typeof require === "function" ? require("./events.js") : (typeof window !== "undefined" ? window.PraxisWritingProcess : {});
+  const types = typeof require === "function" ? require("./types.js") : (typeof window === "undefined" ? {} : window.PraxisWritingProcess);
+  const cohorts = typeof require === "function" ? require("./cohorts.js") : (typeof window === "undefined" ? {} : window.PraxisWritingProcess);
+  const eventsApi = typeof require === "function" ? require("./events.js") : (typeof window === "undefined" ? {} : window.PraxisWritingProcess);
 
   const {
     ANALYSIS_VERSION,
@@ -216,7 +216,7 @@
 
     events.forEach((event) => {
       const time = getEventTimeMs(event);
-      const index = !Number.isFinite(time) ? 0 : Math.min(count - 1, Math.max(0, Math.floor(((time - start) / duration) * count)));
+      const index = Number.isFinite(time) ? Math.min(count - 1, Math.max(0, Math.floor(((time - start) / duration) * count))) : 0;
       const bucket = buckets[index];
       const insertedLength = String(event.insertedText || "").length;
       bucket.typedChars += insertedLength;
