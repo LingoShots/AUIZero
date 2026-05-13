@@ -1,16 +1,4 @@
 (() => {
-  function cleanRubricLevelLabel(label = "") {
-    const raw = String(label || "").trim();
-    const separators = [" - ", " – "];
-    for (const separator of separators) {
-      const index = raw.lastIndexOf(separator);
-      if (index < 0) continue;
-      const suffix = raw.slice(index + separator.length).trim();
-      if (suffix && Number.isFinite(Number(suffix))) return raw.slice(0, index).trim();
-    }
-    return raw;
-  }
-
   function normalizeRubricSchema(schema = {}, fallbackName = "Uploaded rubric") {
     const rawCriteria = safeArray(schema?.criteria)
       .map((criterion, criterionIndex) => {
@@ -84,23 +72,7 @@
         ...safeArray(normalized.notes),
         normalized.attribution,
       ].filter(Boolean),
-      rows: normalized.criteria.map((criterion) => ({
-        id: criterion.id,
-        section: "",
-        subcriterion: criterion.name,
-        name: criterion.name,
-        description: "",
-        points: Number(criterion.maxScore || 0),
-        pointsLabel: criterion.minScore !== criterion.maxScore
-          ? `${criterion.minScore} – ${criterion.maxScore} points`
-          : `${criterion.maxScore} points`,
-        levels: safeArray(criterion.levels).map((level) => ({
-          id: level.id,
-          label: `${level.label} – ${level.score}`,
-          points: Number(level.score || 0),
-          description: level.description,
-        })),
-      })),
+      rows: normalized.criteria.map(rubricCriterionToMatrixRow),
     };
   }
 
