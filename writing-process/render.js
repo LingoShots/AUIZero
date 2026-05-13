@@ -1,5 +1,5 @@
 (() => {
-  const root = typeof window !== "undefined" ? window.PraxisWritingProcess || {} : {};
+  const root = typeof window === "undefined" ? {} : window.PraxisWritingProcess || {};
 
   function escapeHtml(value) {
     return String(value || "")
