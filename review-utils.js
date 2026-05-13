@@ -1,20 +1,7 @@
 (() => {
   const LARGE_SINGLE_INSERT_LIMIT = 220;
 
-  function cleanLevelLabel(label = "") {
-    if (typeof window.cleanRubricLevelLabel === "function") {
-      return window.cleanRubricLevelLabel(label);
-    }
-    const raw = String(label || "").trim();
-    const separators = [" - ", " – "];
-    for (const separator of separators) {
-      const index = raw.lastIndexOf(separator);
-      if (index < 0) continue;
-      const suffix = raw.slice(index + separator.length).trim();
-      if (suffix && Number.isFinite(Number(suffix))) return raw.slice(0, index).trim();
-    }
-    return raw;
-  }
+  const cleanLevelLabel = cleanRubricLevelLabel;
 
   function createScoreBandsForPoints(maxPoints) {
     const ceiling = Math.max(1, Number(maxPoints || 0));
