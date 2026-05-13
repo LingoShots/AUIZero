@@ -63,6 +63,18 @@
     return cleaned || fallback;
   }
 
+  function cleanRubricLevelLabel(label = "") {
+    const raw = String(label || "").trim();
+    const separators = [" - ", " – "];
+    for (const separator of separators) {
+      const index = raw.lastIndexOf(separator);
+      if (index < 0) continue;
+      const suffix = raw.slice(index + separator.length).trim();
+      if (suffix && Number.isFinite(Number(suffix))) return raw.slice(0, index).trim();
+    }
+    return raw;
+  }
+
   const SHARED_RUBRIC_PART_RE = /\b(topic sentence|supporting (?:sentence|sentences|idea|ideas|detail|details)|concluding sentence|transitions?|unity|coherence)\b/i;
 
   function rubricScoreSignature(criterion = {}) {
@@ -162,6 +174,32 @@
     return merged.filter(Boolean);
   }
 
+  function rubricCriterionLevelToMatrixLevel(level = {}) {
+    return {
+      id: level.id,
+      label: `${level.label} – ${level.score}`,
+      points: Number(level.score || 0),
+      description: level.description,
+    };
+  }
+
+  function rubricCriterionToMatrixRow(criterion = {}) {
+    const minScore = Number(criterion.minScore || 0);
+    const maxScore = Number(criterion.maxScore || 0);
+    const name = criterion.name;
+    const pointsLabel = minScore !== maxScore ? `${minScore} – ${maxScore} points` : `${maxScore} points`;
+    return {
+      id: criterion.id,
+      name,
+      subcriterion: name,
+      points: maxScore,
+      pointsLabel,
+      levels: safeArray(criterion.levels).map(rubricCriterionLevelToMatrixLevel),
+      section: "",
+      description: "",
+    };
+  }
+
   function wordCount(text) {
     return (String(text || "").trim().match(/\b[\w'-]+\b/g) || []).length;
   }
@@ -206,12 +244,15 @@
     isAsciiAlphaNumeric,
     trimHyphens,
     slugifyRubricId,
+    cleanRubricLevelLabel,
     rubricScoreSignature,
     criterionLooksLikeSharedPart,
     findMatchingCriterionLevel,
     deriveMergedCriterionName,
     mergeSharedRubricCriterionGroup,
     coalesceSharedRubricCriteria,
+    rubricCriterionLevelToMatrixLevel,
+    rubricCriterionToMatrixRow,
     wordCount,
     trimTo,
     clamp,
