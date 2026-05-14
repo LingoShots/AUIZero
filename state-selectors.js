@@ -144,12 +144,14 @@
     const { ui } = window.AppState;
     const { clamp } = window;
     const resolvedAssignmentId = assignmentId === undefined ? ui.selectedStudentAssignmentId : assignmentId;
+    const previousStep = ui.studentStep;
     const nextStep = clamp(Number(step || 1), 1, 4);
     ui.studentStep = nextStep;
-    if (!resolvedAssignmentId) return nextStep;
+    if (!resolvedAssignmentId) return previousStep !== nextStep;
     ui.studentStepOverrides = ui.studentStepOverrides || {};
+    const previousOverride = ui.studentStepOverrides[resolvedAssignmentId];
     ui.studentStepOverrides[resolvedAssignmentId] = nextStep;
-    return nextStep;
+    return previousStep !== nextStep || previousOverride !== nextStep;
   }
 
   function getRememberedStudentStep(assignmentId) {
