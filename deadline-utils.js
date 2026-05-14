@@ -33,8 +33,15 @@
         hour: "numeric",
         minute: "2-digit",
       });
-      const selected = time === selectedValue ? "selected" : "";
-      return `<option value="${time}" ${selected}>${display}</option>`;
+      if (typeof document !== "undefined" && document.createElement) {
+        const option = document.createElement("option");
+        option.value = time;
+        option.textContent = display;
+        option.selected = time === selectedValue;
+        return option.outerHTML;
+      }
+      const selected = time === selectedValue ? " selected" : "";
+      return ["<option value=\"", time, "\"", selected, ">", display, "</option>"].join("");
     }).join("");
   }
 
