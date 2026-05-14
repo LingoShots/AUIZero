@@ -334,6 +334,14 @@ function rubricLibraryDedupKey(entry = {}) {
   return entry?.id || "";
 }
 
+function formatCriterionPointsLabel(criterion = {}) {
+  const minScore = criterion.minScore;
+  const maxScore = criterion.maxScore;
+  return minScore === maxScore
+    ? `${maxScore} points`
+    : `${minScore} – ${maxScore} points`;
+}
+
 function normalizeRubricLibraryEntry(entry = {}) {
   const rawSchema = entry?.schema && typeof entry.schema === "object" ? getRubricSchema(entry.schema, entry?.name || "Saved rubric") : null;
   const rawData = entry?.data && typeof entry.data === "object"
@@ -2159,9 +2167,7 @@ if (action === "generate-teacher-assist") {
           name: criterion.name,
           description: "",
           points: Number(criterion.maxScore || 0),
-          pointsLabel: criterion.minScore !== criterion.maxScore
-            ? `${criterion.minScore} – ${criterion.maxScore} points`
-            : `${criterion.maxScore} points`,
+          pointsLabel: formatCriterionPointsLabel(criterion),
           levels: safeArray(criterion.levels).map((level) => ({
             id: level.id,
             label: `${level.label} – ${level.score}`,
@@ -3499,7 +3505,7 @@ if (action === "select-assignment") {
          submission.teacherReview = createDefaultTeacherReview(submission.teacherReview);
          const summary = calculateTeacherReviewSummary(assignment, submission);
          submission.teacherReview.rubricType = getAssignmentRubricType(assignment);
-         submission.teacherReview.finalScore = validOverride !== null ? validOverride : summary.totalScore;
+         submission.teacherReview.finalScore = validOverride === null ? summary.totalScore : validOverride;
          submission.teacherReview.finalNotes = notesValue;
          submission.teacherReview.status = "graded";
          submission.teacherReview.savedAt = new Date().toISOString();
@@ -4221,9 +4227,7 @@ async function saveTeacherAssignment() {
           name: criterion.name,
           description: "",
           points: Number(criterion.maxScore || 0),
-          pointsLabel: criterion.minScore !== criterion.maxScore
-            ? `${criterion.minScore} – ${criterion.maxScore} points`
-            : `${criterion.maxScore} points`,
+          pointsLabel: formatCriterionPointsLabel(criterion),
           levels: safeArray(criterion.levels).map((level) => ({
             id: level.id,
             label: `${level.label} – ${level.score}`,
@@ -4795,7 +4799,7 @@ function calculateMicroCorrections(submission, groupedDeletions) {
     if (!prevEvent) continue;
     const gap = gTime - Date.parse(prevEvent.timestamp);
     if (gap > 2000) continue;
-    const prevPos = prevEvent.end !== undefined ? prevEvent.end : prevEvent.start;
+    const prevPos = prevEvent.end === undefined ? prevEvent.start : prevEvent.end;
     if (Math.abs(g.firstStart - prevPos) > 5) continue;
     count++;
   }
@@ -4814,7 +4818,7 @@ function calculateLocalRevisions(submission, groupedDeletions) {
     const prevEvent = events.slice().reverse().find(e => Date.parse(e.timestamp) < gTime);
     if (!prevEvent) continue;
     const gap = gTime - Date.parse(prevEvent.timestamp);
-    const prevPos = prevEvent.end !== undefined ? prevEvent.end : prevEvent.start;
+    const prevPos = prevEvent.end === undefined ? prevEvent.start : prevEvent.end;
     const cursorJump = Math.abs(g.firstStart - prevPos) > 10;
     if (gap >= 2000 && gap <= 30000) { count++; continue; }
     if (gap < 2000 && cursorJump) { count++; continue; }
@@ -5745,7 +5749,7 @@ function downloadStudentWork(assignment, submission) {
 
 <h2>Teacher grade summary</h2>
 <p><strong>Total score:</strong> ${totalScore}/${maxScore}</p>
-${String(totalScore) !== String(rubricScore) ? `<p><strong>Rubric subtotal:</strong> ${rubricScore}/${maxScore}</p>` : ""}
+${String(totalScore) === String(rubricScore) ? "" : `<p><strong>Rubric subtotal:</strong> ${rubricScore}/${maxScore}</p>`}
 ${submission.teacherReview?.finalNotes ? `<p><strong>Overall feedback:</strong> ${escapeHtml(submission.teacherReview.finalNotes)}</p>` : ""}
 
 <h2>Rubric breakdown</h2>
@@ -6177,9 +6181,7 @@ function schemaCriterionToRubricRow(criterion) {
     name: criterion.name,
     description: "",
     points: Number(criterion.maxScore || 0),
-    pointsLabel: criterion.minScore !== criterion.maxScore
-      ? `${criterion.minScore} – ${criterion.maxScore} points`
-      : `${criterion.maxScore} points`,
+   pointsLabel: formatCriterionPointsLabel(criterion),
     levels: safeArray(criterion.levels).map((level) => ({
       id: level.id,
       label: `${level.label} – ${level.score}`,
