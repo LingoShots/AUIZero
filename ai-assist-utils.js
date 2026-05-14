@@ -23,42 +23,49 @@
     return raw.slice(start, -3).trim();
   }
 
-  function extractJsonBlock(text = "") {
-    const raw = stripCodeFence(text);
+  function findJsonStart(raw) {
     const arrayStart = raw.indexOf("[");
     const objectStart = raw.indexOf("{");
     const candidates = [arrayStart, objectStart].filter((value) => value >= 0);
-    if (!candidates.length) return raw;
-    const start = Math.min(...candidates);
-    const openChar = raw[start];
-    const closeChar = openChar === "[" ? "]" : "}";
-    let depth = 0;
-    let inString = false;
-    let escapeNext = false;
+    return candidates.length ? Math.min(...candidates) : -1;
+  }
 
+  function updateJsonScanState(state, char) {
+    if (state.escapeNext) {
+      state.escapeNext = false;
+      return;
+    }
+    if (char === "\\") {
+      state.escapeNext = true;
+      return;
+    }
+    if (char === "\"") {
+      state.inString = !state.inString;
+    }
+  }
+
+  function findJsonEnd(raw, start, openChar, closeChar) {
+    const state = { depth: 0, inString: false, escapeNext: false };
     for (let index = start; index < raw.length; index += 1) {
       const char = raw[index];
-      if (escapeNext) {
-        escapeNext = false;
-        continue;
-      }
-      if (char === "\\") {
-        escapeNext = true;
-        continue;
-      }
-      if (char === "\"") {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (char === openChar) depth += 1;
-      if (char === closeChar) depth -= 1;
-      if (depth === 0) {
-        return raw.slice(start, index + 1);
-      }
+      updateJsonScanState(state, char);
+      if (state.escapeNext || char === "\\" || char === "\"") continue;
+      if (state.inString) continue;
+      if (char === openChar) state.depth += 1;
+      if (char === closeChar) state.depth -= 1;
+      if (state.depth === 0) return index;
     }
+    return -1;
+  }
 
-    return raw.slice(start);
+  function extractJsonBlock(text = "") {
+    const raw = stripCodeFence(text);
+    const start = findJsonStart(raw);
+    if (start < 0) return raw;
+    const openChar = raw[start];
+    const closeChar = openChar === "[" ? "]" : "}";
+    const end = findJsonEnd(raw, start, openChar, closeChar);
+    return end >= 0 ? raw.slice(start, end + 1) : raw.slice(start);
   }
 
   function parseJsonResponse(text, fallback = null) {
