@@ -180,10 +180,10 @@
 
   function isStudentSubmissionLocked(submission) {
     const status = String(submission?.status || "").trim().toLowerCase();
-    if (status === "draft" || status === "returned" || status === "reopened") {
-      return false;
-    }
-    return status === "submitted" || Boolean(submission?.teacherReview?.savedAt);
+    const isEditableStatus = status === "draft" || status === "returned" || status === "reopened";
+    const isSubmittedStatus = status === "submitted";
+    const hasSavedTeacherReview = Boolean(submission?.teacherReview?.savedAt);
+    return !isEditableStatus && (isSubmittedStatus || hasSavedTeacherReview);
   }
 
   function reconcileStudentStepAfterSubmissionRefresh(submission) {

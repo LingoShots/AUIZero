@@ -193,9 +193,9 @@
       const wrapper = document.createElement("div");
       wrapper.innerHTML = renderManualProxyHtml().trim();
       proxy = wrapper.firstElementChild;
-      fieldStack.insertBefore(proxy, settings);
+      settings.before(proxy);
     } else if (proxy.parentElement !== fieldStack) {
-      fieldStack.insertBefore(proxy, settings);
+      settings.before(proxy);
     }
     syncHiddenFieldsToManualProxy();
     return proxy;
@@ -210,7 +210,7 @@
       saveBar = wrapper.firstElementChild;
     }
     if (saveBar.parentElement !== fieldStack || saveBar.previousElementSibling !== settings) {
-      fieldStack.insertBefore(saveBar, settings.nextSibling);
+      settings.after(saveBar);
     }
     return saveBar;
   }
@@ -267,7 +267,7 @@
         const wrapper = document.createElement("div");
         wrapper.innerHTML = renderChoiceHtml(currentFlow).trim();
         choice = wrapper.firstElementChild;
-        fieldStack.insertBefore(choice, rubric);
+        rubric.before(choice);
       } else if (choice.dataset.currentFlow !== currentFlow) {
         choice.outerHTML = renderChoiceHtml(currentFlow).trim();
       }
