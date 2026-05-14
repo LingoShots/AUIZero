@@ -1,28 +1,4 @@
 (function initAiAssistUtils(global, factory) {
-  const utils = factory();
-  if (global) {
-    global.AiAssistUtils = utils;
-  }
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = utils;
-  }
-})(
-  typeof window === "undefined" ? globalThis : window,
-  function aiAssistUtilsFactory() {
-  function stripCodeFence(text = "") {
-    const raw = String(text || "").trim();
-    if (!raw.startsWith("```") || !raw.endsWith("```")) return raw;
-    let start = 3;
-    while (start < raw.length && raw[start] !== "\n" && raw[start] !== "\r") {
-      start += 1;
-    }
-    if (start >= raw.length) return raw;
-    while (start < raw.length && (raw[start] === "\n" || raw[start] === "\r")) {
-      start += 1;
-    }
-    return raw.slice(start, -3).trim();
-  }
-
   function findJsonStart(raw) {
     const arrayStart = raw.indexOf("[");
     const objectStart = raw.indexOf("{");
@@ -42,6 +18,30 @@
     if (char === "\"") {
       state.inString = !state.inString;
     }
+  }
+
+  const utils = factory({ findJsonStart, updateJsonScanState });
+  if (global) {
+    global.AiAssistUtils = utils;
+  }
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = utils;
+  }
+})(
+  typeof window === "undefined" ? globalThis : window,
+  function aiAssistUtilsFactory({ findJsonStart, updateJsonScanState }) {
+  function stripCodeFence(text = "") {
+    const raw = String(text || "").trim();
+    if (!raw.startsWith("```") || !raw.endsWith("```")) return raw;
+    let start = 3;
+    while (start < raw.length && raw[start] !== "\n" && raw[start] !== "\r") {
+      start += 1;
+    }
+    if (start >= raw.length) return raw;
+    while (start < raw.length && (raw[start] === "\n" || raw[start] === "\r")) {
+      start += 1;
+    }
+    return raw.slice(start, -3).trim();
   }
 
   function findJsonEnd(raw, start, openChar, closeChar) {
