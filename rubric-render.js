@@ -221,6 +221,35 @@
     return { ring: "#768078", bg: "#f6f6f4", text: "#4f574f", badge: "#e7e7e2" };
   }
 
+  function renderRubricLevelCell({
+    level,
+    selected,
+    suggested,
+    clickable,
+    selectionAction,
+    criterionId,
+    escapeAttribute,
+    escapeHtml,
+    renderRichTextHtml,
+  }) {
+    const theme = levelTheme(level.label);
+    const levelScore = Number(level.score ?? level.points);
+    const isSelected = selected?.bandId === level.id
+      || (selected && Number(selected.points) === levelScore && selected.label === level.label);
+    const isSuggested = suggested?.bandId === level.id
+      || (suggested && Number(suggested.points) === levelScore && suggested.label === level.label);
+    const bg = isSelected ? theme.bg : isSuggested ? "#f7f2e9" : "#fff";
+    const border = isSelected ? theme.ring : isSuggested ? "#ccb48f" : "#e7ddd0";
+    const content = `
+      <span class="rubric-level-badge" style="background:${theme.badge};color:${theme.text};">${escapeHtml(level.label)} · ${Number(level.score ?? level.points ?? 0)} pts</span>
+      <span class="rubric-level-text">${renderRichTextHtml(level.description || "No descriptor provided.")}</span>
+    `;
+    if (!clickable) {
+      return `<div class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" style="background:${bg};border-color:${border};">${content}</div>`;
+    }
+    return `<button class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" data-action="${escapeAttribute(selectionAction)}" data-criterion-id="${escapeAttribute(criterionId)}" data-band-id="${escapeAttribute(level.id)}" style="background:${bg};border-color:${border};">${content}</button>`;
+  }
+
   function renderRubricMatrixTable(matrixData, options = {}) {
     const escapeHtml = _escapeHtml;
     const escapeAttribute = _escapeAttribute;
@@ -351,21 +380,18 @@
                     <span class="rubric-selection-pill" style="background:#eef4ff;color:#4562b8;">Suggested · ${escapeHtml(suggested.label)} · ${suggested.points} pts</span>
                   ` : ""}
                 </div>
-                <div class="rubric-level-grid ${previewMode ? "rubric-level-grid-preview" : `rubric-level-grid-${Math.min(Math.max(criterion.levels.length, 1), 5)}`}">
-                  ${criterion.levels.map((level) => {
-                    const theme = levelTheme(level.label);
-                    const isSelected = selected?.bandId === level.id || (selected && Number(selected.points) === Number(level.score ?? level.points) && selected.label === level.label);
-                    const isSuggested = suggested?.bandId === level.id || (suggested && Number(suggested.points) === Number(level.score ?? level.points) && suggested.label === level.label);
-                    const bg = isSelected ? theme.bg : isSuggested ? "#f7f2e9" : "#fff";
-                    const border = isSelected ? theme.ring : isSuggested ? "#ccb48f" : "#e7ddd0";
-                    const content = `
-                      <span class="rubric-level-badge" style="background:${theme.badge};color:${theme.text};">${escapeHtml(level.label)} · ${Number(level.score ?? level.points ?? 0)} pts</span>
-                      <span class="rubric-level-text">${renderRichTextHtml(level.description || "No descriptor provided.")}</span>
-                    `;
-                    return clickable
-                      ? `<button class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" data-action="${escapeAttribute(selectionAction)}" data-criterion-id="${escapeAttribute(criterion.id)}" data-band-id="${escapeAttribute(level.id)}" style="background:${bg};border-color:${border};">${content}</button>`
-                      : `<div class="rubric-level-cell ${isSelected ? "is-selected" : ""} ${isSuggested ? "is-suggested" : ""}" style="background:${bg};border-color:${border};">${content}</div>`;
-                  }).join("")}
+                <div class="rubric-level-grid ${previewMode ? "rubric-level-grid-preview" : `rubric-level-grid-${Math.min(Math.max(criterion.levels.length, 1), 5)}`} ">
+                  ${criterion.levels.map((level) => renderRubricLevelCell({
+                    level,
+                    selected,
+                    suggested,
+                    clickable,
+                    selectionAction,
+                    criterionId: criterion.id,
+                    escapeAttribute,
+                    escapeHtml,
+                    renderRichTextHtml,
+                  })).join("")}
                 </div>
               </section>
             `;
