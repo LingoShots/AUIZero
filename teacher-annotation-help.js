@@ -44,12 +44,25 @@
     return String(label || "Custom code").split(":")[0].trim();
   }
 
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function isVisible(element) {
     return Boolean(element && element.offsetParent !== null);
   }
 
   function codeSet() {
     return new Set(cleanCodes().map((entry) => entry.code));
+  }
+
+  function buildCodeSignature(codes) {
+    return codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
   }
 
   function isOriginalCodeButton(button) {
@@ -84,16 +97,16 @@
   }
 
   function renderGuide(codes) {
-    const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
+    const signature = buildCodeSignature(codes);
     return `
-      <div id="annotation-code-help" data-code-signature="${signature}" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;display:block;">
+      <div id="annotation-code-help" data-code-signature="${escapeHtml(signature)}" class="teacher-ready-card" style="padding:12px 14px;margin:0 0 12px;border-color:var(--line);background:#fffefb;display:block;">
         <p class="mini-label" style="margin-bottom:4px;">Annotation tools</p>
         <p class="subtle" style="margin:0 0 10px;font-size:0.84rem;line-height:1.45;">Select part of the student's text, then choose a feedback code.</p>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
           ${codes.map((entry) => `
-            <button type="button" data-annotation-proxy-code="${entry.code}" title="${entry.label}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:#fff;color:var(--ink);cursor:pointer;">
-              <strong style="color:var(--accent-deep);">${entry.code}</strong>
-              <span style="color:var(--muted);">${shortLabel(entry.label)}</span>
+            <button type="button" data-annotation-proxy-code="${escapeHtml(entry.code)}" title="${escapeHtml(entry.label)}" style="display:inline-flex;align-items:center;gap:5px;font-size:0.74rem;border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:#fff;color:var(--ink);cursor:pointer;">
+              <strong style="color:var(--accent-deep);">${escapeHtml(entry.code)}</strong>
+              <span style="color:var(--muted);">${escapeHtml(shortLabel(entry.label))}</span>
             </button>
           `).join("")}
         </div>
@@ -102,8 +115,8 @@
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin-top:10px;">
             ${codes.map((entry) => `
               <div style="display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:10px;background:#fff;">
-                <span style="font-size:0.76rem;font-weight:800;color:var(--accent-deep);border:1px solid var(--accent);background:#fffaf0;border-radius:8px;padding:2px 6px;min-width:38px;text-align:center;">${entry.code}</span>
-                <span style="font-size:0.78rem;line-height:1.4;color:var(--ink);"><strong>${shortLabel(entry.label)}:</strong> ${entry.label}</span>
+                <span style="font-size:0.76rem;font-weight:800;color:var(--accent-deep);border:1px solid var(--accent);background:#fffaf0;border-radius:8px;padding:2px 6px;min-width:38px;text-align:center;">${escapeHtml(entry.code)}</span>
+                <span style="font-size:0.78rem;line-height:1.4;color:var(--ink);"><strong>${escapeHtml(shortLabel(entry.label))}:</strong> ${escapeHtml(entry.label)}</span>
               </div>
             `).join("")}
           </div>
@@ -114,7 +127,7 @@
 
   function insertOrUpdateGuide() {
     const codes = cleanCodes();
-    const signature = codes.map((entry) => `${entry.code}:${entry.label}`).join("|");
+    const signature = buildCodeSignature(codes);
     const row = findAnnotateRow();
     let guide = document.getElementById("annotation-code-help");
 
@@ -170,16 +183,28 @@
     });
   }
 
-  document.addEventListener("click", (event) => {
-    const proxy = event.target.closest("[data-annotation-proxy-code]");
-    if (!proxy) return;
-    const original = findOriginalCodeButton(proxy.dataset.annotationProxyCode);
-    original?.click();
-  });
+  if (typeof document !== "undefined") {
+    document.addEventListener("click", (event) => {
+      const proxy = event.target.closest("[data-annotation-proxy-code]");
+      if (!proxy) return;
+      const original = findOriginalCodeButton(proxy.dataset.annotationProxyCode);
+      original?.click();
+    });
+  }
 
-  window.addEventListener("DOMContentLoaded", () => {
-    enhance();
-    const app = document.getElementById("app");
-    if (app) new MutationObserver(schedule).observe(app, { childList: true, subtree: true });
-  });
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("DOMContentLoaded", () => {
+      enhance();
+      const app = document.getElementById("app");
+      if (app) new MutationObserver(schedule).observe(app, { childList: true, subtree: true });
+    });
+  }
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      buildCodeSignature,
+      escapeHtml,
+      renderGuide,
+    };
+  }
 })();
