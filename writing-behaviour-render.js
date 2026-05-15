@@ -131,7 +131,7 @@
   }
 
   function renderModernWritingBehaviourPanel(submission, assignment) {
-    if (typeof window === "undefined" || !window.PraxisWritingProcess?.renderTeacherPanel) {
+    if (globalThis.window === undefined || !globalThis.window.PraxisWritingProcess?.renderTeacherPanel) {
       return null;
     }
     requestProcessAnalysisSnapshot(submission);
@@ -149,7 +149,8 @@
 
   function scoreSubstantiveRevisions(substantive, words) {
     if (substantive === null || substantive === undefined) return null;
-    return substantive >= 1 ? 1 : (words < 150 ? 1 : 0);
+    if (substantive >= 1) return 1;
+    return words < 150 ? 1 : 0;
   }
 
   function getWritingBehaviourRanges(level) {
