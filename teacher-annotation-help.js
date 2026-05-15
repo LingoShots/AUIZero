@@ -192,7 +192,7 @@
     });
   }
 
-  if (typeof globalThis.window !== "undefined" && typeof globalThis.window.addEventListener === "function") {
+  if (globalThis.window !== undefined && typeof globalThis.window.addEventListener === "function") {
     globalThis.window.addEventListener("DOMContentLoaded", () => {
       enhance();
       const app = document.getElementById("app");
