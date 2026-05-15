@@ -63,6 +63,143 @@ function splitTokenToFitWidth(token, measureText, maxWidth) {
   return pieces.length ? pieces : [String(token || "")];
 }
 
+function pushLongTokenPieces({
+  entries,
+  token,
+  currentStart,
+  currentEnd,
+  logicalNumber,
+  isFirstVisualRow,
+  visibleNumber,
+  measureText,
+  maxWidth,
+}) {
+  const tokenPieces = splitTokenToFitWidth(token.trimStart(), measureText, maxWidth);
+  let nextEnd = currentEnd;
+  let nextVisibleNumber = visibleNumber;
+  let nextIsFirstVisualRow = isFirstVisualRow;
+  tokenPieces.forEach((piece, pieceIndex) => {
+    const pieceStart = pieceIndex === 0 ? currentStart : nextEnd;
+    const pieceEnd = pieceStart + piece.length;
+    entries.push({
+      number: nextVisibleNumber++,
+      logicalNumber,
+      isFirstVisualRow: nextIsFirstVisualRow,
+      text: piece,
+      start: pieceStart,
+      end: pieceEnd,
+    });
+    nextIsFirstVisualRow = false;
+    nextEnd = pieceEnd;
+  });
+  return {
+    currentEnd: nextEnd,
+    isFirstVisualRow: nextIsFirstVisualRow,
+    visibleNumber: nextVisibleNumber,
+  };
+}
+
+function buildWrappedLineEntries(text = "", metrics = {}, measureText = (value) => String(value || "").length) {
+  const value = String(text || "");
+  if (!metrics || !Number.isFinite(Number(metrics.width))) {
+    return [{ number: 1, logicalNumber: 1, isFirstVisualRow: true, text: value, start: 0, end: value.length }];
+  }
+
+  const maxWidth = Math.max(1, Number(metrics.width));
+  const entries = [];
+  let visibleNumber = 1;
+  let logicalNumber = 0;
+  let cursor = 0;
+  const logicalLines = value.split("\n");
+
+  logicalLines.forEach((logicalLine, logicalIndex) => {
+    const isLastLogicalLine = logicalIndex === logicalLines.length - 1;
+    logicalNumber += 1;
+    if (!logicalLine.length) {
+      if (!isLastLogicalLine || value.length === 0) {
+        entries.push({ number: visibleNumber++, logicalNumber, isFirstVisualRow: true, text: "", start: cursor, end: cursor });
+      }
+      cursor += 1;
+      return;
+    }
+
+    const tokens = splitLineTokens(logicalLine);
+    let currentText = "";
+    let currentStart = cursor;
+    let currentEnd = cursor;
+    let isFirstVisualRow = true;
+
+    const pushCurrent = () => {
+      entries.push({
+        number: visibleNumber++,
+        logicalNumber,
+        isFirstVisualRow,
+        text: trimEndWhitespace(currentText),
+        start: currentStart,
+        end: currentEnd,
+      });
+      isFirstVisualRow = false;
+    };
+
+    tokens.forEach((token) => {
+      const tokenStart = cursor;
+      cursor += token.length;
+
+      if (!currentText && isWhitespaceOnly(token)) {
+        currentStart = cursor;
+        currentEnd = cursor;
+        return;
+      }
+
+      const candidate = `${currentText}${token}`;
+      if (currentText && measureText(candidate) > maxWidth) {
+        pushCurrent();
+        currentText = "";
+        currentStart = tokenStart + countLeadingWhitespace(token);
+        currentEnd = currentStart;
+      }
+
+      if (!currentText && measureText(token) > maxWidth) {
+        const wrappedToken = pushLongTokenPieces({
+          entries,
+          token,
+          currentStart,
+          currentEnd,
+          logicalNumber,
+          isFirstVisualRow,
+          visibleNumber,
+          measureText,
+          maxWidth,
+        });
+        currentEnd = wrappedToken.currentEnd;
+        isFirstVisualRow = wrappedToken.isFirstVisualRow;
+        visibleNumber = wrappedToken.visibleNumber;
+        currentText = "";
+        currentStart = currentEnd;
+        return;
+      }
+
+      currentText += currentText ? token : token.trimStart();
+      if (currentText.trim()) {
+        currentEnd = tokenStart + token.length;
+      } else {
+        currentStart = cursor;
+        currentEnd = cursor;
+      }
+    });
+
+    if (currentText || !entries.length) {
+      pushCurrent();
+    }
+
+    if (!isLastLogicalLine) {
+      cursor += 1;
+    }
+  });
+
+  return entries.length ? entries : [{ number: 1, text: "", start: 0, end: 0 }];
+}
+
 (function initLineNumberUtils(global, factory) {
   const utils = factory();
   if (global) {
@@ -74,108 +211,6 @@ function splitTokenToFitWidth(token, measureText, maxWidth) {
 })(
   typeof window === "undefined" ? globalThis : window,
   function lineNumberUtilsFactory() {
-    function buildWrappedLineEntries(text = "", metrics = {}, measureText = (value) => String(value || "").length) {
-      const value = String(text || "");
-      if (!metrics || !Number.isFinite(Number(metrics.width))) {
-        return [{ number: 1, logicalNumber: 1, isFirstVisualRow: true, text: value, start: 0, end: value.length }];
-      }
-
-      const maxWidth = Math.max(1, Number(metrics.width));
-      const entries = [];
-      let visibleNumber = 1;
-      let logicalNumber = 0;
-      let cursor = 0;
-      const logicalLines = value.split("\n");
-
-      logicalLines.forEach((logicalLine, logicalIndex) => {
-        const isLastLogicalLine = logicalIndex === logicalLines.length - 1;
-        logicalNumber += 1;
-        if (!logicalLine.length) {
-          if (!isLastLogicalLine || value.length === 0) {
-            entries.push({ number: visibleNumber++, logicalNumber, isFirstVisualRow: true, text: "", start: cursor, end: cursor });
-          }
-          cursor += 1;
-          return;
-        }
-
-        const tokens = splitLineTokens(logicalLine);
-        let currentText = "";
-        let currentStart = cursor;
-        let currentEnd = cursor;
-        let isFirstVisualRow = true;
-
-        const pushCurrent = () => {
-          entries.push({
-            number: visibleNumber++,
-            logicalNumber,
-            isFirstVisualRow,
-            text: trimEndWhitespace(currentText),
-            start: currentStart,
-            end: currentEnd,
-          });
-          isFirstVisualRow = false;
-        };
-
-        tokens.forEach((token) => {
-          const tokenStart = cursor;
-          cursor += token.length;
-
-          if (!currentText && isWhitespaceOnly(token)) {
-            currentStart = cursor;
-            currentEnd = cursor;
-            return;
-          }
-
-          const candidate = `${currentText}${token}`;
-          if (currentText && measureText(candidate) > maxWidth) {
-            pushCurrent();
-            currentText = "";
-            currentStart = tokenStart + countLeadingWhitespace(token);
-            currentEnd = currentStart;
-          }
-
-          if (!currentText && measureText(token) > maxWidth) {
-            const tokenPieces = splitTokenToFitWidth(token.trimStart(), measureText, maxWidth);
-            tokenPieces.forEach((piece, pieceIndex) => {
-              const pieceStart = pieceIndex === 0 ? currentStart : currentEnd;
-              const pieceEnd = pieceStart + piece.length;
-              entries.push({
-                number: visibleNumber++,
-                logicalNumber,
-                isFirstVisualRow,
-                text: piece,
-                start: pieceStart,
-                end: pieceEnd,
-              });
-              isFirstVisualRow = false;
-              currentEnd = pieceEnd;
-            });
-            currentText = "";
-            currentStart = currentEnd;
-            return;
-          }
-
-          currentText += currentText ? token : token.trimStart();
-          if (currentText.trim()) {
-            currentEnd = tokenStart + token.length;
-          } else {
-            currentStart = cursor;
-            currentEnd = cursor;
-          }
-        });
-
-        if (currentText || !entries.length) {
-          pushCurrent();
-        }
-
-        if (!isLastLogicalLine) {
-          cursor += 1;
-        }
-      });
-
-      return entries.length ? entries : [{ number: 1, text: "", start: 0, end: 0 }];
-    }
-
     return {
       splitTokenToFitWidth,
       buildWrappedLineEntries,

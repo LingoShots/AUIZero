@@ -56,15 +56,8 @@
   function renderWritingBehaviour(submission, assignment) {
     const escapeHtml = _escapeHtml;
     const wordCount = _wordCount;
-    if (typeof window !== "undefined" && window.PraxisWritingProcess?.renderTeacherPanel) {
-      requestProcessAnalysisSnapshot(submission);
-      const excludedSources = [];
-      if (submission?.teacherReview?.writingBehaviourExcluded) excludedSources.push("submission_flag");
-      return window.PraxisWritingProcess.renderTeacherPanel(submission, assignment, {
-        excludedFromAnalytics: Boolean(submission?.teacherReview?.writingBehaviourExcluded),
-        exclusionSources: excludedSources,
-      });
-    }
+    const modernPanel = renderModernWritingBehaviourPanel(submission, assignment);
+    if (modernPanel !== null) return modernPanel;
 
     const f = submission?.fluencySummary || submission?.fluency_summary || {};
     if (!Object.keys(f).length) return "";
@@ -82,18 +75,11 @@
     const scoreBurst  = scoreInRange(burst,  r.burst[0],  r.burst[1]);
     const scorePauses = scoreInRange(pauses, r.pauses[0], r.pauses[1]);
 
-    let scoreMicro = null;
-    if (micro !== null && micro !== undefined) {
-      scoreMicro = micro < 1 ? 0 : 1;
-    }
+    const scoreMicro = scoreMicroCorrections(micro);
 
     const scoreLocal = scoreInRange(local, r.local[0], r.local[1]);
 
-    let scoreSubstantive = null;
-    if (substantive !== null && substantive !== undefined) {
-      const words = wordCount(submission?.finalText || submission?.draftText || "");
-      scoreSubstantive = substantive >= 1 ? 1 : (words < 150 ? 1 : 0);
-    }
+    const scoreSubstantive = scoreSubstantiveRevisions(substantive, wordCount(submission?.finalText || submission?.draftText || ""));
 
     const weightedScores = getWeightedWritingBehaviourScores({
       scoreBurst,
@@ -142,6 +128,30 @@
         <p style="margin:10px 0 0;font-size:0.80rem;color:${bandColour};line-height:1.5;">${escapeHtml(explanation)}</p>
       </div>
     `;
+  }
+
+  function renderModernWritingBehaviourPanel(submission, assignment) {
+    const renderTeacherPanel = globalThis.window?.PraxisWritingProcess?.renderTeacherPanel;
+    if (!renderTeacherPanel) {
+      return null;
+    }
+    requestProcessAnalysisSnapshot(submission);
+    const excluded = Boolean(submission?.teacherReview?.writingBehaviourExcluded);
+    return renderTeacherPanel(submission, assignment, {
+      excludedFromAnalytics: excluded,
+      exclusionSources: excluded ? ["submission_flag"] : [],
+    });
+  }
+
+  function scoreMicroCorrections(micro) {
+    if (micro === null || micro === undefined) return null;
+    return micro < 1 ? 0 : 1;
+  }
+
+  function scoreSubstantiveRevisions(substantive, words) {
+    if (substantive === null || substantive === undefined) return null;
+    if (substantive >= 1) return 1;
+    return words < 150 ? 1 : 0;
   }
 
   function getWritingBehaviourRanges(level) {

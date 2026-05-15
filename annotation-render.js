@@ -227,37 +227,52 @@
       result += escapeHtml(text.slice(cursor, h.start));
       const segment = escapeHtml(text.slice(h.start, h.end));
 
-      if (h.type === "paste") {
-        const pasteTitle = h.annotationLabels?.length
-          ? `Pasted content — teacher review required. Also tagged: ${h.annotationLabels.join(", ")}`
-          : "Pasted content — teacher review required";
-        const overlayCodes = h.annotationLabels?.length
-          ? `<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.82);padding:1px 4px;border-radius:999px;">${escapeHtml(h.annotationLabels.join("/"))}</sup>`
-          : "";
-        const overlayTarget = annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment";
-        const overlayIds = includeClickHandlers && h.annotationIds?.length ? ` onclick="${overlayTarget}('${escapeAttribute(h.annotationIds[0])}')"` : "";
-        const overlayStyle = h.annotationCodes?.length ? "border:2px solid #5b2a86;" : "";
-        const pasteAnchors = safeArray(h.annotationIds)
-          .map((id) => `<span id="${escapeAttribute(`${idPrefix}annotation-${id}`)}"></span>`)
-          .join("");
-        result += `<mark id="${escapeAttribute(`${idPrefix}paste-highlight-${h.id}`)}" class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${pasteAnchors}${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
-      } else {
-        const markId = `${idPrefix}annotation-${h.id}`;
-        const clickHandler = includeClickHandlers
-          ? ` onclick="${annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment"}('${escapeAttribute(h.id)}')"`
-          : "";
-        if (h.overlapsPaste) {
-          result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:#5b2a86;font-weight:700;margin-left:3px;">${escapeHtml(h.label || h.code)}</sup></mark>`;
-        } else {
-          result += `<mark id="${escapeAttribute(markId)}"${clickHandler} style="background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:var(--accent-deep);font-weight:700;margin-left:3px;">${escapeHtml(h.label || h.code)}</sup></mark>`;
-        }
-      }
+      result += h.type === "paste"
+        ? renderPasteHighlight(h, segment, { annotationClickTarget, includeClickHandlers, idPrefix })
+        : renderAnnotationHighlight(h, segment, { annotationClickTarget, includeClickHandlers, idPrefix });
 
       cursor = h.end;
     }
 
     result += escapeHtml(text.slice(cursor));
     return result;
+  }
+
+  function renderPasteHighlight(highlight, segment, options) {
+    const { annotationClickTarget, includeClickHandlers, idPrefix } = options;
+    const pasteTitle = highlight.annotationLabels?.length
+      ? `Pasted content — teacher review required. Also tagged: ${highlight.annotationLabels.join(", ")}`
+      : "Pasted content — teacher review required";
+    const overlayCodes = highlight.annotationLabels?.length
+      ? `<sup style="font-size:0.76em;color:#5b2a86;font-weight:800;margin-left:4px;background:rgba(255,255,255,0.82);padding:1px 4px;border-radius:999px;">${escapeHtml(highlight.annotationLabels.join("/"))}</sup>`
+      : "";
+    const overlayTarget = annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment";
+    const overlayIds = includeClickHandlers && highlight.annotationIds?.length
+      ? ` onclick="${overlayTarget}('${escapeAttribute(highlight.annotationIds[0])}')"`
+      : "";
+    const overlayStyle = highlight.annotationCodes?.length ? "border:2px solid #5b2a86;" : "";
+    const pasteAnchors = safeArray(highlight.annotationIds)
+      .map((id) => {
+        const annotationAnchorId = `${idPrefix}annotation-${id}`;
+        return `<span id="${escapeAttribute(annotationAnchorId)}"></span>`;
+      })
+      .join("");
+    const pasteHighlightId = `${idPrefix}paste-highlight-${highlight.id}`;
+    return `<mark id="${escapeAttribute(pasteHighlightId)}" class="paste-highlight"${overlayIds} style="${overlayStyle}" title="${escapeAttribute(pasteTitle)}">${pasteAnchors}${segment}<sup style="font-size:0.7em;color:#9b4dca;font-weight:700;">PASTE</sup>${overlayCodes}</mark>`;
+  }
+
+  function renderAnnotationHighlight(highlight, segment, options) {
+    const { annotationClickTarget, includeClickHandlers, idPrefix } = options;
+    const markId = `${idPrefix}annotation-${highlight.id}`;
+    const clickTarget = annotationClickTarget === "annotation" ? "scrollToAnnotation" : "scrollToComment";
+    const clickHandler = includeClickHandlers
+      ? ` onclick="${clickTarget}('${escapeAttribute(highlight.id)}')"`
+      : "";
+    const styles = highlight.overlapsPaste
+      ? "background:rgba(91,42,134,0.10);border:2px solid #5b2a86;color:inherit;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;"
+      : "background:#fff176;color:#2f2416;border-radius:4px;padding:2px 4px;scroll-margin-top:120px;cursor:pointer;";
+    const labelColor = highlight.overlapsPaste ? "#5b2a86" : "var(--accent-deep)";
+    return `<mark id="${escapeAttribute(markId)}"${clickHandler} style="${styles}" title="Click to jump to comment">${segment}<sup style="font-size:0.7em;color:${labelColor};font-weight:700;margin-left:3px;">${escapeHtml(highlight.label || highlight.code)}</sup></mark>`;
   }
 
   function createPasteHighlights(pasteEvidenceItems) {
