@@ -100,37 +100,31 @@
     return rubricSets[type] || rubricSets.other;
   }
 
-  function studentPromptForType(type, topic, languageLevel) {
-    const levelIntro =
-      ["A0", "A1"].includes(languageLevel)
-        ? "Use very short, simple sentences."
-        : languageLevel === "A2"
-          ? "Write in clear, simple sentences."
-          : languageLevel === "B1"
-            ? "Write clearly and explain your thinking."
-            : languageLevel === "B2"
-              ? "Write clearly and develop your ideas with some detail."
-              : "Write clearly, develop your ideas fully, and use precise language.";
+  function levelIntroForLanguageLevel(languageLevel) {
+    const levelIntros = {
+      A0: "Use very short, simple sentences.",
+      A1: "Use very short, simple sentences.",
+      A2: "Write in clear, simple sentences.",
+      B1: "Write clearly and explain your thinking.",
+      B2: "Write clearly and develop your ideas with some detail.",
+    };
+    return levelIntros[languageLevel]
+      || "Write clearly, develop your ideas fully, and use precise language.";
+  }
 
-    if (type === "process") {
-      return `${levelIntro} Explain how to do or make ${topic}. Describe each step clearly and in the right order.`;
-    }
-    if (type === "definition") {
-      return `${levelIntro} Explain what ${topic} means. Give a clear definition and use at least one example to help the reader understand.`;
-    }
-    if (type === "compare") {
-      return `${levelIntro} Compare and contrast two things related to ${topic}. Show how they are similar and how they are different.`;
-    }
-    if (type === "argument") {
-      return `${levelIntro} Write an opinion piece about ${topic}. Say what you believe, give at least one strong reason or example, and explain why it matters.`;
-    }
-    if (type === "narrative") {
-      return `${levelIntro} Write about a real or imagined moment connected to ${topic}. Make the event clear, include details, and show why the moment matters.`;
-    }
-    if (type === "informational") {
-      return `${levelIntro} Explain ${topic}. Teach the reader using clear facts, examples, or details.`;
-    }
-    return `${levelIntro} Write a clear response about ${topic}. Stay focused and support your ideas with examples or explanation.`;
+  function studentPromptForType(type, topic, languageLevel) {
+    const levelIntro = levelIntroForLanguageLevel(languageLevel);
+    const promptByType = {
+      process: `Explain how to do or make ${topic}. Describe each step clearly and in the right order.`,
+      definition: `Explain what ${topic} means. Give a clear definition and use at least one example to help the reader understand.`,
+      compare: `Compare and contrast two things related to ${topic}. Show how they are similar and how they are different.`,
+      argument: `Write an opinion piece about ${topic}. Say what you believe, give at least one strong reason or example, and explain why it matters.`,
+      narrative: `Write about a real or imagined moment connected to ${topic}. Make the event clear, include details, and show why the moment matters.`,
+      informational: `Explain ${topic}. Teach the reader using clear facts, examples, or details.`,
+    };
+    const prompt = promptByType[type]
+      || `Write a clear response about ${topic}. Stay focused and support your ideas with examples or explanation.`;
+    return `${levelIntro} ${prompt}`;
   }
 
   function focusForType(type, topic) {
@@ -252,37 +246,30 @@
     const allowedLevels = new Set(["A0", "A1", "A2", "B1", "B2", "C1", "C2"]);
     const inferred = inferTeacherBriefSettings(ui.teacherDraft.brief);
 
-    if (inferred.assignmentType) {
-      ui.teacherDraft.assignmentType = inferred.assignmentType;
-    } else if (parsed.assignmentType) {
-      ui.teacherDraft.assignmentType = parsed.assignmentType;
-    }
-    if (allowedLevels.has(String(inferred.languageLevel || "").trim())) {
-      ui.teacherDraft.languageLevel = String(inferred.languageLevel).trim();
-    } else if (allowedLevels.has(String(parsed.languageLevel || "").trim())) {
-      ui.teacherDraft.languageLevel = String(parsed.languageLevel).trim();
-    }
-    if (Number.isFinite(Number(inferred.feedbackRequestLimit)) && Number(inferred.feedbackRequestLimit) >= 0) {
-      ui.teacherDraft.feedbackRequestLimit = Number(inferred.feedbackRequestLimit);
-    } else if (Number.isFinite(Number(parsed.feedbackRequestLimit)) && Number(parsed.feedbackRequestLimit) >= 0) {
-      ui.teacherDraft.feedbackRequestLimit = Number(parsed.feedbackRequestLimit);
-    }
-    if (typeof inferred.disableChatbot === "boolean") {
-      ui.teacherDraft.disableChatbot = inferred.disableChatbot;
-    } else if (typeof parsed.disableChatbot === "boolean") {
-      ui.teacherDraft.disableChatbot = parsed.disableChatbot;
-    }
+    const assignmentType = inferred.assignmentType || parsed.assignmentType;
+    if (assignmentType) ui.teacherDraft.assignmentType = assignmentType;
+
+    const languageLevel = [inferred.languageLevel, parsed.languageLevel]
+      .map((value) => String(value || "").trim())
+      .find((value) => allowedLevels.has(value));
+    if (languageLevel) ui.teacherDraft.languageLevel = languageLevel;
+
+    const feedbackRequestLimit = firstValidNumber([inferred.feedbackRequestLimit, parsed.feedbackRequestLimit], (value) => value >= 0);
+    if (feedbackRequestLimit !== null) ui.teacherDraft.feedbackRequestLimit = feedbackRequestLimit;
+
+    const disableChatbot = firstBoolean([inferred.disableChatbot, parsed.disableChatbot]);
+    if (disableChatbot !== null) ui.teacherDraft.disableChatbot = disableChatbot;
+
     if (ui.teacherDraft.disableChatbot) {
       ui.teacherDraft.chatTimeLimit = -1;
-    } else if (Number.isFinite(Number(inferred.chatTimeLimit)) && Number(inferred.chatTimeLimit) >= 0) {
-      ui.teacherDraft.chatTimeLimit = Number(inferred.chatTimeLimit);
-    } else if (Number.isFinite(Number(parsed.chatTimeLimit)) && Number(parsed.chatTimeLimit) >= 0) {
-      ui.teacherDraft.chatTimeLimit = Number(parsed.chatTimeLimit);
+    } else {
+      const chatTimeLimit = firstValidNumber([inferred.chatTimeLimit, parsed.chatTimeLimit], (value) => value >= 0);
+      if (chatTimeLimit !== null) ui.teacherDraft.chatTimeLimit = chatTimeLimit;
     }
-    if (Number.isFinite(Number(inferred.totalPoints)) && Number(inferred.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
-      ui.teacherDraft.totalPoints = Number(inferred.totalPoints);
-    } else if (Number.isFinite(Number(parsed.totalPoints)) && Number(parsed.totalPoints) > 0 && !ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
-      ui.teacherDraft.totalPoints = Number(parsed.totalPoints);
+
+    if (!ui.teacherDraft.uploadedRubricSchema?.criteria?.length) {
+      const totalPoints = firstValidNumber([inferred.totalPoints, parsed.totalPoints], (value) => value > 0);
+      if (totalPoints !== null) ui.teacherDraft.totalPoints = totalPoints;
     }
 
     const deadlineDate = String(parsed.deadlineDate || "").trim();
@@ -290,6 +277,18 @@
     if (deadlineDate) {
       ui.teacherDraft.deadline = combineDeadlineParts(deadlineDate, deadlineTime || getDeadlineTimePart(ui.teacherDraft.deadline) || "09:00");
     }
+  }
+
+  function firstValidNumber(values, predicate) {
+    for (const value of values) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && predicate(numeric)) return numeric;
+    }
+    return null;
+  }
+
+  function firstBoolean(values) {
+    return values.find((value) => typeof value === "boolean") ?? null;
   }
 
   const TeacherAssist = {
