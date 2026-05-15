@@ -63,6 +63,42 @@ function splitTokenToFitWidth(token, measureText, maxWidth) {
   return pieces.length ? pieces : [String(token || "")];
 }
 
+function pushLongTokenPieces({
+  entries,
+  token,
+  currentStart,
+  currentEnd,
+  logicalNumber,
+  isFirstVisualRow,
+  visibleNumber,
+  measureText,
+  maxWidth,
+}) {
+  const tokenPieces = splitTokenToFitWidth(token.trimStart(), measureText, maxWidth);
+  let nextEnd = currentEnd;
+  let nextVisibleNumber = visibleNumber;
+  let nextIsFirstVisualRow = isFirstVisualRow;
+  tokenPieces.forEach((piece, pieceIndex) => {
+    const pieceStart = pieceIndex === 0 ? currentStart : nextEnd;
+    const pieceEnd = pieceStart + piece.length;
+    entries.push({
+      number: nextVisibleNumber++,
+      logicalNumber,
+      isFirstVisualRow: nextIsFirstVisualRow,
+      text: piece,
+      start: pieceStart,
+      end: pieceEnd,
+    });
+    nextIsFirstVisualRow = false;
+    nextEnd = pieceEnd;
+  });
+  return {
+    currentEnd: nextEnd,
+    isFirstVisualRow: nextIsFirstVisualRow,
+    visibleNumber: nextVisibleNumber,
+  };
+}
+
 (function initLineNumberUtils(global, factory) {
   const utils = factory();
   if (global) {
@@ -135,21 +171,20 @@ function splitTokenToFitWidth(token, measureText, maxWidth) {
           }
 
           if (!currentText && measureText(token) > maxWidth) {
-            const tokenPieces = splitTokenToFitWidth(token.trimStart(), measureText, maxWidth);
-            tokenPieces.forEach((piece, pieceIndex) => {
-              const pieceStart = pieceIndex === 0 ? currentStart : currentEnd;
-              const pieceEnd = pieceStart + piece.length;
-              entries.push({
-                number: visibleNumber++,
-                logicalNumber,
-                isFirstVisualRow,
-                text: piece,
-                start: pieceStart,
-                end: pieceEnd,
-              });
-              isFirstVisualRow = false;
-              currentEnd = pieceEnd;
+            const wrappedToken = pushLongTokenPieces({
+              entries,
+              token,
+              currentStart,
+              currentEnd,
+              logicalNumber,
+              isFirstVisualRow,
+              visibleNumber,
+              measureText,
+              maxWidth,
             });
+            currentEnd = wrappedToken.currentEnd;
+            isFirstVisualRow = wrappedToken.isFirstVisualRow;
+            visibleNumber = wrappedToken.visibleNumber;
             currentText = "";
             currentStart = currentEnd;
             return;
