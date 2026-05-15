@@ -131,12 +131,13 @@
   }
 
   function renderModernWritingBehaviourPanel(submission, assignment) {
-    if (!globalThis.window?.PraxisWritingProcess?.renderTeacherPanel) {
+    const renderTeacherPanel = globalThis.window?.PraxisWritingProcess?.renderTeacherPanel;
+    if (!renderTeacherPanel) {
       return null;
     }
     requestProcessAnalysisSnapshot(submission);
     const excluded = Boolean(submission?.teacherReview?.writingBehaviourExcluded);
-    return window.PraxisWritingProcess.renderTeacherPanel(submission, assignment, {
+    return renderTeacherPanel(submission, assignment, {
       excludedFromAnalytics: excluded,
       exclusionSources: excluded ? ["submission_flag"] : [],
     });
