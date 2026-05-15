@@ -946,6 +946,65 @@ function submissionHasProcessInput(submission = {}) {
   );
 }
 
+function buildProcessAnalysisLookup(assignments, analyses, profilesResult) {
+  const profiles = profilesResult.error && isMissingProfileFlagColumn(profilesResult.error)
+    ? []
+    : (profilesResult.data || []);
+  return {
+    assignmentById: new Map((assignments || []).map((assignment) => [assignment.id, assignment])),
+    analysisBySubmissionId: new Map((analyses || []).map((analysis) => [analysis.submission_id, analysis])),
+    profileById: new Map(profiles.map((profile) => [profile.id, profile])),
+  };
+}
+
+function collectStaleProcessAnalysisContexts(submissions, lookups, cappedLimit) {
+  const staleContexts = [];
+  let checked = 0;
+  let stale = 0;
+  let skipped = 0;
+
+  for (const submission of (submissions || [])) {
+    const assignment = lookups.assignmentById.get(submission.assignment_id);
+    if (!assignment || !submissionHasProcessInput(submission)) {
+      skipped += 1;
+      continue;
+    }
+
+    checked += 1;
+    const studentProfile = lookups.profileById.get(submission.student_id) || {};
+    const inputHash = getSubmissionProcessInputHash(submission, assignment, studentProfile);
+    const existing = lookups.analysisBySubmissionId.get(submission.id);
+    const isStale = !existing
+      || existing.analysis_version !== ANALYSIS_VERSION
+      || existing.input_hash !== inputHash;
+
+    if (!isStale) continue;
+    stale += 1;
+    if (staleContexts.length < cappedLimit) {
+      staleContexts.push({ submission, assignment, studentProfile, inputHash });
+    }
+  }
+
+  return { staleContexts, checked, stale, skipped };
+}
+
+async function recomputeProcessAnalysisContexts(staleContexts) {
+  const storageWarnings = [];
+  let recomputed = 0;
+  for (const context of staleContexts) {
+    const result = await computeAndStoreProcessAnalysis(context, { store: true });
+    if (result.storageError) {
+      storageWarnings.push({
+        submissionId: context.submission.id,
+        error: result.storageError,
+      });
+    } else {
+      recomputed += 1;
+    }
+  }
+  return { storageWarnings, recomputed };
+}
+
 async function recomputeStaleProcessAnalyses({ limit = 50 } = {}) {
   const cappedLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
   const { data: assignments, error: assignmentError } = await supabase
@@ -986,52 +1045,13 @@ async function recomputeStaleProcessAnalyses({ limit = 50 } = {}) {
   if (analysesResult.error) throw analysesResult.error;
   if (profilesResult.error && !isMissingProfileFlagColumn(profilesResult.error)) throw profilesResult.error;
 
-  const assignmentById = new Map((assignments || []).map((assignment) => [assignment.id, assignment]));
-  const analysisBySubmissionId = new Map((analysesResult.data || []).map((analysis) => [analysis.submission_id, analysis]));
-  const profiles = profilesResult.error && isMissingProfileFlagColumn(profilesResult.error)
-    ? []
-    : (profilesResult.data || []);
-  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
-  const staleContexts = [];
-  let checked = 0;
-  let stale = 0;
-  let skipped = 0;
-
-  for (const submission of (submissionsResult.data || [])) {
-    const assignment = assignmentById.get(submission.assignment_id);
-    if (!assignment || !submissionHasProcessInput(submission)) {
-      skipped += 1;
-      continue;
-    }
-
-    checked += 1;
-    const studentProfile = profileById.get(submission.student_id) || {};
-    const inputHash = getSubmissionProcessInputHash(submission, assignment, studentProfile);
-    const existing = analysisBySubmissionId.get(submission.id);
-    const isStale = !existing
-      || existing.analysis_version !== ANALYSIS_VERSION
-      || existing.input_hash !== inputHash;
-
-    if (!isStale) continue;
-    stale += 1;
-    if (staleContexts.length < cappedLimit) {
-      staleContexts.push({ submission, assignment, studentProfile, inputHash });
-    }
-  }
-
-  const storageWarnings = [];
-  let recomputed = 0;
-  for (const context of staleContexts) {
-    const result = await computeAndStoreProcessAnalysis(context, { store: true });
-    if (result.storageError) {
-      storageWarnings.push({
-        submissionId: context.submission.id,
-        error: result.storageError,
-      });
-    } else {
-      recomputed += 1;
-    }
-  }
+  const lookups = buildProcessAnalysisLookup(assignments, analysesResult.data, profilesResult);
+  const { staleContexts, checked, stale, skipped } = collectStaleProcessAnalysisContexts(
+    submissionsResult.data,
+    lookups,
+    cappedLimit
+  );
+  const { storageWarnings, recomputed } = await recomputeProcessAnalysisContexts(staleContexts);
 
   return {
     analysisVersion: ANALYSIS_VERSION,
@@ -1135,20 +1155,48 @@ app.post('/api/generate', async (req, res) => {
 
 // ── Auth endpoints ───────────────────────────────────────────
 
+function validateSignupPayload({ email, password, name, role }) {
+  if (!email || !password || !name || !role) return 'email, password, name and role are required';
+  if (!['student', 'teacher'].includes(role)) return 'Please choose student or teacher.';
+  return validatePasswordStrength(password);
+}
+
+async function deleteSignupUser(userId, email) {
+  try {
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) {
+      console.error('ORPHAN AUTH USER - manual cleanup needed:', {
+        userRef: safeLogId(userId),
+        emailRef: safeLogId(email),
+        reason: safeLogError(error),
+      });
+    }
+  } catch (error) {
+    console.error('ORPHAN AUTH USER - manual cleanup needed:', {
+      userRef: safeLogId(userId),
+      emailRef: safeLogId(email),
+      reason: safeLogError(error),
+    });
+  }
+}
+
+async function createSignupProfile(userId, name, role) {
+  return supabase
+    .from('profiles')
+    .insert({ id: userId, name, role })
+    .select()
+    .single();
+}
+
 // Sign up
 app.post('/api/auth/signup', async (req, res) => {
   let createdUserId = null;
   let createdUserEmail = null;
   try {
     const { email, password, name, role } = req.body;
-    if (!email || !password || !name || !role) {
-      return res.status(400).json({ error: 'email, password, name and role are required' });
-    }
-    if (!['student', 'teacher'].includes(role)) {
-      return res.status(400).json({ error: 'Please choose student or teacher.' });
-    }
-    const passwordError = validatePasswordStrength(password);
-    if (passwordError) return res.status(400).json({ error: passwordError });
+    const validationError = validateSignupPayload({ email, password, name, role });
+    if (validationError) return res.status(400).json({ error: validationError });
+
     const { data, error } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -1158,47 +1206,70 @@ app.post('/api/auth/signup', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     createdUserId = data?.user?.id || null;
     createdUserEmail = data?.user?.email || email;
-    if (!createdUserId) {
-      return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
-    }
+    if (!createdUserId) return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
 
-    // Create profile manually instead of relying on a database trigger.
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .insert({
-        id: createdUserId,
-        name,
-        role,
-      })
-      .select()
-      .single();
+    const { data: profile, error: profileError } = await createSignupProfile(createdUserId, name, role);
     if (profileError || !profile) {
-      const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
-      if (deleteError) {
-        console.error('ORPHAN AUTH USER - manual cleanup needed:', {
-            userRef: safeLogId(createdUserId),
-            emailRef: safeLogId(createdUserEmail),
-            reason: safeLogError(deleteError),
-        });
-      }
+      await deleteSignupUser(createdUserId, createdUserEmail);
       return res.status(500).json({ error: SIGNUP_PROFILE_ERROR_MESSAGE });
     }
 
     return res.status(201).json({ profile });
   } catch (error) {
-    if (createdUserId) {
-      try {
-        const { error: deleteError } = await supabase.auth.admin.deleteUser(createdUserId);
-        if (deleteError) {
-          console.error('ORPHAN AUTH USER - manual cleanup needed:', createdUserId, createdUserEmail || req.body?.email, deleteError.message);
-        }
-      } catch (deleteError) {
-        console.error('ORPHAN AUTH USER - manual cleanup needed:', createdUserId, createdUserEmail || req.body?.email, deleteError.message);
-      }
-    }
+    if (createdUserId) await deleteSignupUser(createdUserId, createdUserEmail || req.body?.email);
     res.status(500).json({ error: createdUserId ? SIGNUP_PROFILE_ERROR_MESSAGE : error.message });
   }
 });
+
+function buildBenchmarkLevelBucket(level) {
+  return {
+    level,
+    total: 0,
+    included: 0,
+    excluded: 0,
+    typingRates: [],
+    longPausesPer100w: [],
+    localRevisionsPer100w: [],
+    productProcessRatios: [],
+    pasteShares: [],
+  };
+}
+
+function addBenchmarkMetric(bucket, metrics, key, target) {
+  if (Number.isFinite(Number(metrics[key]))) bucket[target].push(metrics[key]);
+}
+
+function groupBenchmarkMetricsByLevel(submissions, assignmentById, testAccountIds) {
+  const byLevel = {};
+  for (const submission of submissions || []) {
+    const assignment = assignmentById[submission.assignment_id] || {};
+    const level = String(assignment.language_level || 'B1').trim().toUpperCase();
+    const review = submission.teacher_review || {};
+    const isExcluded = testAccountIds.has(submission.student_id)
+      || Boolean(review.writingBehaviourExcluded || review.writing_behaviour_excluded);
+    byLevel[level] ||= buildBenchmarkLevelBucket(level);
+    byLevel[level].total += 1;
+    if (isExcluded) {
+      byLevel[level].excluded += 1;
+      continue;
+    }
+
+    byLevel[level].included += 1;
+    const analysis = analyzeSubmission(submission, assignment, {
+      excludedFromAnalytics: false,
+      exclusionSources: [],
+    });
+    if (analysis.status === 'not_enough_writing_data') continue;
+
+    const metrics = analysis.metrics || {};
+    addBenchmarkMetric(byLevel[level], metrics, 'typingRate', 'typingRates');
+    addBenchmarkMetric(byLevel[level], metrics, 'longPausesPer100w', 'longPausesPer100w');
+    addBenchmarkMetric(byLevel[level], metrics, 'localRevisionsPer100w', 'localRevisionsPer100w');
+    addBenchmarkMetric(byLevel[level], metrics, 'productProcessRatio', 'productProcessRatios');
+    addBenchmarkMetric(byLevel[level], metrics, 'pasteShare', 'pasteShares');
+  }
+  return byLevel;
+}
 
 // Sign in
 app.post('/api/auth/signin', async (req, res) => {
@@ -2466,50 +2537,7 @@ app.get('/api/admin/writing-process/benchmarks', async (req, res) => {
     }
 
     // Group included submission metrics by CEFR level
-    const byLevel = {};
-    for (const sub of (submissions || [])) {
-      const assignment = assignmentById[sub.assignment_id] || {};
-      const level = String(assignment.language_level || 'B1').trim().toUpperCase();
-      const isTestAccount = testAccountIds.has(sub.student_id);
-      const review = sub.teacher_review || {};
-      const isExcluded = isTestAccount || Boolean(review.writingBehaviourExcluded || review.writing_behaviour_excluded);
-
-      if (!byLevel[level]) {
-        byLevel[level] = {
-          level,
-          total: 0,
-          included: 0,
-          excluded: 0,
-          typingRates: [],
-          longPausesPer100w: [],
-          localRevisionsPer100w: [],
-          productProcessRatios: [],
-          pasteShares: [],
-        };
-      }
-
-      byLevel[level].total += 1;
-
-      if (isExcluded) {
-        byLevel[level].excluded += 1;
-        continue;
-      }
-
-      byLevel[level].included += 1;
-
-      const analysis = analyzeSubmission(sub, assignment, {
-        excludedFromAnalytics: false,
-        exclusionSources: [],
-      });
-      if (analysis.status === 'not_enough_writing_data') continue;
-
-      const metrics = analysis.metrics || {};
-      if (Number.isFinite(Number(metrics.typingRate))) byLevel[level].typingRates.push(metrics.typingRate);
-      if (Number.isFinite(Number(metrics.longPausesPer100w))) byLevel[level].longPausesPer100w.push(metrics.longPausesPer100w);
-      if (Number.isFinite(Number(metrics.localRevisionsPer100w))) byLevel[level].localRevisionsPer100w.push(metrics.localRevisionsPer100w);
-      if (Number.isFinite(Number(metrics.productProcessRatio))) byLevel[level].productProcessRatios.push(metrics.productProcessRatio);
-      if (Number.isFinite(Number(metrics.pasteShare))) byLevel[level].pasteShares.push(metrics.pasteShare);
-    }
+    const byLevel = groupBenchmarkMetricsByLevel(submissions, assignmentById, testAccountIds);
 
     // Compute medians and ranges per level
     const median = arr => {
