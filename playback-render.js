@@ -229,12 +229,9 @@
 
   function getPlaybackFrames(submission) {
     const { safeArray, clamp, titleCase, formatTime } = window;
-    const { LARGE_PASTE_LIMIT } = window.AppConstants;
     const events = safeArray(submission.writingEvents)
       .filter((event) => event?.phase !== "coach_outline");
-    const eventSignature = events
-      .map((event) => `${event?.timestamp || ""}:${event?.type || ""}:${event?.start ?? ""}:${event?.end ?? ""}:${String(event?.insertedText || "").length}:${String(event?.removedText || "").length}`)
-      .join("|");
+    const eventSignature = getPlaybackEventSignature(events);
     if (submission._playbackCache && submission._playbackCache.eventSignature === eventSignature) {
       return submission._playbackCache.frames;
     }
@@ -249,56 +246,24 @@
       },
     ];
 
-    const pushFrame = (frameText, label, timeMs) => {
-      frames.push({
-        text: frameText,
-        label,
-        timeMs: Number.isFinite(timeMs) ? timeMs : (frames[frames.length - 1]?.timeMs || firstEventTime),
-      });
-    };
+    const pushFrame = createPlaybackFramePusher(frames, firstEventTime);
 
     for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
       const event = events[eventIndex];
       const eventTimeMs = getEventTimeMs(event) ?? (frames[frames.length - 1]?.timeMs || firstEventTime);
       const nextEventTimeMs = events.slice(eventIndex + 1).map(getEventTimeMs).find((time) => Number.isFinite(time));
       const intraEventDelayMs = getIntraEventDelayMs(event, nextEventTimeMs, eventTimeMs);
-      let operationIndex = 0;
-      const hasStructuredOp = typeof event.start === "number" && typeof event.end === "number";
-      if (!hasStructuredOp) {
-        text = submission.draftText || text;
-        pushFrame(text, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs);
-        continue;
-      }
-
-      if (event.removedText) {
-        const deleteStart = clamp(Number(event.start || 0), 0, text.length);
-        const recordedEnd = Number(event.end);
-        const fallbackEnd = deleteStart + String(event.removedText || "").length;
-        const deleteEnd = clamp(Number.isFinite(recordedEnd) && recordedEnd > deleteStart ? recordedEnd : fallbackEnd, deleteStart, text.length);
-        text = text.slice(0, deleteStart) + text.slice(deleteEnd);
-        pushFrame(text, `Deleted ${String(event.removedText || "").length} characters • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
-        operationIndex += 1;
-      }
-
-      if (event.insertedText) {
-        if (isPasteLikeWritingEvent(event)) {
-          const pasteStart = clamp(Number(event.start || 0), 0, text.length);
-          text = text.slice(0, pasteStart) + event.insertedText + text.slice(pasteStart);
-          const label = event.type === "paste"
-            ? `Pasted ${String(event.insertedText || "").length} characters`
-            : `Bulk inserted ${String(event.insertedText || "").length} characters`;
-          pushFrame(text, `${label} • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
-          continue;
-        }
-
-        for (let i = 0; i < event.insertedText.length; i += 1) {
-          const char = event.insertedText[i];
-          const insertIndex = clamp(Number(event.start || 0) + i, 0, text.length);
-          text = text.slice(0, insertIndex) + char + text.slice(insertIndex);
-          pushFrame(text, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
-          operationIndex += 1;
-        }
-      }
+      text = applyPlaybackEvent({
+        event,
+        eventTimeMs,
+        intraEventDelayMs,
+        text,
+        fallbackText: submission.draftText || text,
+        pushFrame,
+        clamp,
+        titleCase,
+        formatTime,
+      });
     }
 
     const currentWriting = submission.finalText || submission.draftText || "";
@@ -312,6 +277,77 @@
       frames,
     };
     return frames;
+  }
+
+  function getPlaybackEventSignature(events) {
+    return events
+      .map((event) => `${event?.timestamp || ""}:${event?.type || ""}:${event?.start ?? ""}:${event?.end ?? ""}:${String(event?.insertedText || "").length}:${String(event?.removedText || "").length}`)
+      .join("|");
+  }
+
+  function createPlaybackFramePusher(frames, firstEventTime) {
+    return (frameText, label, timeMs) => {
+      frames.push({
+        text: frameText,
+        label,
+        timeMs: Number.isFinite(timeMs) ? timeMs : (frames[frames.length - 1]?.timeMs || firstEventTime),
+      });
+    };
+  }
+
+  function applyPlaybackEvent({ event, eventTimeMs, intraEventDelayMs, text, fallbackText, pushFrame, clamp, titleCase, formatTime }) {
+    if (!hasStructuredPlaybackOperation(event)) {
+      pushFrame(fallbackText, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs);
+      return fallbackText;
+    }
+
+    let operationIndex = 0;
+    if (event.removedText) {
+      text = applyPlaybackDeletion({ event, text, eventTimeMs, operationIndex, intraEventDelayMs, pushFrame, clamp, formatTime });
+      operationIndex += 1;
+    }
+    if (!event.insertedText) {
+      return text;
+    }
+    if (isPasteLikeWritingEvent(event)) {
+      return applyPlaybackBulkInsert({ event, text, eventTimeMs, operationIndex, intraEventDelayMs, pushFrame, clamp, formatTime });
+    }
+    return applyPlaybackCharacterInsertions({ event, text, eventTimeMs, operationIndex, intraEventDelayMs, pushFrame, clamp, titleCase, formatTime });
+  }
+
+  function hasStructuredPlaybackOperation(event) {
+    return typeof event.start === "number" && typeof event.end === "number";
+  }
+
+  function applyPlaybackDeletion({ event, text, eventTimeMs, operationIndex, intraEventDelayMs, pushFrame, clamp, formatTime }) {
+    const deleteStart = clamp(Number(event.start || 0), 0, text.length);
+    const recordedEnd = Number(event.end);
+    const fallbackEnd = deleteStart + String(event.removedText || "").length;
+    const deleteEnd = clamp(Number.isFinite(recordedEnd) && recordedEnd > deleteStart ? recordedEnd : fallbackEnd, deleteStart, text.length);
+    const nextText = text.slice(0, deleteStart) + text.slice(deleteEnd);
+    pushFrame(nextText, `Deleted ${String(event.removedText || "").length} characters • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
+    return nextText;
+  }
+
+  function applyPlaybackBulkInsert({ event, text, eventTimeMs, operationIndex, intraEventDelayMs, pushFrame, clamp, formatTime }) {
+    const pasteStart = clamp(Number(event.start || 0), 0, text.length);
+    const nextText = text.slice(0, pasteStart) + event.insertedText + text.slice(pasteStart);
+    const label = event.type === "paste"
+      ? `Pasted ${String(event.insertedText || "").length} characters`
+      : `Bulk inserted ${String(event.insertedText || "").length} characters`;
+    pushFrame(nextText, `${label} • ${formatTime(event.timestamp)}`, eventTimeMs + (operationIndex * intraEventDelayMs));
+    return nextText;
+  }
+
+  function applyPlaybackCharacterInsertions({ event, text, eventTimeMs, operationIndex, intraEventDelayMs, pushFrame, clamp, titleCase, formatTime }) {
+    let nextText = text;
+    for (let index = 0; index < event.insertedText.length; index += 1) {
+      const char = event.insertedText[index];
+      const insertIndex = clamp(Number(event.start || 0) + index, 0, nextText.length);
+      nextText = nextText.slice(0, insertIndex) + char + nextText.slice(insertIndex);
+      pushFrame(nextText, `${titleCase(event.type)} • ${formatTime(event.timestamp)}`, eventTimeMs + ((operationIndex + index) * intraEventDelayMs));
+    }
+    return nextText;
   }
 
   const PlaybackRender = {
