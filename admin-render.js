@@ -318,6 +318,115 @@
       </details>
     `;
   }
+
+  function renderAdminAssignmentMemberCard(member, subs, assignment) {
+    const sub = subs.find((submission) => submission.student_id === member.id);
+    const review = sub?.teacher_review;
+    const rowScores = review?.rowScores || [];
+    const finalScore = review?.finalScore ?? "";
+    const status = sub?.status || "not started";
+    const wordCount = sub?.final_text?.trim()
+      ? sub.final_text.trim().split(/\s+/).length
+      : sub?.draft_text?.trim()
+        ? sub.draft_text.trim().split(/\s+/).length
+        : 0;
+    const pasteFlags = (sub?.writing_events || []).filter((entry) => isPasteLikeWritingEvent(entry)).length;
+    const statusColour = status === "submitted" ? "var(--sage)" : status === "not started" ? "var(--muted)" : "var(--accent)";
+
+    return `
+      <div style="border:1px solid var(--line);border-radius:14px;padding:16px;background:#fff;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+          <div>
+            <strong style="display:block;margin-bottom:4px;">${escapeHtml(member.name)}</strong>
+            <span style="font-size:0.82rem;color:${statusColour};">${escapeHtml(status)}</span>
+            ${renderAdminStudentDataFlags(member)}
+            ${renderAdminStudentFlagControls(member)}
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            ${finalScore !== "" ? `<div style="font-size:1.4rem;font-weight:800;color:var(--accent-deep);">${escapeHtml(String(finalScore))}</div><div style="font-size:0.75rem;color:var(--muted);">score</div>` : `<div style="font-size:0.85rem;color:var(--muted);">Not graded</div>`}
+          </div>
+        </div>
+
+        ${sub ? renderAdminSubmissionDetail(sub, member, assignment, review, rowScores, wordCount, pasteFlags) : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No work started yet.</p>`}
+      </div>
+    `;
+  }
+
+  function renderAdminSubmissionDetail(sub, member, assignment, review, rowScores, wordCount, pasteFlags) {
+    return `
+      <div class="pill-row" style="margin-top:10px;">
+        <span class="pill">${wordCount} words</span>
+        <span class="pill">${(sub.writing_events || []).length} edits</span>
+        ${pasteFlags ? `<span class="warning-pill">⚠ ${pasteFlags} paste flag${pasteFlags > 1 ? "s" : ""}</span>` : ""}
+        ${(sub.feedback_history || []).length ? `<span class="pill">${sub.feedback_history.length} feedback check${sub.feedback_history.length > 1 ? "s" : ""}</span>` : ""}
+      </div>
+
+      ${rowScores.length ? `
+        <div style="margin-top:12px;display:grid;gap:6px;">
+          ${rowScores.map(row => `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#f8fbff;font-size:0.84rem;">
+              <span>${escapeHtml(row.criterionName || "")}</span>
+              <strong style="white-space:nowrap;">${escapeHtml(row.label || "")} · ${row.points}/${row.maxPoints}</strong>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+
+      ${review?.finalNotes ? `
+        <div style="margin-top:10px;padding:10px 12px;border-left:3px solid var(--accent);background:#f4f8ff;border-radius:0 8px 8px 0;font-size:0.85rem;">
+          <span class="mini-label" style="display:block;margin-bottom:4px;">Teacher feedback</span>
+          ${escapeHtml(review.finalNotes)}
+        </div>
+      ` : ""}
+      <div style="margin-top:12px;">
+        <span class="mini-label">Writing fluency</span>
+        ${renderAdminWritingBehaviourCard(sub, member, assignment)}
+      </div>
+    `;
+  }
+
+  function renderAdminStudentOverviewCard(member, detail) {
+    const studentSubs = (detail.submissions || []).filter((submission) => submission.student_id === member.id);
+    const submitted = studentSubs.filter((submission) => SubmissionUtils.isSubmissionSubmitted(submission)).length;
+    const graded = studentSubs.filter((submission) => SubmissionUtils.isSubmissionGraded(submission)).length;
+    const totalScore = studentSubs.reduce((sum, submission) => sum + Number(submission.teacher_review?.finalScore || 0), 0);
+    return `
+      <div class="submission-card simple-card" style="margin-bottom:6px;">
+        <div class="card-top" style="flex-wrap:wrap;gap:10px;">
+          <div style="flex:1;min-width:220px;">
+            <h3 style="margin:0;">${escapeHtml(member.name)}</h3>
+            ${renderAdminStudentDataFlags(member)}
+            ${renderAdminStudentFlagControls(member)}
+          </div>
+          <div class="pill-row">
+            <span class="pill">${submitted} submitted</span>
+            ${graded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${graded} graded · ${totalScore} pts total</span>` : ""}
+          </div>
+        </div>
+        ${renderAdminStudentWritingBehaviour(member, studentSubs, detail.assignments || [])}
+      </div>
+    `;
+  }
+
+  function renderAdminStudentWritingBehaviour(member, studentSubs, assignments) {
+    if (member.is_test_account) {
+      return `
+        <div style="margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;color:var(--muted);font-size:0.85rem;">
+          Writing behaviour data excluded for this test account across ${studentSubs.length} assignment${studentSubs.length === 1 ? "" : "s"}.
+        </div>
+      `;
+    }
+    if (!studentSubs.length) return "";
+    return `
+      <div style="margin-top:10px;display:grid;gap:8px;">
+        ${studentSubs.map((sub) => {
+          const assignment = assignments.find((item) => item.id === sub.assignment_id);
+          return renderAdminWritingBehaviourCard(sub, member, assignment || { title: "Assignment" });
+        }).join("")}
+      </div>
+    `;
+  }
+
   function renderAdminClassDetail() {
     const { ui } = window.AppState;
     const detail = ui.adminClassDetail;
@@ -362,67 +471,7 @@
           ${subs.length === 0
             ? `<div class="empty-state compact-empty"><p>No submissions yet for this assignment.</p></div>`
             : `<div style="display:grid;gap:10px;">
-                ${(detail.members || []).map(member => {
-                  const sub = subs.find(s => s.student_id === member.id);
-                  const review = sub?.teacher_review;
-                  const rowScores = review?.rowScores || [];
-                  const finalScore = review?.finalScore ?? "";
-                  const status = sub?.status || "not started";
-                  const wordCount = sub?.final_text?.trim()
-                    ? sub.final_text.trim().split(/\s+/).length
-                    : sub?.draft_text?.trim()
-                      ? sub.draft_text.trim().split(/\s+/).length
-                      : 0;
-                  const pasteFlags = (sub?.writing_events || []).filter((entry) => isPasteLikeWritingEvent(entry)).length;
-                  const statusColour = status === "submitted" ? "var(--sage)" : status === "not started" ? "var(--muted)" : "var(--accent)";
-
-                  return `
-                    <div style="border:1px solid var(--line);border-radius:14px;padding:16px;background:#fff;">
-                      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-                        <div>
-                          <strong style="display:block;margin-bottom:4px;">${escapeHtml(member.name)}</strong>
-                          <span style="font-size:0.82rem;color:${statusColour};">${escapeHtml(status)}</span>
-                          ${renderAdminStudentDataFlags(member)}
-                          ${renderAdminStudentFlagControls(member)}
-                        </div>
-                        <div style="text-align:right;flex-shrink:0;">
-                          ${finalScore !== "" ? `<div style="font-size:1.4rem;font-weight:800;color:var(--accent-deep);">${escapeHtml(String(finalScore))}</div><div style="font-size:0.75rem;color:var(--muted);">score</div>` : `<div style="font-size:0.85rem;color:var(--muted);">Not graded</div>`}
-                        </div>
-                      </div>
-
-                      ${sub ? `
-                        <div class="pill-row" style="margin-top:10px;">
-                          <span class="pill">${wordCount} words</span>
-                          <span class="pill">${(sub.writing_events || []).length} edits</span>
-                          ${pasteFlags ? `<span class="warning-pill">⚠ ${pasteFlags} paste flag${pasteFlags > 1 ? "s" : ""}</span>` : ""}
-                          ${(sub.feedback_history || []).length ? `<span class="pill">${sub.feedback_history.length} feedback check${sub.feedback_history.length > 1 ? "s" : ""}</span>` : ""}
-                        </div>
-
-                        ${rowScores.length ? `
-                          <div style="margin-top:12px;display:grid;gap:6px;">
-                            ${rowScores.map(row => `
-                              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#f8fbff;font-size:0.84rem;">
-                                <span>${escapeHtml(row.criterionName || "")}</span>
-                                <strong style="white-space:nowrap;">${escapeHtml(row.label || "")} · ${row.points}/${row.maxPoints}</strong>
-                              </div>
-                            `).join("")}
-                          </div>
-                        ` : ""}
-
-                        ${review?.finalNotes ? `
-                          <div style="margin-top:10px;padding:10px 12px;border-left:3px solid var(--accent);background:#f4f8ff;border-radius:0 8px 8px 0;font-size:0.85rem;">
-                            <span class="mini-label" style="display:block;margin-bottom:4px;">Teacher feedback</span>
-                            ${escapeHtml(review.finalNotes)}
-                          </div>
-                        ` : ""}
-                      <div style="margin-top:12px;">
-                          <span class="mini-label">Writing fluency</span>
-                          ${renderAdminWritingBehaviourCard(sub, member, assignment)}
-                        </div>
-                      ` : `<p class="subtle" style="margin-top:8px;font-size:0.85rem;">No work started yet.</p>`}
-                    </div>
-                  `;
-                }).join("")}
+                ${(detail.members || []).map((member) => renderAdminAssignmentMemberCard(member, subs, assignment)).join("")}
               </div>`
           }
         </section>
@@ -475,39 +524,7 @@
           <p class="mini-label" style="margin-bottom:10px;">Students (${(detail.members || []).length})</p>
           ${(detail.members || []).length === 0
             ? `<p class="subtle">No students enrolled.</p>`
-            : detail.members.map(m => {
-                const studentSubs = (detail.submissions || []).filter(s => s.student_id === m.id);
-                const submitted = studentSubs.filter((submission) => SubmissionUtils.isSubmissionSubmitted(submission)).length;
-                const graded = studentSubs.filter((submission) => SubmissionUtils.isSubmissionGraded(submission)).length;
-                const totalScore = studentSubs.reduce((sum, s) => sum + Number(s.teacher_review?.finalScore || 0), 0);
-                return `
-                  <div class="submission-card simple-card" style="margin-bottom:6px;">
-                    <div class="card-top" style="flex-wrap:wrap;gap:10px;">
-                      <div style="flex:1;min-width:220px;">
-                        <h3 style="margin:0;">${escapeHtml(m.name)}</h3>
-                        ${renderAdminStudentDataFlags(m)}
-                        ${renderAdminStudentFlagControls(m)}
-                      </div>
-                      <div class="pill-row">
-                        <span class="pill">${submitted} submitted</span>
-                        ${graded ? `<span class="pill" style="color:var(--sage);border-color:var(--sage);">✓ ${graded} graded · ${totalScore} pts total</span>` : ""}
-                      </div>
-                    </div>
-                    ${m.is_test_account ? `
-                      <div style="margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;color:var(--muted);font-size:0.85rem;">
-                        Writing behaviour data excluded for this test account across ${studentSubs.length} assignment${studentSubs.length === 1 ? "" : "s"}.
-                      </div>
-                    ` : studentSubs.length ? `
-                      <div style="margin-top:10px;display:grid;gap:8px;">
-                        ${studentSubs.map(sub => {
-                          const a = (detail.assignments || []).find(a => a.id === sub.assignment_id);
-                          return renderAdminWritingBehaviourCard(sub, m, a || { title: "Assignment" });
-                        }).join("")}
-                      </div>
-                    ` : ""}
-                  </div>
-                `;
-              }).join("")
+            : detail.members.map((member) => renderAdminStudentOverviewCard(member, detail)).join("")
           }
         </div>
       </section>
