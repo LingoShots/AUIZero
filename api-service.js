@@ -241,6 +241,36 @@ async function deleteAssignment(assignmentId) {
     return result?.submission ? mapServerSubmission(result.submission) : result;
   }
 
+  async function syncStudentSubmission(submission) {
+    if (!submission?.assignmentId) {
+      throw new Error("Missing assignment for submission sync.");
+    }
+
+    let serverId = hasServerId(submission.id) ? submission.id : null;
+    if (!serverId) {
+      const existing = await loadMySubmission(submission.assignmentId);
+      serverId = existing?.id || null;
+      if (!serverId) {
+        throw new Error("Submission record was not created on the server.");
+      }
+    }
+
+    const payload = buildSubmissionServerPayload(submission);
+    try {
+      return await patchSubmission(serverId, payload);
+    } catch (error) {
+      if (!hasServerId(submission.id)) {
+        throw error;
+      }
+
+      const existing = await loadMySubmission(submission.assignmentId);
+      if (!existing?.id) {
+        throw error;
+      }
+      return patchSubmission(existing.id, payload);
+    }
+  }
+
   async function submitStudentSubmission(assignmentId, submission, overrides = {}) {
     const result = await apiFetch(`/api/assignments/${assignmentId}/submit`, {
       method: "POST",
@@ -281,6 +311,7 @@ async function deleteAssignment(assignmentId) {
     loadStudentSubmissions,
     upsertStudentSubmission,
     patchSubmission,
+    syncStudentSubmission,
     submitStudentSubmission,
     saveTeacherReviewSubmission,
     buildAssignmentServerPayload,
