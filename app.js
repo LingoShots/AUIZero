@@ -738,32 +738,6 @@ function replaceSubmissionInState(nextSubmission) {
   state.submissions.push(nextSubmission);
 }
 
-function buildSubmissionServerPayload(submission, overrides = {}) {
-  return {
-    idea_responses: safeArray(submission?.ideaResponses),
-    draft_text: submission?.draftText || "",
-    final_text: submission?.finalText || "",
-    reflections: submission?.reflections || { improved: "" },
-    outline: submission?.outline || { partOne: "", partTwo: "", partThree: "" },
-    chat_history: safeArray(submission?.chatHistory),
-    writing_events: safeArray(submission?.writingEvents),
-    feedback_history: safeArray(submission?.feedbackHistory),
-    focus_annotations: safeArray(submission?.focusAnnotations),
-    self_assessment: submission?.selfAssessment || {},
-    status: submission?.status || "draft",
-    chat_started_at: submission?.chatStartedAt || null,
-    chat_skipped_at: submission?.chatSkippedAt || null,
-    chat_expired_at: submission?.chatExpiredAt || null,
-    chat_elapsed_ms: Math.max(0, Math.round(Number(submission?.chatElapsedMs || 0))),
-    started_at: submission?.startedAt || null,
-    submitted_at: submission?.submittedAt || null,
-    keystroke_log: safeArray(submission?.keystrokeLog),
-    fluency_summary: submission?.fluencySummary || {},
-    final_unlocked: submission.finalUnlocked || false,
-    ...overrides,
-  };
-}
-
 function getTeacherReviewRowsForExport(assignment, submission) {
   const reviewSummary = calculateTeacherReviewSummary(assignment, submission);
   return reviewSummary.rubric.map((criterion) => {
@@ -1415,56 +1389,6 @@ function mergeStudentSubmission(localSubmission, serverSubmission) {
   });
 }
 
-function mapServerSubmission(serverSubmission) {
-  return {
-    id: serverSubmission?.id || `submission-${Date.now()}`,
-    assignmentId: serverSubmission?.assignment_id || "",
-    studentId: serverSubmission?.student_id || "",
-    ideaResponses: Array.isArray(serverSubmission?.idea_responses) ? serverSubmission.idea_responses : [],
-    draftText: serverSubmission?.draft_text || "",
-    finalText: serverSubmission?.final_text || "",
-    finalUnlocked: serverSubmission?.final_unlocked || false,
-    reflections: serverSubmission?.reflections || { improved: "" },
-    outline: serverSubmission?.outline || {
-      partOne: "",
-      partTwo: "",
-      partThree: "",
-    },
-    feedbackHistory: Array.isArray(serverSubmission?.feedback_history) ? serverSubmission.feedback_history : [],
-    writingEvents: Array.isArray(serverSubmission?.writing_events) ? serverSubmission.writing_events : [],
-    focusAnnotations: Array.isArray(serverSubmission?.focus_annotations) ? serverSubmission.focus_annotations : [],
-    teacherReview: createDefaultTeacherReview({
-      status: serverSubmission?.teacher_review?.status,
-      rubricType: serverSubmission?.teacher_review?.rubricType,
-      rowScores: serverSubmission?.teacher_review?.rowScores,
-      suggestedRowScores: serverSubmission?.teacher_review?.suggestedRowScores,
-      suggestedGrade: serverSubmission?.teacher_review?.suggestedGrade,
-      finalScore: serverSubmission?.teacher_review?.finalScore,
-      finalNotes: serverSubmission?.teacher_review?.finalNotes,
-      annotations: serverSubmission?.teacher_review?.annotations,
-      savedAt: serverSubmission?.teacher_review?.savedAt,
-      acceptedAt: serverSubmission?.teacher_review?.acceptedAt,
-      writingBehaviourExcluded: Boolean(serverSubmission?.teacher_review?.writingBehaviourExcluded),
-      writingBehaviourExcludedAt: serverSubmission?.teacher_review?.writingBehaviourExcludedAt || null,
-      writingBehaviourExclusionReason: serverSubmission?.teacher_review?.writingBehaviourExclusionReason || "",
-    }),
-    selfAssessment: serverSubmission?.self_assessment || {},
-    chatHistory: Array.isArray(serverSubmission?.chat_history) ? serverSubmission.chat_history : [],
-    chatStartedAt: serverSubmission?.chat_started_at || null,
-    chatSkippedAt: serverSubmission?.chat_skipped_at || null,
-    chatExpiredAt: serverSubmission?.chat_expired_at || null,
-    chatElapsedMs: serverSubmission?.chat_elapsed_ms || 0,
-    chatResumedAt: null,
-    status: serverSubmission?.status || "draft",
-    startedAt: serverSubmission?.started_at || null,
-    updatedAt: serverSubmission?.updated_at || new Date().toISOString(),
-    submittedAt: serverSubmission?.submitted_at || null,
-    _studentName: serverSubmission?.profiles?.name || "",
-    keystrokeLog: safeArray(serverSubmission?.keystroke_log),
-    fluencySummary: serverSubmission?.fluency_summary || {},
-  };
-}
-
 async function loadTeacherSubmissionsForAssignments(assignmentIds) {
   const ids = Array.isArray(assignmentIds) ? assignmentIds.filter(Boolean) : [];
   if (!currentClassId) return;
@@ -1608,20 +1532,19 @@ async function refreshTeacherAssignmentStatusData(options = {}) {
 async function loadReviewDataForAssignment(assignmentId) {
   if (!assignmentId || !currentClassId) return [];
 
-  const [membersData, data] = await Promise.all([
+    const [membersData, submissions] = await Promise.all([
     Auth.apiFetch(`/api/classes/${currentClassId}/members`),
-    Auth.apiFetch(`/api/assignments/${assignmentId}/submissions`)
+    globalThis.ApiService.loadAssignmentSubmissions(assignmentId),
   ]);
 
   currentClassMembers = membersData.members || [];
-  const subs = data.submissions || [];
 
   state.submissions = state.submissions.filter((s) => s.assignmentId !== assignmentId);
-  subs.forEach((submission) => {
-    state.submissions.push(mapServerSubmission(submission));
+  submissions.forEach((submission) => {
+    state.submissions.push(submission);
   });
 
-  return subs;
+  return submissions;
 }
 
 function stopTeacherReviewPolling() {
@@ -6551,10 +6474,6 @@ async function syncSubmissionToServer(submission) {
     setDraftSaveMessage("Saved on this device.");
     return false;
   }
-}
-
-function looksLikeServerSubmissionId(id) {
-  return Boolean(id && !String(id).startsWith("submission-"));
 }
 
 async function submitStudentSubmissionToServer(submission) {
