@@ -1532,7 +1532,7 @@ async function refreshTeacherAssignmentStatusData(options = {}) {
 async function loadReviewDataForAssignment(assignmentId) {
   if (!assignmentId || !currentClassId) return [];
 
-    const [membersData, submissions] = await Promise.all([
+  const [membersData, submissions] = await Promise.all([
     Auth.apiFetch(`/api/classes/${currentClassId}/members`),
     globalThis.ApiService.loadAssignmentSubmissions(assignmentId),
   ]);
