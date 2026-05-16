@@ -1475,18 +1475,10 @@ async function loadTeacherSubmissionsForAssignments(assignmentIds) {
 
   try {
     const results = await Promise.all(
-      ids.map((assignmentId) => Auth.apiFetch(`/api/assignments/${assignmentId}/submissions`))
+      ids.map((assignmentId) => globalThis.ApiService.loadAssignmentSubmissions(assignmentId))
     );
 
-    const nextSubmissions = [];
-    results.forEach((result) => {
-      const submissions = Array.isArray(result?.submissions) ? result.submissions : [];
-      submissions.forEach((submission) => {
-        nextSubmissions.push(mapServerSubmission(submission));
-      });
-    });
-
-    state.submissions = nextSubmissions;
+    state.submissions = results.flat();
   } catch (error) {
     console.error("Could not load teacher submissions:", error.message, error);
   }
