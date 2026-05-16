@@ -1496,7 +1496,7 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
   if (!assignmentId) return null;
   const localSubmission = state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === ui.activeUserId) || null;
   try {
-    const mapped = await window.ApiService.loadMySubmission(assignmentId);
+    const mapped = await globalThis.ApiService.loadMySubmission(assignmentId);
     if (!mapped) {
       return localSubmission;
     }
@@ -1553,7 +1553,7 @@ async function loadStudentSubmissionsForAssignments(assignmentIds) {
   if (!ids.length || currentProfile?.role !== "student") return [];
 
   try {
-    const serverSubmissions = await window.ApiService.loadStudentSubmissions(ids);
+    const serverSubmissions = await globalThis.ApiService.loadStudentSubmissions(ids);
     serverSubmissions.forEach((mapped) => {
       const index = state.submissions.findIndex(
         (submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId
