@@ -1496,14 +1496,10 @@ async function loadStudentSubmissionForAssignment(assignmentId) {
   if (!assignmentId) return null;
   const localSubmission = state.submissions.find((submission) => submission.assignmentId === assignmentId && submission.studentId === ui.activeUserId) || null;
   try {
-    const result = await Auth.apiFetch(`/api/assignments/${assignmentId}/my-submission`);
-    if (result?.error || !result?.submission) {
-      if (result?.error) {
-        ui.notice = "We couldn't refresh your work from the server just now. Showing your saved device copy.";
-      }
+    const mapped = await globalThis.ApiService.loadMySubmission(assignmentId);
+    if (!mapped) {
       return localSubmission;
     }
-    const mapped = mapServerSubmission(result.submission);
     const index = state.submissions.findIndex((submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId);
     if (index >= 0) {
       state.submissions[index] = mergeStudentSubmission(state.submissions[index], mapped);
@@ -1557,13 +1553,7 @@ async function loadStudentSubmissionsForAssignments(assignmentIds) {
   if (!ids.length || currentProfile?.role !== "student") return [];
 
   try {
-    const params = new URLSearchParams({ assignmentIds: ids.join(",") });
-    const result = await Auth.apiFetch(`/api/student/submissions?${params.toString()}`);
-    if (result?.error) {
-      throw new Error(result.error);
-    }
-
-    const serverSubmissions = safeArray(result?.submissions).map(mapServerSubmission);
+    const serverSubmissions = await globalThis.ApiService.loadStudentSubmissions(ids);
     serverSubmissions.forEach((mapped) => {
       const index = state.submissions.findIndex(
         (submission) => submission.assignmentId === mapped.assignmentId && submission.studentId === mapped.studentId

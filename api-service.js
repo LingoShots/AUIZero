@@ -65,17 +65,29 @@
       id: normalizeId(record.id),
       assignmentId: record.assignmentId ?? record.assignment_id ?? null,
       studentId: record.studentId ?? record.student_id ?? record.profile_id ?? null,
+      ideaResponses: safeArray(record.ideaResponses ?? record.idea_responses),
       status: record.status || "draft",
       outline: record.outline || {},
       draftText: record.draftText ?? record.draft_text ?? "",
       finalText: record.finalText ?? record.final_text ?? "",
-      chatHistory: record.chatHistory ?? record.chat_history ?? [],
-      feedbackHistory: record.feedbackHistory ?? record.feedback_history ?? [],
-      writingEvents: record.writingEvents ?? record.writing_events ?? [],
+      finalUnlocked: Boolean(record.finalUnlocked ?? record.final_unlocked ?? false),
+      reflections: record.reflections || { improved: "" },
+      chatHistory: safeArray(record.chatHistory ?? record.chat_history),
+      feedbackHistory: safeArray(record.feedbackHistory ?? record.feedback_history),
+      writingEvents: safeArray(record.writingEvents ?? record.writing_events),
+      focusAnnotations: safeArray(record.focusAnnotations ?? record.focus_annotations),
       selfAssessment: record.selfAssessment ?? record.self_assessment ?? {},
       teacherReview: record.teacherReview ?? record.teacher_review ?? null,
+      chatStartedAt: record.chatStartedAt ?? record.chat_started_at ?? null,
+      chatSkippedAt: record.chatSkippedAt ?? record.chat_skipped_at ?? null,
+      chatExpiredAt: record.chatExpiredAt ?? record.chat_expired_at ?? null,
+      chatElapsedMs: Number(record.chatElapsedMs ?? record.chat_elapsed_ms ?? 0),
+      startedAt: record.startedAt ?? record.started_at ?? null,
       submittedAt: record.submittedAt ?? record.submitted_at ?? null,
       gradedAt: record.gradedAt ?? record.graded_at ?? null,
+      _studentName: record._studentName ?? record.profiles?.name ?? "",
+      keystrokeLog: safeArray(record.keystrokeLog ?? record.keystroke_log),
+      fluencySummary: record.fluencySummary ?? record.fluency_summary ?? {},
       createdAt: record.createdAt ?? record.created_at ?? null,
       updatedAt: record.updatedAt ?? record.updated_at ?? null,
     };
@@ -83,16 +95,27 @@
 
   function buildSubmissionServerPayload(submission = {}, overrides = {}) {
     return {
-      status: submission.status,
+      idea_responses: safeArray(submission.ideaResponses),
+      status: submission.status || "draft",
       outline: submission.outline || {},
       draft_text: submission.draftText || "",
       final_text: submission.finalText || "",
+      final_unlocked: Boolean(submission.finalUnlocked),
+      reflections: submission.reflections || { improved: "" },
       chat_history: safeArray(submission.chatHistory),
       feedback_history: safeArray(submission.feedbackHistory),
       writing_events: safeArray(submission.writingEvents),
+      focus_annotations: safeArray(submission.focusAnnotations),
       self_assessment: submission.selfAssessment || {},
+      chat_started_at: submission.chatStartedAt || null,
+      chat_skipped_at: submission.chatSkippedAt || null,
+      chat_expired_at: submission.chatExpiredAt || null,
+      chat_elapsed_ms: Math.max(0, Math.round(Number(submission.chatElapsedMs || 0))),
+      started_at: submission.startedAt || null,
       submitted_at: submission.submittedAt || null,
       graded_at: submission.gradedAt || null,
+      keystroke_log: safeArray(submission.keystrokeLog),
+      fluency_summary: submission.fluencySummary || {},
       ...overrides,
     };
   }
@@ -184,6 +207,21 @@ async function deleteAssignment(assignmentId) {
     return result?.submission ? mapServerSubmission(result.submission) : null;
   }
 
+  async function loadMySubmission(assignmentId) {
+    const result = await apiFetch(`/api/assignments/${assignmentId}/my-submission`);
+    if (result?.error) throw new Error(result.error);
+    return result?.submission ? mapServerSubmission(result.submission) : null;
+  }
+
+  async function loadStudentSubmissions(assignmentIds = []) {
+    const ids = safeArray(assignmentIds).filter(Boolean);
+    if (!ids.length) return [];
+    const params = new URLSearchParams({ assignmentIds: ids.join(",") });
+    const result = await apiFetch(`/api/student/submissions?${params.toString()}`);
+    if (result?.error) throw new Error(result.error);
+    return safeArray(result?.submissions).map(mapServerSubmission);
+  }
+
   async function upsertStudentSubmission(assignmentId, studentId, submission, overrides = {}) {
     const result = await apiFetch(`/api/assignments/${assignmentId}/students/${studentId}/submission`, {
       method: "PUT",
@@ -201,6 +239,16 @@ async function deleteAssignment(assignmentId) {
     });
     if (result?.error) throw new Error(result.error);
     return result?.submission ? mapServerSubmission(result.submission) : result;
+  }
+
+  async function submitStudentSubmission(assignmentId, submission, overrides = {}) {
+    const result = await apiFetch(`/api/assignments/${assignmentId}/submit`, {
+      method: "POST",
+      body: JSON.stringify(buildSubmissionServerPayload(submission, overrides)),
+    });
+    if (result?.error) throw new Error(result.error);
+    if (!result?.submission) throw new Error("Server did not return the submitted work.");
+    return mapServerSubmission(result.submission);
   }
 
   async function saveTeacherReviewSubmission(assignment, submission) {
@@ -229,8 +277,11 @@ async function deleteAssignment(assignmentId) {
     loadClassAssignments,
     loadAssignmentSubmissions,
     loadStudentSubmission,
+    loadMySubmission,
+    loadStudentSubmissions,
     upsertStudentSubmission,
     patchSubmission,
+    submitStudentSubmission,
     saveTeacherReviewSubmission,
     buildAssignmentServerPayload,
     saveAssignment,
